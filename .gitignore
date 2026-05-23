@@ -1,0 +1,13 @@
+.DS_Store
+.build/
+build/
+Derived/
+DerivedData/
+dist/
+Products/
+.make/
+**/.make/
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+Daemon/celltunneld
