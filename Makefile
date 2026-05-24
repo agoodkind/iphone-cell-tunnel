@@ -1,47 +1,67 @@
-#
-#  Makefile
-#  CellTunnel
-#
-#  Thin aliases around the Swift-owned development tool.
-#
+# `make help` is the canonical source of truth for shared Swift targets.
+# Project-specific commands stay in `Tools/cell-tunnel-dev.swift`.
 
 CONFIG ?= Debug
 CELL_TUNNEL_DEV := swift Tools/cell-tunnel-dev.swift
 
-.PHONY: help generate build test lint format log-audit go-audit audit analyze clean run
+SWIFT_MK_MODULES := swift-build.mk
 
-help:
-	@$(CELL_TUNNEL_DEV) help
+SWIFT_BUILD_CMD ?= $(CELL_TUNNEL_DEV) build $(CONFIG)
+SWIFT_TEST_CMD ?= $(CELL_TUNNEL_DEV) test
+SWIFT_RUN_CMD ?= $(CELL_TUNNEL_DEV) run
+SWIFT_GENERATE_CMD ?= $(CELL_TUNNEL_DEV) generate
+SWIFT_CLEAN_CMD ?= $(CELL_TUNNEL_DEV) clean
+SWIFT_ANALYZE_CMD ?= $(CELL_TUNNEL_DEV) analyze
+SWIFT_AUDIT_EXTRA_CMD ?= $(CELL_TUNNEL_DEV) go-audit
+SWIFT_LOG_AUDIT_CMD ?= $(CELL_TUNNEL_DEV) log-audit
 
-generate:
-	@$(CELL_TUNNEL_DEV) generate
+SWIFT_SOURCE_ROOTS := Apps Sources Tests Tools/CellTunnelCtl Tools/CellTunnelDev Tools/LoggingAudit
+SWIFT_GENERATED_SOURCE_ROOTS := Sources/CellTunnelCore/Generated
+SWIFT_OWNED_SWIFT_FILES := $(shell find $(SWIFT_SOURCE_ROOTS) -path '*/.build/*' -prune -o -path '$(SWIFT_GENERATED_SOURCE_ROOTS)' -prune -o -name '*.swift' -print)
+SWIFT_PACKAGE_MANIFESTS := Package.swift Project.swift Tuist.swift Tuist/Package.swift Tools/Package.swift Tools/cell-tunnel-dev.swift
+SWIFT_MK_EXCLUDE_PATHS := ^Sources/CellTunnelCore/Generated/,^Tools/.build/
 
-build:
-	@$(CELL_TUNNEL_DEV) build $(CONFIG)
+SWIFT_FORMAT_TARGETS ?= $(SWIFT_OWNED_SWIFT_FILES) $(SWIFT_PACKAGE_MANIFESTS)
+SWIFTLINT_TARGETS ?= $(SWIFT_FORMAT_TARGETS)
+SWIFTLINT_EXCLUDE_PATHS ?= $(SWIFT_MK_EXCLUDE_PATHS)
+SWIFTCHECK_EXTRA_TARGETS ?= $(SWIFT_FORMAT_TARGETS)
+SWIFTCHECK_EXTRA_EXCLUDE_PATHS ?= $(SWIFT_MK_EXCLUDE_PATHS)
+PERIPHERY_EXCLUDE_PATHS ?= ^Sources/CellTunnelCore/Generated/
+PERIPHERY_ARGS ?= scan --config $(SWIFT_MK_PERIPHERY_CONFIG) --strict --report-exclude Sources/CellTunnelCore/Generated/**
 
-test:
-	@$(CELL_TUNNEL_DEV) test
+include bootstrap.mk
 
-lint:
-	@$(CELL_TUNNEL_DEV) lint
+.DEFAULT_GOAL := check
+
+.PHONY: format go-audit build-phone-device install-phone-device launch-phone-device \
+        sign signing-check notary-setup notarize-check notarize
 
 format:
 	@$(CELL_TUNNEL_DEV) format
 
-log-audit:
-	@$(CELL_TUNNEL_DEV) log-audit
-
 go-audit:
 	@$(CELL_TUNNEL_DEV) go-audit
 
-audit:
-	@$(CELL_TUNNEL_DEV) audit
+build-phone-device:
+	@$(CELL_TUNNEL_DEV) build-phone-device $(CONFIG)
 
-analyze:
-	@$(CELL_TUNNEL_DEV) analyze
+install-phone-device:
+	@$(CELL_TUNNEL_DEV) install-phone-device $(CONFIG)
 
-clean:
-	@$(CELL_TUNNEL_DEV) clean
+launch-phone-device:
+	@$(CELL_TUNNEL_DEV) launch-phone-device
 
-run:
-	@$(CELL_TUNNEL_DEV) run
+sign:
+	@$(CELL_TUNNEL_DEV) sign $(CONFIG)
+
+signing-check:
+	@$(CELL_TUNNEL_DEV) signing-check
+
+notary-setup:
+	@$(CELL_TUNNEL_DEV) notary-setup
+
+notarize-check:
+	@$(CELL_TUNNEL_DEV) notarize-check
+
+notarize:
+	@$(CELL_TUNNEL_DEV) notarize $(CONFIG)
