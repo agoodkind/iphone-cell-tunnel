@@ -1,37 +1,45 @@
 package tunnel
 
 import (
-	"errors"
-	"fmt"
+	"context"
 	"runtime"
 	"strings"
 )
 
 // Config describes the local tunnel interface and route shape.
 type Config struct {
-	InterfaceNameHint string
-	MTU               int
-	IPv4Address       string
-	IPv4PeerAddress   string
-	IPv4PrefixLength  int
-	IPv6Address       string
-	IPv6PrefixLength  int
-	ServiceType       string
+	InterfaceNameHint   string
+	MTU                 int
+	IPv4Address         string
+	IPv4PeerAddress     string
+	IPv4PrefixLength    int
+	IPv6Address         string
+	IPv6PrefixLength    int
+	ServiceType         string
+	WireGuardConfigPath string
+	LocalRelayEndpoint  string
+}
+
+// StartOptions carries the runtime-only values supplied by a Mac app start request.
+type StartOptions struct {
+	WireGuardConfigPath string `json:"wireGuardConfigPath"`
+	LocalRelayEndpoint  string `json:"localRelayEndpoint"`
 }
 
 // RuntimeStatus describes the daemon-visible state of the tunnel.
 type RuntimeStatus struct {
-	Running     bool
-	RouteState  string
-	PeerState   string
-	IPv4Address string
-	IPv6Address string
+	Running     bool   `json:"running"`
+	RouteState  string `json:"routeState"`
+	PeerState   string `json:"peerState"`
+	IPv4Address string `json:"ipv4Address"`
+	IPv6Address string `json:"ipv6Address"`
+	LastError   string `json:"lastError,omitempty"`
 }
 
 // EnvironmentCheck records one local prerequisite probe.
 type EnvironmentCheck struct {
-	Name  string
-	Value string
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 // DefaultConfig returns the current internal IPv4 and IPv6 tunnel defaults.
@@ -49,44 +57,59 @@ func DefaultConfig() Config {
 	}
 }
 
-// DescribePlan renders a dry-run route plan for user-facing CLI output.
-func DescribePlan(config Config) string {
-	logger.Info("describing tunnel route plan", "interface_hint", config.InterfaceNameHint)
-	routePlan := BuildRoutePlan(config, "")
-	lines := []string{
-		"running=false dry_run=true",
-		fmt.Sprintf("interface=%s mtu=%d", routePlan.InterfaceName, config.MTU),
-		fmt.Sprintf("ipv4=%s/%d route=0.0.0.0/0", config.IPv4Address, config.IPv4PrefixLength),
-		fmt.Sprintf("ipv6=%s/%d route=::/0", config.IPv6Address, config.IPv6PrefixLength),
-		"service=" + config.ServiceType,
-		"routes=not-installed",
+// ConfigWithStartOptions applies typed start options to the default tunnel shape.
+func ConfigWithStartOptions(options StartOptions) (Config, error) {
+	if err := options.Validate(); err != nil {
+		return Config{}, err
 	}
-	for _, command := range routePlan.InstallCommands {
-		lines = append(lines, "install="+command.String())
-	}
-	for _, command := range routePlan.RemoveCommands {
-		lines = append(lines, "restore="+command.String())
-	}
+
+	config := DefaultConfig()
+	config.WireGuardConfigPath = strings.TrimSpace(options.WireGuardConfigPath)
+	config.LocalRelayEndpoint = strings.TrimSpace(options.LocalRelayEndpoint)
 	logger.Info(
-		"tunnel route plan described",
-		"install_commands",
-		len(routePlan.InstallCommands),
-		"remove_commands",
-		len(routePlan.RemoveCommands),
+		"start options applied to tunnel config",
+		"wireguard_config_path_configured",
+		config.WireGuardConfigPath != "",
+		"local_relay_endpoint_configured",
+		config.LocalRelayEndpoint != "",
 	)
-	return strings.Join(lines, "\n")
+	return config, nil
+}
+
+// Validate checks that a typed start request includes the runtime inputs the daemon needs.
+func (options StartOptions) Validate() error {
+	if strings.TrimSpace(options.WireGuardConfigPath) == "" {
+		logger.Error("start options validation failed", "err", ErrWireGuardConfigPathMissing)
+		return ErrWireGuardConfigPathMissing
+	}
+	if strings.TrimSpace(options.LocalRelayEndpoint) == "" {
+		logger.Error("start options validation failed", "err", ErrLocalRelayEndpointMissing)
+		return ErrLocalRelayEndpointMissing
+	}
+	logger.Info("start options validation completed")
+	return nil
 }
 
 // Status returns the daemon-visible tunnel state.
 func Status() RuntimeStatus {
 	logger.Info("reading tunnel runtime status")
 	config := DefaultConfig()
+	runtimeMutex.Lock()
+	running := activeRuntime != nil
+	routesInstalled := running && activeRuntime.routesInstalled
+	lastError := lastRuntimeError
+	runtimeMutex.Unlock()
+	routeState := "not-installed"
+	if routesInstalled {
+		routeState = "installed"
+	}
 	status := RuntimeStatus{
-		Running:     false,
-		RouteState:  "not-installed",
-		PeerState:   "not-paired",
+		Running:     running,
+		RouteState:  routeState,
+		PeerState:   peerState(running),
 		IPv4Address: config.IPv4Address,
 		IPv6Address: config.IPv6Address,
+		LastError:   lastError,
 	}
 	logger.Info("tunnel runtime status resolved", "running", status.Running, "routes", status.RouteState)
 	return status
@@ -99,8 +122,8 @@ func CheckEnvironment() []EnvironmentCheck {
 		{Name: "os", Value: runtime.GOOS},
 		{Name: "arch", Value: runtime.GOARCH},
 		{Name: "utun", Value: checkUTUNSupport()},
-		{Name: "privileged_route_changes", Value: "deferred"},
-		{Name: "netstack", Value: "deferred"},
+		{Name: "privileged_route_changes", Value: "requires-privileged-daemon"},
+		{Name: "wireguard_runtime", Value: "available"},
 	}
 	logger.Info("tunnel daemon environment checked", "check_count", len(checks))
 	return checks
@@ -108,14 +131,52 @@ func CheckEnvironment() []EnvironmentCheck {
 
 // Start applies tunnel interface and route state.
 func Start(config Config) error {
-	err := fmt.Errorf("privileged tunnel activation is not implemented yet for %s", config.InterfaceNameHint)
-	logger.Error("tunnel start unavailable", "err", err, "interface_hint", config.InterfaceNameHint)
-	return err
+	logger.Info("tunnel start requested", "interface_hint", config.InterfaceNameHint)
+	runtimeMutex.Lock()
+	defer runtimeMutex.Unlock()
+
+	if activeRuntime != nil {
+		logger.Info("tunnel start ignored because runtime is already active")
+		return nil
+	}
+
+	lastRuntimeError = ""
+	wireGuardRuntime, err := NewWireGuardRuntime(config)
+	if err != nil {
+		lastRuntimeError = err.Error()
+		logger.Error("tunnel runtime configuration failed", "err", err)
+		return err
+	}
+	if err := wireGuardRuntime.Start(context.Background()); err != nil {
+		lastRuntimeError = err.Error()
+		logger.Error("tunnel runtime start failed", "err", err)
+		return err
+	}
+	activeRuntime = wireGuardRuntime
+	logger.Info("tunnel start completed")
+	return nil
 }
 
 // Stop restores route state after tunnel shutdown.
 func Stop() error {
-	err := errors.New("route restore is not implemented yet")
-	logger.Error("tunnel stop unavailable", "err", err)
-	return err
+	logger.Info("tunnel stop requested")
+	runtimeMutex.Lock()
+	defer runtimeMutex.Unlock()
+
+	if activeRuntime == nil {
+		logger.Info("tunnel stop ignored because runtime is not active")
+		return nil
+	}
+
+	activeRuntime.Stop(context.Background())
+	activeRuntime = nil
+	logger.Info("tunnel stop completed")
+	return nil
+}
+
+func peerState(running bool) string {
+	if running {
+		return "wireguard-configured"
+	}
+	return "not-paired"
 }

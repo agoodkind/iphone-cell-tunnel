@@ -1,40 +1,59 @@
 # Cell Tunnel
 
-Internal dual-stack iPhone cellular tunnel prototype.
+Cell Tunnel is an internal dual-stack iPhone cellular tunnel prototype.
 
-The project contains:
+## Components
 
-- `CellTunnelPhone`: foreground iOS relay app.
-- `CellTunnelMac`: macOS control app.
-- `celltunneld`: macOS tunnel daemon scaffold.
-- `CellTunnelCore`: shared relay protocol types used by both Swift apps.
+- `CellTunnelPhone` is the foreground iOS relay app.
+- `CellTunnelMac` is the macOS control app and typed IPC client.
+- `celltunneld` is the macOS tunnel daemon, gRPC control server, and DNS-SD discovery owner.
+- `celltunnelctl` is the Swift CLI typed IPC client.
+- `CellTunnelCore` contains shared Swift relay protocol types and generated control IPC bindings.
+- `CellTunnelLog` contains shared Swift logging categories.
 
-This prototype is not Personal Hotspot and is not a kernel NAT router. The Mac
-side owns packet capture and flow translation, and the iPhone side originates
-matching IPv4 and IPv6 traffic over cellular.
+## Documentation
 
-## Current status
-
-The Swift apps and daemon command surface are scaffolded first. Privileged
-`utun`, routing, gVisor netstack integration, and physical iPhone cellular ICMP
-validation are intentionally separated behind daemon boundaries so the project
-can build before it mutates local networking.
+- [MVP WireGuard Relay Architecture](docs/architecture/mvp-wireguard-relay.md)
+- [Engineering Rules](docs/development/engineering-rules.md)
+- [Tooling](docs/development/tooling.md)
+- [Signing](docs/development/signing.md)
+- [MVP Device Check](docs/runbooks/mvp-device-check.md)
+- [MVP CLI Check](docs/runbooks/mvp-cli-check.md)
 
 ## Build
 
 ```sh
-./script/build_and_run.sh --build-only
+make build
 ```
 
-The build script generates `CellTunnel.xcodeproj`, builds the macOS app, builds
-the iOS app for a generic iOS Simulator destination, and runs the Go daemon
-tests. Set `IOS_SIMULATOR_DESTINATION` if you want a concrete simulator, for
-example `platform=iOS Simulator,name=iPhone 17 Pro`.
-
-## Daemon dry-run
+## Run
 
 ```sh
-go run ./Daemon/cmd/celltunneld start --dry-run
-go run ./Daemon/cmd/celltunneld status
-go run ./Daemon/cmd/celltunneld check
+make run TARGET=mac
+make run TARGET=iphone
+make run TARGET=iphone-simulator
+```
+
+## Install Or Deploy
+
+```sh
+make install TARGET=mac
+make install TARGET=iphone
+make install TARGET=iphone-simulator
+
+make deploy TARGET=mac
+make deploy TARGET=iphone
+make deploy TARGET=iphone-simulator
+```
+
+## Verify
+
+```sh
+make lint
+make log-audit
+make go-audit
+make test
+make analyze
+make build
+make signing-check
 ```

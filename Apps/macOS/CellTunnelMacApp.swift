@@ -17,6 +17,10 @@ struct CellTunnelMacApp: App {
         WindowGroup {
             MacContentView(tunnelStore: tunnelStore)
                 .frame(minWidth: 720, minHeight: 460)
+                .task {
+                    tunnelStore.performAutomaticActivationIfRequested(
+                        arguments: CommandLine.arguments)
+                }
         }
         .commands {
             CommandGroup(replacing: .newItem) {

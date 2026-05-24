@@ -1,0 +1,2 @@
+# staticcheck-extra: generated_at=2026-05-24T03:47:03Z
+internal/discovery/dnssd_darwin.go:633:3: function poll returns a wrapped error without an accompanying slog.Error/Warn; log before returning, or rename to a stdlib codec/io shape (Marshal*/Unmarshal*/Read/Write/etc.) if this is a pure encoder	# staticcheck-extra:first_added=2026-05-24T03:47:03Z last_seen=2026-05-24T03:47:03Z

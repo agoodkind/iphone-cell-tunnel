@@ -2,7 +2,6 @@ package tunnel
 
 import (
 	"net/netip"
-	"strings"
 	"testing"
 )
 
@@ -26,8 +25,9 @@ func TestDefaultConfigIsDualStack(t *testing.T) {
 	}
 }
 
-func TestRoutePlanInstallsDualStackDefaultRoutes(t *testing.T) {
+func TestRoutePlanInstallsTypedDualStackOperations(t *testing.T) {
 	config := DefaultConfig()
+	config.LocalRelayEndpoint = "192.0.2.55:51820"
 	plan := BuildRoutePlan(config, "utun42")
 
 	if len(plan.IPv4Routes) != 1 || plan.IPv4Routes[0] != defaultIPv4Route {
@@ -37,49 +37,39 @@ func TestRoutePlanInstallsDualStackDefaultRoutes(t *testing.T) {
 		t.Fatalf("unexpected IPv6 routes: %#v", plan.IPv6Routes)
 	}
 
-	if !hasCommand(plan.InstallCommands, "route -n add -inet default -interface utun42") {
-		t.Fatalf("missing IPv4 install command: %#v", plan.InstallCommands)
+	expectedInstallKinds := []NetworkOperationKind{
+		networkOperationIPv4Address,
+		networkOperationIPv6Address,
+		networkOperationInterfaceMTUAndUp,
+		networkOperationAddIPv4Default,
+		networkOperationAddIPv6Default,
 	}
-	if !hasCommand(plan.InstallCommands, "route -n add -inet6 default -interface utun42") {
-		t.Fatalf("missing IPv6 install command: %#v", plan.InstallCommands)
-	}
-	if !hasCommand(plan.RemoveCommands, "route -n delete -inet default -interface utun42") {
-		t.Fatalf("missing IPv4 restore command: %#v", plan.RemoveCommands)
-	}
-	if !hasCommand(plan.RemoveCommands, "route -n delete -inet6 default -interface utun42") {
-		t.Fatalf("missing IPv6 restore command: %#v", plan.RemoveCommands)
-	}
-}
-
-func TestDescribePlanIncludesDryRunCommands(t *testing.T) {
-	description := DescribePlan(DefaultConfig())
-
-	expectedFragments := []string{
-		"ipv4=198.18.0.2/15 route=0.0.0.0/0",
-		"ipv6=fd7a:ce11:7a11::2/64 route=::/0",
-		"install=route -n add -inet default -interface utun*",
-		"install=route -n add -inet6 default -interface utun*",
-		"restore=route -n delete -inet default -interface utun*",
-		"restore=route -n delete -inet6 default -interface utun*",
-	}
-
-	for _, expectedFragment := range expectedFragments {
-		if !strings.Contains(description, expectedFragment) {
-			t.Fatalf("dry-run plan missing %q:\n%s", expectedFragment, description)
+	for index, expectedKind := range expectedInstallKinds {
+		if plan.InstallOperations[index].Kind != expectedKind {
+			t.Fatalf("unexpected install operation at %d: %#v", index, plan.InstallOperations)
+		}
+		if plan.InstallOperations[index].InterfaceName != "utun42" {
+			t.Fatalf("unexpected install interface at %d: %#v", index, plan.InstallOperations[index])
 		}
 	}
-}
 
-func TestIPv4Netmask(t *testing.T) {
-	netmask := IPv4Netmask(15)
-	if netmask != "255.254.0.0" {
-		t.Fatalf("unexpected netmask: %s", netmask)
+	if !hasOperationKind(plan.RemoveOperations, networkOperationDeleteIPv4Default) {
+		t.Fatalf("missing IPv4 default route removal: %#v", plan.RemoveOperations)
+	}
+	if !hasOperationKind(plan.RemoveOperations, networkOperationDeleteIPv6Default) {
+		t.Fatalf("missing IPv6 default route removal: %#v", plan.RemoveOperations)
+	}
+	if len(plan.LocalRelayPreservations) != 1 {
+		t.Fatalf("missing local relay preservation: %#v", plan.LocalRelayPreservations)
+	}
+	if plan.LocalRelayPreservations[0].EndpointHost != "192.0.2.55" {
+		t.Fatalf("unexpected local relay preservation: %#v", plan.LocalRelayPreservations[0])
 	}
 }
 
-func hasCommand(commands []RouteCommand, expected string) bool {
-	for _, command := range commands {
-		if command.String() == expected {
+func hasOperationKind(operations []NetworkOperation, expected NetworkOperationKind) bool {
+	for _, operation := range operations {
+		if operation.Kind == expected {
 			return true
 		}
 	}

@@ -16,7 +16,6 @@ let projectSettings = Settings.settings(
         "MACOSX_DEPLOYMENT_TARGET": "15.0",
         "SYMROOT": "$(SRCROOT)/build",
         "OBJROOT": "$(SRCROOT)/build/Intermediates.noindex",
-        "CONFIGURATION_BUILD_DIR": "$(SRCROOT)/Products/$(CONFIGURATION)/$(PLATFORM_NAME)",
         "MARKETING_VERSION": "0.1.0",
         "CURRENT_PROJECT_VERSION": "1",
     ],
@@ -32,6 +31,12 @@ let appDependencies: [TargetDependency] = [
 let project = Project(
     name: projectName,
     organizationName: organizationName,
+    packages: [
+        .package(url: "https://github.com/grpc/grpc-swift-2.git", from: "2.4.0"),
+        .package(url: "https://github.com/grpc/grpc-swift-nio-transport.git", from: "2.7.0"),
+        .package(url: "https://github.com/grpc/grpc-swift-protobuf.git", from: "2.4.0"),
+        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.38.0"),
+    ],
     settings: projectSettings,
     targets: [
         .target(
@@ -42,6 +47,13 @@ let project = Project(
             infoPlist: .default,
             sources: [
                 "Sources/CellTunnelCore/**"
+            ],
+            dependencies: [
+                .target(name: "CellTunnelLog"),
+                .external(name: "GRPCCore"),
+                .external(name: "GRPCNIOTransportHTTP2"),
+                .external(name: "GRPCProtobuf"),
+                .external(name: "SwiftProtobuf"),
             ]
         ),
         .target(
@@ -87,6 +99,7 @@ let project = Project(
                 base: [
                     "PRODUCT_NAME": "CellTunnelMac",
                     "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "",
+                    "CODE_SIGN_ENTITLEMENTS": "Apps/macOS/Entitlements/CellTunnelMac.entitlements",
                 ]
             )
         ),

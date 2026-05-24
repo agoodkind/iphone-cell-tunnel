@@ -38,19 +38,32 @@ make test
 make analyze
 make build
 make signing-check
-make run
+make run TARGET=mac
+make run TARGET=iphone
+make run TARGET=iphone-simulator
+make install TARGET=mac
+make install TARGET=iphone
+make install TARGET=iphone-simulator
+make deploy TARGET=mac
+make deploy TARGET=iphone
+make deploy TARGET=iphone-simulator
 make clean
 ```
 
-`make build` runs the lint, Swift logging audit, Go audit, Go daemon build, macOS app build, iOS simulator app build,
-Mac bundle packaging, and Mac signing path.
+`make build` runs the lint, Swift logging audit, Go audit, Go daemon build, the macOS app build, the iOS simulator app
+build, the physical-device iPhone app build, Mac bundle packaging, and Mac signing.
 
-`make run` builds through the gated path and launches `CellTunnelMac` from `Products/Debug/macosx/CellTunnelMac.app`.
+`make build` does not accept `TARGET`.
+
+`make run`, `make install`, and `make deploy` all build through the gated path and then activate the requested target.
+For `TARGET=mac`, activation opens `CellTunnelMac.app` and drives the helper registration flow. For `TARGET=iphone`,
+activation installs and launches the physical-device app. For `TARGET=iphone-simulator`, activation reuses a booted
+simulator or creates and boots a fresh iPhone simulator before install and launch.
 
 ## Verification Contract
 
 - After Swift app or tooling changes, run `make lint`, `make log-audit`, `make go-audit`, `make test`,
-  `make analyze`, `make build`, `make signing-check`, and `make run`.
+  `make analyze`, `make build`, `make signing-check`, and `make run TARGET=mac`.
 - After Go daemon changes, run `make lint`, `make go-audit`, `make test`, `make analyze`, and `make build`.
 - After signing or notarization tooling changes, run `make signing-check`, `make notarize-check`, and `make notarize`.
 - Before handoff, run `git -C /Users/agoodkind/Sites/iphone-cell-tunnel status --short --untracked-files=all`.

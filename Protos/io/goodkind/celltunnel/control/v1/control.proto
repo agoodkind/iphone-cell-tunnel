@@ -1,0 +1,199 @@
+syntax = "proto3";
+
+package io.goodkind.celltunnel.control.v1;
+
+option go_package = "celltunnel/daemon/internal/controlv1;controlv1";
+option swift_prefix = "CTControlV1_";
+
+service TunnelControlService {
+  rpc Status(StatusRequest) returns (StatusResponse);
+  rpc Check(CheckRequest) returns (CheckResponse);
+  rpc StartTunnel(StartTunnelRequest) returns (StartTunnelResponse);
+  rpc StopTunnel(StopTunnelRequest) returns (StopTunnelResponse);
+  rpc StartRelayDiscovery(StartRelayDiscoveryRequest) returns (StartRelayDiscoveryResponse);
+  rpc StopRelayDiscovery(StopRelayDiscoveryRequest) returns (StopRelayDiscoveryResponse);
+  rpc ListRelayServices(ListRelayServicesRequest) returns (ListRelayServicesResponse);
+  rpc SelectRelayService(SelectRelayServiceRequest) returns (SelectRelayServiceResponse);
+}
+
+enum AddressFamily {
+  ADDRESS_FAMILY_UNSPECIFIED = 0;
+  ADDRESS_FAMILY_IPV4 = 1;
+  ADDRESS_FAMILY_IPV6 = 2;
+}
+
+enum RouteState {
+  ROUTE_STATE_UNSPECIFIED = 0;
+  ROUTE_STATE_NOT_INSTALLED = 1;
+  ROUTE_STATE_INSTALLED = 2;
+}
+
+enum PeerState {
+  PEER_STATE_UNSPECIFIED = 0;
+  PEER_STATE_NOT_SELECTED = 1;
+  PEER_STATE_RELAY_SELECTED = 2;
+  PEER_STATE_WIREGUARD_CONFIGURED = 3;
+}
+
+enum DiscoveryPhase {
+  DISCOVERY_PHASE_UNSPECIFIED = 0;
+  DISCOVERY_PHASE_STOPPED = 1;
+  DISCOVERY_PHASE_BROWSING = 2;
+  DISCOVERY_PHASE_READY = 3;
+  DISCOVERY_PHASE_FAILED = 4;
+}
+
+enum ControlErrorCode {
+  CONTROL_ERROR_CODE_UNSPECIFIED = 0;
+  CONTROL_ERROR_CODE_MISSING_WIREGUARD_CONFIG_PATH = 1;
+  CONTROL_ERROR_CODE_RELAY_SELECTION_REQUIRED = 2;
+  CONTROL_ERROR_CODE_RELAY_SERVICE_NOT_FOUND = 3;
+  CONTROL_ERROR_CODE_DISCOVERY_UNAVAILABLE = 4;
+  CONTROL_ERROR_CODE_INVALID_RELAY_ENDPOINT = 5;
+  CONTROL_ERROR_CODE_RUNTIME_START_FAILURE = 6;
+  CONTROL_ERROR_CODE_INTERNAL = 7;
+}
+
+message ControlError {
+  ControlErrorCode code = 1;
+  string message = 2;
+}
+
+message RelayEndpoint {
+  string host = 1;
+  uint32 port = 2;
+  AddressFamily address_family = 3;
+}
+
+message RelayServiceIdentity {
+  string service_id = 1;
+  string service_name = 2;
+  string service_type = 3;
+  string domain = 4;
+  uint32 interface_index = 5;
+}
+
+message RelayService {
+  RelayServiceIdentity identity = 1;
+  string host_name = 2;
+  repeated RelayEndpoint endpoints = 3;
+  RelayEndpoint preferred_endpoint = 4;
+  bool is_selected = 5;
+}
+
+message DiscoveryState {
+  DiscoveryPhase phase = 1;
+  repeated RelayService services = 2;
+  string selected_service_id = 3;
+  RelayEndpoint selected_endpoint = 4;
+  ControlError last_error = 5;
+}
+
+message RouteStateSnapshot {
+  RouteState state = 1;
+}
+
+message PeerStateSnapshot {
+  PeerState state = 1;
+}
+
+message TunnelStartSettings {
+  string wire_guard_config_path = 1;
+  RelayEndpoint relay_endpoint = 2;
+}
+
+message DaemonStatus {
+  bool running = 1;
+  RouteStateSnapshot route = 2;
+  PeerStateSnapshot peer = 3;
+  string ipv4_address = 4;
+  string ipv6_address = 5;
+  ControlError last_error = 6;
+  DiscoveryState discovery = 7;
+  RelayEndpoint active_relay_endpoint = 8;
+}
+
+message EnvironmentCheck {
+  string name = 1;
+  string value = 2;
+}
+
+message EnvironmentReport {
+  repeated EnvironmentCheck checks = 1;
+}
+
+message StatusRequest {}
+
+message StatusResponse {
+  oneof result {
+    DaemonStatus status = 1;
+    ControlError error = 2;
+  }
+}
+
+message CheckRequest {}
+
+message CheckResponse {
+  oneof result {
+    EnvironmentReport report = 1;
+    ControlError error = 2;
+  }
+}
+
+message StartTunnelRequest {
+  TunnelStartSettings settings = 1;
+}
+
+message StartTunnelResponse {
+  oneof result {
+    DaemonStatus status = 1;
+    ControlError error = 2;
+  }
+}
+
+message StopTunnelRequest {}
+
+message StopTunnelResponse {
+  oneof result {
+    DaemonStatus status = 1;
+    ControlError error = 2;
+  }
+}
+
+message StartRelayDiscoveryRequest {}
+
+message StartRelayDiscoveryResponse {
+  oneof result {
+    DiscoveryState discovery = 1;
+    ControlError error = 2;
+  }
+}
+
+message StopRelayDiscoveryRequest {}
+
+message StopRelayDiscoveryResponse {
+  oneof result {
+    DiscoveryState discovery = 1;
+    ControlError error = 2;
+  }
+}
+
+message ListRelayServicesRequest {}
+
+message ListRelayServicesResponse {
+  oneof result {
+    DiscoveryState discovery = 1;
+    ControlError error = 2;
+  }
+}
+
+message SelectRelayServiceRequest {
+  string service_id = 1;
+}
+
+message SelectRelayServiceResponse {
+  oneof result {
+    DiscoveryState discovery = 1;
+    ControlError error = 2;
+  }
+}

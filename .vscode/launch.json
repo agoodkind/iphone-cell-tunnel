@@ -1,0 +1,64 @@
+{
+    "configurations": [
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:iphone-cell-tunnel}",
+            "name": "Debug CellTunnelDev",
+            "target": "CellTunnelDev",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug CellTunnelDev"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:iphone-cell-tunnel}",
+            "name": "Release CellTunnelDev",
+            "target": "CellTunnelDev",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release CellTunnelDev"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:iphone-cell-tunnel}",
+            "name": "Debug LoggingAudit",
+            "target": "LoggingAudit",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug LoggingAudit"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:iphone-cell-tunnel}",
+            "name": "Release LoggingAudit",
+            "target": "LoggingAudit",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release LoggingAudit"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:iphone-cell-tunnel}",
+            "name": "Debug celltunnelctl",
+            "target": "celltunnelctl",
+            "configuration": "debug",
+            "preLaunchTask": "swift: Build Debug celltunnelctl"
+        },
+        {
+            "type": "swift",
+            "request": "launch",
+            "args": [],
+            "cwd": "${workspaceFolder:iphone-cell-tunnel}",
+            "name": "Release celltunnelctl",
+            "target": "celltunnelctl",
+            "configuration": "release",
+            "preLaunchTask": "swift: Build Release celltunnelctl"
+        }
+    ]
+}

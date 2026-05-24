@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"net"
+	"net/netip"
 	"strconv"
 	"strings"
 )
@@ -11,49 +12,156 @@ const (
 	defaultIPv6Route = "::/0"
 )
 
-// RoutePlan describes interface setup and route mutation commands.
+// RoutePlan describes the typed native network mutations needed by the runtime.
 type RoutePlan struct {
-	InterfaceName   string
-	IPv4Routes      []string
-	IPv6Routes      []string
-	InstallCommands []RouteCommand
-	RemoveCommands  []RouteCommand
+	InterfaceName           string
+	IPv4Routes              []string
+	IPv6Routes              []string
+	LocalRelayPreservations []LocalRelayPreservation
+	InstallOperations       []NetworkOperation
+	RemoveOperations        []NetworkOperation
 }
 
-// RouteCommand describes one external route or interface command.
-type RouteCommand struct {
-	Program   string
-	Arguments []string
+// LocalRelayPreservation records the local iPhone relay route that must survive default route changes.
+type LocalRelayPreservation struct {
+	EndpointHost  string
+	AddressFamily RelayAddressFamily
 }
 
-// String renders a route command for dry-run output.
-func (command RouteCommand) String() string {
-	return command.Program + " " + strings.Join(command.Arguments, " ")
+// NetworkOperationKind identifies the closed set of native interface and route mutations.
+type NetworkOperationKind string
+
+const (
+	networkOperationIPv4Address         NetworkOperationKind = "ipv4-address"
+	networkOperationIPv6Address         NetworkOperationKind = "ipv6-address"
+	networkOperationInterfaceMTUAndUp   NetworkOperationKind = "interface-mtu-up"
+	networkOperationAddIPv4Default      NetworkOperationKind = "add-ipv4-default"
+	networkOperationAddIPv6Default      NetworkOperationKind = "add-ipv6-default"
+	networkOperationDeleteIPv4Default   NetworkOperationKind = "delete-ipv4-default"
+	networkOperationDeleteIPv6Default   NetworkOperationKind = "delete-ipv6-default"
+	networkOperationAddIPv4RelayHost    NetworkOperationKind = "add-ipv4-relay-host"
+	networkOperationAddIPv6RelayHost    NetworkOperationKind = "add-ipv6-relay-host"
+	networkOperationDeleteIPv4RelayHost NetworkOperationKind = "delete-ipv4-relay-host"
+	networkOperationDeleteIPv6RelayHost NetworkOperationKind = "delete-ipv6-relay-host"
+)
+
+// NetworkOperation is the typed runtime form of one native network mutation.
+type NetworkOperation struct {
+	Kind           NetworkOperationKind
+	InterfaceName  string
+	Address        string
+	PeerAddress    string
+	PrefixLength   int
+	MTU            int
+	EndpointHost   string
+	RelayInterface string
+	AddressFamily  RelayAddressFamily
 }
 
-// BuildRoutePlan creates the dual-stack route mutation plan.
+// String renders a typed operation for dry-run output.
+func (operation NetworkOperation) String() string {
+	parts := []string{
+		"operation=" + string(operation.Kind),
+	}
+	if operation.InterfaceName != "" {
+		parts = append(parts, "interface="+operation.InterfaceName)
+	}
+	if operation.Address != "" {
+		parts = append(parts, "address="+operation.Address)
+	}
+	if operation.PeerAddress != "" {
+		parts = append(parts, "peer="+operation.PeerAddress)
+	}
+	if operation.PrefixLength > 0 {
+		parts = append(parts, "prefix="+strconv.Itoa(operation.PrefixLength))
+	}
+	if operation.MTU > 0 {
+		parts = append(parts, "mtu="+strconv.Itoa(operation.MTU))
+	}
+	if operation.EndpointHost != "" {
+		parts = append(parts, "host="+operation.EndpointHost)
+	}
+	if operation.RelayInterface != "" {
+		parts = append(parts, "relay_interface="+operation.RelayInterface)
+	}
+	if operation.AddressFamily != 0 {
+		parts = append(parts, "family="+strconv.Itoa(int(operation.AddressFamily)))
+	}
+	return strings.Join(parts, " ")
+}
+
+// String renders the local relay preservation marker for dry-run output.
+func (preservation LocalRelayPreservation) String() string {
+	return "host=" + preservation.EndpointHost +
+		" family=" + strconv.Itoa(int(preservation.AddressFamily))
+}
+
+// BuildRoutePlan creates the dual-stack native route mutation plan.
 func BuildRoutePlan(config Config, interfaceName string) RoutePlan {
 	interfaceName = resolvedInterfaceName(config, interfaceName)
-	installCommands := buildInstallCommands(config, interfaceName)
-	removeCommands := buildRemoveCommands(interfaceName)
+	installOperations := buildInstallOperations(config, interfaceName)
+	removeOperations := buildRemoveOperations(interfaceName)
+	preservations := buildLocalRelayPreservations(config)
 
 	plan := RoutePlan{
-		InterfaceName:   interfaceName,
-		IPv4Routes:      []string{defaultIPv4Route},
-		IPv6Routes:      []string{defaultIPv6Route},
-		InstallCommands: installCommands,
-		RemoveCommands:  removeCommands,
+		InterfaceName:           interfaceName,
+		IPv4Routes:              []string{defaultIPv4Route},
+		IPv6Routes:              []string{defaultIPv6Route},
+		LocalRelayPreservations: preservations,
+		InstallOperations:       installOperations,
+		RemoveOperations:        removeOperations,
 	}
 	logger.Info(
 		"route plan built",
 		"interface_name",
 		plan.InterfaceName,
-		"install_commands",
-		len(plan.InstallCommands),
-		"remove_commands",
-		len(plan.RemoveCommands),
+		"install_operations",
+		len(plan.InstallOperations),
+		"remove_operations",
+		len(plan.RemoveOperations),
+		"local_relay_preservations",
+		len(plan.LocalRelayPreservations),
 	)
 	return plan
+}
+
+func buildLocalRelayPreservations(config Config) []LocalRelayPreservation {
+	if config.LocalRelayEndpoint == "" {
+		logger.Info("route plan local relay preservation skipped because endpoint is not configured")
+		return []LocalRelayPreservation{}
+	}
+
+	endpoint, err := ParseWireGuardEndpoint(config.LocalRelayEndpoint)
+	if err != nil {
+		host, _, splitErr := net.SplitHostPort(config.LocalRelayEndpoint)
+		if splitErr != nil {
+			logger.Error("route plan local relay endpoint parse failed", "err", err)
+			return []LocalRelayPreservation{}
+		}
+		endpoint = RelayEndpoint{
+			AddressFamily: localRelayHostFamily(host),
+			Host:          host,
+		}
+	}
+
+	preservation := LocalRelayPreservation{
+		EndpointHost:  endpoint.Host,
+		AddressFamily: endpoint.AddressFamily,
+	}
+	logger.Info(
+		"route plan local relay preservation represented",
+		"endpoint_family",
+		preservation.AddressFamily,
+	)
+	return []LocalRelayPreservation{preservation}
+}
+
+func localRelayHostFamily(host string) RelayAddressFamily {
+	address, err := netip.ParseAddr(host)
+	if err == nil && address.Is6() {
+		return RelayAddressFamilyIPv6
+	}
+	return RelayAddressFamilyIPv4
 }
 
 func resolvedInterfaceName(config Config, interfaceName string) string {
@@ -66,95 +174,54 @@ func resolvedInterfaceName(config Config, interfaceName string) string {
 	return interfaceName
 }
 
-func buildInstallCommands(config Config, interfaceName string) []RouteCommand {
-	ipv6PrefixLength := strconv.Itoa(config.IPv6PrefixLength)
-	mtu := strconv.Itoa(config.MTU)
-
-	return []RouteCommand{
+func buildInstallOperations(config Config, interfaceName string) []NetworkOperation {
+	return []NetworkOperation{
 		{
-			Program: "ifconfig",
-			Arguments: []string{
-				interfaceName,
-				"inet",
-				config.IPv4Address,
-				config.IPv4PeerAddress,
-				"netmask",
-				IPv4Netmask(config.IPv4PrefixLength),
-				"mtu",
-				mtu,
-				"up",
-			},
+			Kind:          networkOperationIPv4Address,
+			InterfaceName: interfaceName,
+			Address:       config.IPv4Address,
+			PeerAddress:   config.IPv4PeerAddress,
+			PrefixLength:  config.IPv4PrefixLength,
 		},
 		{
-			Program: "ifconfig",
-			Arguments: []string{
-				interfaceName,
-				"inet6",
-				config.IPv6Address,
-				"prefixlen",
-				ipv6PrefixLength,
-				"up",
-			},
+			Kind:          networkOperationIPv6Address,
+			InterfaceName: interfaceName,
+			Address:       config.IPv6Address,
+			PrefixLength:  config.IPv6PrefixLength,
 		},
 		{
-			Program: "route",
-			Arguments: []string{
-				"-n",
-				"add",
-				"-inet",
-				"default",
-				"-interface",
-				interfaceName,
-			},
+			Kind:          networkOperationInterfaceMTUAndUp,
+			InterfaceName: interfaceName,
+			MTU:           config.MTU,
 		},
 		{
-			Program: "route",
-			Arguments: []string{
-				"-n",
-				"add",
-				"-inet6",
-				"default",
-				"-interface",
-				interfaceName,
-			},
+			Kind:          networkOperationAddIPv4Default,
+			InterfaceName: interfaceName,
+			Address:       defaultIPv4Route,
+			AddressFamily: RelayAddressFamilyIPv4,
+		},
+		{
+			Kind:          networkOperationAddIPv6Default,
+			InterfaceName: interfaceName,
+			Address:       defaultIPv6Route,
+			AddressFamily: RelayAddressFamilyIPv6,
 		},
 	}
 }
 
-func buildRemoveCommands(interfaceName string) []RouteCommand {
-	return []RouteCommand{
+func buildRemoveOperations(interfaceName string) []NetworkOperation {
+	return []NetworkOperation{
 		{
-			Program: "route",
-			Arguments: []string{
-				"-n",
-				"delete",
-				"-inet",
-				"default",
-				"-interface",
-				interfaceName,
-			},
+			Kind:          networkOperationDeleteIPv4Default,
+			InterfaceName: interfaceName,
+			Address:       defaultIPv4Route,
+			AddressFamily: RelayAddressFamilyIPv4,
 		},
 		{
-			Program: "route",
-			Arguments: []string{
-				"-n",
-				"delete",
-				"-inet6",
-				"default",
-				"-interface",
-				interfaceName,
-			},
+			Kind:          networkOperationDeleteIPv6Default,
+			InterfaceName: interfaceName,
+			Address:       defaultIPv6Route,
+			AddressFamily: RelayAddressFamilyIPv6,
 		},
 	}
-}
-
-// IPv4Netmask converts an IPv4 prefix length into dotted-quad form.
-func IPv4Netmask(prefixLength int) string {
-	mask := net.CIDRMask(prefixLength, 32)
-	if len(mask) != net.IPv4len {
-		logger.Error("invalid IPv4 prefix length", "err", net.InvalidAddrError("invalid IPv4 prefix length"), "prefix_length", prefixLength)
-		return ""
-	}
-
-	return net.IP(mask).String()
 }

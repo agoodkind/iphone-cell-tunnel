@@ -1,22 +1,28 @@
 public struct TunnelCounters: Codable, Equatable, Sendable {
-    public var tcpFlows: Int
-    public var udpFlows: Int
-    public var icmpFlows: Int
-    public var bytesIn: UInt64
-    public var bytesOut: UInt64
+    public var wireGuardDatagramsFromMac: UInt64
+    public var wireGuardDatagramsToMac: UInt64
+    public var wireGuardDatagramsToServer: UInt64
+    public var wireGuardDatagramsFromServer: UInt64
+    public var droppedWireGuardDatagrams: UInt64
+    public var relayBytesIn: UInt64
+    public var relayBytesOut: UInt64
 
     public init(
-        tcpFlows: Int = 0,
-        udpFlows: Int = 0,
-        icmpFlows: Int = 0,
-        bytesIn: UInt64 = 0,
-        bytesOut: UInt64 = 0
+        wireGuardDatagramsFromMac: UInt64 = 0,
+        wireGuardDatagramsToMac: UInt64 = 0,
+        wireGuardDatagramsToServer: UInt64 = 0,
+        wireGuardDatagramsFromServer: UInt64 = 0,
+        droppedWireGuardDatagrams: UInt64 = 0,
+        relayBytesIn: UInt64 = 0,
+        relayBytesOut: UInt64 = 0
     ) {
-        self.tcpFlows = tcpFlows
-        self.udpFlows = udpFlows
-        self.icmpFlows = icmpFlows
-        self.bytesIn = bytesIn
-        self.bytesOut = bytesOut
+        self.wireGuardDatagramsFromMac = wireGuardDatagramsFromMac
+        self.wireGuardDatagramsToMac = wireGuardDatagramsToMac
+        self.wireGuardDatagramsToServer = wireGuardDatagramsToServer
+        self.wireGuardDatagramsFromServer = wireGuardDatagramsFromServer
+        self.droppedWireGuardDatagrams = droppedWireGuardDatagrams
+        self.relayBytesIn = relayBytesIn
+        self.relayBytesOut = relayBytesOut
     }
 }
 

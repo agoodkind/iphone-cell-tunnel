@@ -13,10 +13,12 @@ excluded:
   - Products
   - Derived
   - DerivedData
+  - Sources/CellTunnelCore/Generated
   - CellTunnel.xcodeproj
   - CellTunnel.xcworkspace
   - Tuist/.build
   - .build
+  - Tools/.build
 
 opt_in_rules:
   - all

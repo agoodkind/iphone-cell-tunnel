@@ -51,6 +51,11 @@ let allowlist = [
         rule: .loggerDeclaration,
         reason: "CellTunnelLog exports categories instead of declaring a private category."
     ),
+    AuditAllowlistEntry(
+        pathSuffix: "Sources/CellTunnelCore/TunnelControlModels.swift",
+        rule: .loggerDeclaration,
+        reason: "TunnelControlModels contains Codable socket payloads and no runtime side effects."
+    ),
 ]
 
 let boundaryNeedles = [
@@ -150,7 +155,8 @@ func isCommentOnly(_ line: String) -> Bool {
 func auditText(path: String, lines: [String], violations: inout [Violation]) {
     let loggerDeclarationCount = countPrivateLoggerDeclarations(lines: lines)
     let joinedSource = lines.joined(separator: "\n")
-    if containsBoundary(joinedSource), loggerDeclarationCount == 0, !allows(path: path, rule: .loggerDeclaration) {
+    let requiresLoggerDeclaration = containsBoundary(joinedSource) && loggerDeclarationCount == 0
+    if requiresLoggerDeclaration, !allows(path: path, rule: .loggerDeclaration) {
         violations.append(
             Violation(
                 path: path,
@@ -218,7 +224,8 @@ final class AuditVisitor: SyntaxVisitor {
     }
 
     override func visit(_ node: FunctionCallExprSyntax) -> SyntaxVisitorContinueKind {
-        let calledExpression = node.calledExpression.description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let calledExpression = node.calledExpression.description.trimmingCharacters(
+            in: .whitespacesAndNewlines)
         let source = node.description
         let line = lineNumber(for: node.positionAfterSkippingLeadingTrivia, converter: converter)
 
@@ -254,7 +261,8 @@ final class AuditVisitor: SyntaxVisitor {
 
         let bodySource = body.description
         if containsBoundary(bodySource), !containsLogCall(bodySource) {
-            let line = lineNumber(for: node.positionAfterSkippingLeadingTrivia, converter: converter)
+            let line = lineNumber(
+                for: node.positionAfterSkippingLeadingTrivia, converter: converter)
             violations.append(
                 Violation(
                     path: path,
@@ -272,7 +280,8 @@ final class AuditVisitor: SyntaxVisitor {
     override func visit(_ node: CatchClauseSyntax) -> SyntaxVisitorContinueKind {
         let source = node.description
         if !containsLogCall(source) {
-            let line = lineNumber(for: node.positionAfterSkippingLeadingTrivia, converter: converter)
+            let line = lineNumber(
+                for: node.positionAfterSkippingLeadingTrivia, converter: converter)
             violations.append(
                 Violation(
                     path: path,
@@ -331,6 +340,7 @@ if violations.isEmpty {
     for violation in violations {
         FileHandle.standardError.write(Data("\(violation)\n".utf8))
     }
-    FileHandle.standardError.write(Data("log-audit failed: \(violations.count) violation(s)\n".utf8))
+    FileHandle.standardError.write(
+        Data("log-audit failed: \(violations.count) violation(s)\n".utf8))
     exit(1)
 }

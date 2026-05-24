@@ -3,14 +3,16 @@
 
 CONFIG ?= Debug
 CELL_TUNNEL_DEV := swift Tools/cell-tunnel-dev.swift
+ACTIVATION_TARGET_USAGE := mac|iphone|iphone-simulator
 
 SWIFT_MK_MODULES := swift-build.mk
 
-SWIFT_BUILD_CMD ?= $(CELL_TUNNEL_DEV) build $(CONFIG)
+SWIFT_BUILD_CMD ?= $(if $(and $(strip $(TARGET)),$(filter build,$(MAKECMDGOALS))),printf 'build: TARGET is not supported; use make build with no TARGET\n'; exit 1,$(CELL_TUNNEL_DEV) build $(CONFIG))
 SWIFT_TEST_CMD ?= $(CELL_TUNNEL_DEV) test
-SWIFT_RUN_CMD ?= $(CELL_TUNNEL_DEV) run
+SWIFT_RUN_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) activate $(TARGET) $(CONFIG),printf 'run: TARGET=$(ACTIVATION_TARGET_USAGE) is required\n'; exit 1)
 SWIFT_GENERATE_CMD ?= $(CELL_TUNNEL_DEV) generate
 SWIFT_CLEAN_CMD ?= $(CELL_TUNNEL_DEV) clean
+SWIFT_DEPLOY_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) activate $(TARGET) $(CONFIG),printf 'deploy: TARGET=$(ACTIVATION_TARGET_USAGE) is required\n'; exit 1)
 SWIFT_ANALYZE_CMD ?= $(CELL_TUNNEL_DEV) analyze
 SWIFT_AUDIT_EXTRA_CMD ?= $(CELL_TUNNEL_DEV) go-audit
 SWIFT_LOG_AUDIT_CMD ?= $(CELL_TUNNEL_DEV) log-audit
@@ -33,23 +35,13 @@ include bootstrap.mk
 
 .DEFAULT_GOAL := check
 
-.PHONY: format go-audit build-phone-device install-phone-device launch-phone-device \
-        sign signing-check notary-setup notarize-check notarize
+.PHONY: format go-audit sign signing-check notary-setup notarize-check notarize
 
 format:
 	@$(CELL_TUNNEL_DEV) format
 
 go-audit:
 	@$(CELL_TUNNEL_DEV) go-audit
-
-build-phone-device:
-	@$(CELL_TUNNEL_DEV) build-phone-device $(CONFIG)
-
-install-phone-device:
-	@$(CELL_TUNNEL_DEV) install-phone-device $(CONFIG)
-
-launch-phone-device:
-	@$(CELL_TUNNEL_DEV) launch-phone-device
 
 sign:
 	@$(CELL_TUNNEL_DEV) sign $(CONFIG)

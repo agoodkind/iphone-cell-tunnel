@@ -8,15 +8,8 @@ public enum RelayAddressFamily: UInt8, CaseIterable, Codable, Sendable {
 public enum RelayOperation: UInt8, CaseIterable, Codable, Sendable {
     case hello = 1
     case pairConfirm = 2
-    case tcpOpen = 10
-    case tcpData = 11
-    case tcpClose = 12
-    case udpOpen = 20
-    case udpDatagram = 21
-    case udpClose = 22
-    case icmpEcho = 30
-    case icmpReply = 31
     case pathStatus = 40
+    case wireGuardDatagram = 50
     case error = 250
     case stats = 251
 }
@@ -57,6 +50,59 @@ public struct RelayFrame: Codable, Equatable, Sendable {
         self.addressFamily = addressFamily
         self.flags = flags
         self.payload = payload
+    }
+}
+
+public struct RelayHandshakePayload: Codable, Equatable, Sendable {
+    public var wireGuardServer: RelayEndpoint
+
+    public init(wireGuardServer: RelayEndpoint) {
+        self.wireGuardServer = wireGuardServer
+    }
+
+    public func encoded() throws -> Data {
+        try JSONEncoder().encode(self)
+    }
+
+    public static func decode(_ data: Data) throws -> RelayHandshakePayload {
+        try JSONDecoder().decode(RelayHandshakePayload.self, from: data)
+    }
+}
+
+public enum WireGuardDatagramError: Error, Equatable {
+    case emptyDatagram
+    case unexpectedOperation(RelayOperation)
+}
+
+public struct WireGuardDatagram: Equatable, Sendable {
+    public var addressFamily: RelayAddressFamily
+    public var data: Data
+
+    public init(data: Data, addressFamily: RelayAddressFamily) throws {
+        guard !data.isEmpty else {
+            throw WireGuardDatagramError.emptyDatagram
+        }
+
+        self.addressFamily = addressFamily
+        self.data = data
+    }
+
+    public init(frame: RelayFrame) throws {
+        guard frame.operation == .wireGuardDatagram else {
+            throw WireGuardDatagramError.unexpectedOperation(frame.operation)
+        }
+
+        try self.init(data: frame.payload, addressFamily: frame.addressFamily)
+    }
+
+    public func relayFrame(streamID: UInt64, flags: UInt16 = 0) -> RelayFrame {
+        RelayFrame(
+            streamID: streamID,
+            operation: .wireGuardDatagram,
+            addressFamily: addressFamily,
+            flags: flags,
+            payload: data
+        )
     }
 }
 
