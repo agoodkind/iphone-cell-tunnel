@@ -16,6 +16,20 @@ private typealias GeneratedTunnelControlStub = CTControlV1_TunnelControlService.
 >
 
 public let defaultTunnelControlSocketPath = "/var/run/io.goodkind.celltunnel/control.sock"
+public let tunnelControlSocketEnvironmentVariable = "CELL_TUNNEL_CONTROL_SOCKET"
+
+public func resolvedTunnelControlSocketPath(
+    environment: [String: String] = ProcessInfo.processInfo.environment
+) -> String {
+    guard let override = environment[tunnelControlSocketEnvironmentVariable] else {
+        return defaultTunnelControlSocketPath
+    }
+    let trimmed = override.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty {
+        return defaultTunnelControlSocketPath
+    }
+    return trimmed
+}
 
 public protocol TunnelControlClientProtocol: Sendable {
     func status() async throws -> TunnelDaemonStatusSnapshot
@@ -35,7 +49,7 @@ public actor TunnelControlClient: TunnelControlClientProtocol {
     private var runnerTask: Task<Void, Never>?
     private var shouldRetryInitialRPC = false
 
-    public init(socketPath: String = defaultTunnelControlSocketPath) {
+    public init(socketPath: String = resolvedTunnelControlSocketPath()) {
         self.socketPath = socketPath
     }
 
