@@ -4,10 +4,11 @@
 CONFIG ?= Debug
 CELL_TUNNEL_DEV := swift Tools/cell-tunnel-dev.swift
 ACTIVATION_TARGET_USAGE := mac|iphone|iphone-simulator
+BUILD_TARGET_USAGE := daemon|mac|iphone-simulator|iphone-device|all
 
 SWIFT_MK_MODULES := swift-build.mk
 
-SWIFT_BUILD_CMD ?= $(if $(and $(strip $(TARGET)),$(filter build,$(MAKECMDGOALS))),printf 'build: TARGET is not supported; use make build with no TARGET\n'; exit 1,$(CELL_TUNNEL_DEV) build $(CONFIG))
+SWIFT_BUILD_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) build $(TARGET) $(CONFIG),printf 'build: TARGET=$(BUILD_TARGET_USAGE) is required\n'; exit 1)
 SWIFT_TEST_CMD ?= $(CELL_TUNNEL_DEV) test
 SWIFT_RUN_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) activate $(TARGET) $(CONFIG),printf 'run: TARGET=$(ACTIVATION_TARGET_USAGE) is required\n'; exit 1)
 SWIFT_GENERATE_CMD ?= $(CELL_TUNNEL_DEV) generate
@@ -35,13 +36,22 @@ include bootstrap.mk
 
 .DEFAULT_GOAL := check
 
-.PHONY: format go-audit sign signing-check notary-setup notarize-check notarize
+.PHONY: format go-audit sign signing-check notary-setup notarize-check notarize helper-refresh install-helper uninstall-helper
 
 format:
 	@$(CELL_TUNNEL_DEV) format
 
 go-audit:
 	@$(CELL_TUNNEL_DEV) go-audit
+
+helper-refresh:
+	@$(CELL_TUNNEL_DEV) refresh-helper $(CONFIG)
+
+install-helper:
+	@$(CELL_TUNNEL_DEV) install-helper $(CONFIG)
+
+uninstall-helper:
+	@$(CELL_TUNNEL_DEV) uninstall-helper
 
 sign:
 	@$(CELL_TUNNEL_DEV) sign $(CONFIG)

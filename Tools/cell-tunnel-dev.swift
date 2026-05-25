@@ -4,6 +4,19 @@ import Foundation
 let forwardedArguments = Array(CommandLine.arguments.dropFirst())
 let toolsPackageDirectoryName = "Tools"
 
+func environmentArguments(_ key: String) -> [String] {
+    let environmentValue = ProcessInfo.processInfo.environment[key] ?? ""
+    return environmentValue.split(whereSeparator: \.isWhitespace).map(String.init)
+}
+
+func swiftBuildArguments(packagePath: String, additionalArguments: [String]) -> [String] {
+    var arguments = ["swift", "build"]
+    arguments.append(contentsOf: environmentArguments("SWIFT_MK_SWIFTPM_CACHE_ARGS"))
+    arguments.append(contentsOf: ["--package-path", packagePath])
+    arguments.append(contentsOf: additionalArguments)
+    return arguments
+}
+
 func runToolBinary(_ executable: URL, arguments: [String], workingDirectory: URL) throws {
     let process = Process()
     process.executableURL = executable
@@ -31,14 +44,10 @@ do {
         toolsPackageDirectoryName)
     let buildProcess = Process()
     buildProcess.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    buildProcess.arguments = [
-        "swift",
-        "build",
-        "--package-path",
-        toolsPackageDirectory.path,
-        "--product",
-        "CellTunnelDev",
-    ]
+    buildProcess.arguments = swiftBuildArguments(
+        packagePath: toolsPackageDirectory.path,
+        additionalArguments: ["--product", "CellTunnelDev"]
+    )
     buildProcess.currentDirectoryURL = currentDirectoryURL
     buildProcess.environment = ProcessInfo.processInfo.environment
     try buildProcess.run()
@@ -50,13 +59,10 @@ do {
     let binPathProcess = Process()
     let outputPipe = Pipe()
     binPathProcess.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    binPathProcess.arguments = [
-        "swift",
-        "build",
-        "--package-path",
-        toolsPackageDirectory.path,
-        "--show-bin-path",
-    ]
+    binPathProcess.arguments = swiftBuildArguments(
+        packagePath: toolsPackageDirectory.path,
+        additionalArguments: ["--show-bin-path"]
+    )
     binPathProcess.currentDirectoryURL = currentDirectoryURL
     binPathProcess.environment = ProcessInfo.processInfo.environment
     binPathProcess.standardOutput = outputPipe

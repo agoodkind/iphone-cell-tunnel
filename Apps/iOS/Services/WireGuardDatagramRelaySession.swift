@@ -4,6 +4,7 @@ import Foundation
 import Network
 
 private let logger = CellTunnelLog.logger(category: .relay)
+private let pendingWireGuardDatagramLimit = 64
 
 enum WireGuardDatagramRelayState: String, Sendable {
     case stopped
@@ -49,6 +50,7 @@ enum WireGuardDatagramRelayError: LocalizedError {
 final class WireGuardDatagramRelaySession {
     private let udpClient: CellularWireGuardUDPClient
     private(set) var state = WireGuardDatagramRelayState.stopped
+    private var pendingDatagrams: [WireGuardDatagram] = []
 
     var datagramHandler: ((WireGuardDatagram) -> Void)?
     var errorHandler: ((String) -> Void)?
@@ -91,6 +93,7 @@ final class WireGuardDatagramRelaySession {
         )
         do {
             state = .connecting
+            pendingDatagrams.removeAll(keepingCapacity: true)
             try udpClient.start(endpoint: endpoint)
             logger.notice("wireguard datagram relay connecting")
         } catch {
@@ -106,6 +109,11 @@ final class WireGuardDatagramRelaySession {
     }
 
     func sendToServer(_ datagram: WireGuardDatagram) throws {
+        if state == .connecting {
+            try bufferPendingDatagram(datagram)
+            return
+        }
+
         guard state == .ready else {
             logger.error(
                 """
@@ -134,6 +142,7 @@ final class WireGuardDatagramRelaySession {
         udpClient.errorHandler = nil
         datagramHandler = nil
         errorHandler = nil
+        pendingDatagrams.removeAll(keepingCapacity: false)
         state = .stopped
         logger.notice("wireguard datagram relay stopped")
     }
@@ -141,12 +150,15 @@ final class WireGuardDatagramRelaySession {
     private func applyUDPState(_ udpState: CellularWireGuardUDPState) {
         switch udpState {
         case .stopped:
+            pendingDatagrams.removeAll(keepingCapacity: false)
             state = .stopped
         case .connecting:
             state = .connecting
         case .ready:
             state = .ready
+            flushPendingDatagramsIfNeeded()
         case .failed:
+            pendingDatagrams.removeAll(keepingCapacity: false)
             state = .failed
         }
         logger.notice(
@@ -155,6 +167,59 @@ final class WireGuardDatagramRelaySession {
             relayState=\(self.state.rawValue, privacy: .public)
             """
         )
+    }
+
+    private func bufferPendingDatagram(_ datagram: WireGuardDatagram) throws {
+        guard pendingDatagrams.count < pendingWireGuardDatagramLimit else {
+            logger.error(
+                """
+                wireguard datagram relay pending queue full count=\(self.pendingDatagrams.count, privacy: .public) \
+                recovery=reject-datagram
+                """
+            )
+            throw WireGuardDatagramRelayError.udpConnectionUnavailable
+        }
+
+        pendingDatagrams.append(datagram)
+        logger.notice(
+            """
+            wireguard datagram relay buffered datagram while connecting \
+            pendingCount=\(self.pendingDatagrams.count, privacy: .public) bytes=\(datagram.data.count, privacy: .public)
+            """
+        )
+    }
+
+    private func flushPendingDatagramsIfNeeded() {
+        guard !pendingDatagrams.isEmpty else {
+            return
+        }
+
+        logger.notice(
+            "wireguard datagram relay flushing pending datagrams count=\(self.pendingDatagrams.count, privacy: .public)"
+        )
+        let datagrams = pendingDatagrams
+        pendingDatagrams.removeAll(keepingCapacity: true)
+
+        for datagram in datagrams {
+            do {
+                try udpClient.send(datagram: datagram)
+            } catch {
+                state = .failed
+                reportError(error.localizedDescription)
+                logger.error(
+                    """
+                    wireguard datagram relay pending flush failed \
+                    error=\(error.localizedDescription, privacy: .public)
+                    """
+                )
+                return
+            }
+        }
+    }
+
+    private func reportError(_ message: String) {
+        errorHandler?(message)
+        logger.error("wireguard datagram relay failed error=\(message, privacy: .public)")
     }
 }
 
@@ -192,17 +257,27 @@ final class CellularWireGuardUDPClient {
         stop()
         endpointFamily = endpoint.addressFamily
         let parameters = NWParameters.udp
-        parameters.requiredInterfaceType = .cellular
+        #if targetEnvironment(simulator)
+            logger.notice(
+                "cellular wireguard udp simulator-mode: cellular gate skipped; egress uses host network"
+            )
+        #else
+            parameters.requiredInterfaceType = .cellular
+        #endif
         let connection = NWConnection(
             host: NWEndpoint.Host(endpoint.host), port: wireGuardPort, using: parameters)
-        connection.stateUpdateHandler = { [weak self] state in
+        connection.stateUpdateHandler = { [weak self, weak connection] state in
             let description = String(describing: state)
             let udpState = cellularWireGuardUDPState(for: state)
             let errorMessage = cellularWireGuardUDPErrorMessage(for: state)
             logger.notice(
                 "cellular wireguard udp state changed state=\(description, privacy: .public)")
-            Task { @MainActor [weak self] in
-                self?.handle(connectionState: udpState, errorMessage: errorMessage)
+            Task { @MainActor [weak self, weak connection] in
+                self?.handleStateUpdate(
+                    udpState,
+                    errorMessage: errorMessage,
+                    connection: connection
+                )
             }
         }
         self.connection = connection
@@ -229,13 +304,16 @@ final class CellularWireGuardUDPClient {
         )
         connection.send(
             content: datagram.data,
-            completion: .contentProcessed { [weak self] error in
+            completion: .contentProcessed { [weak self, weak connection] error in
                 if let error {
                     logger.error(
                         "cellular wireguard udp send failed error=\(error.localizedDescription, privacy: .public)"
                     )
-                    Task { @MainActor [weak self] in
-                        self?.reportError(error.localizedDescription)
+                    Task { @MainActor [weak self, weak connection] in
+                        self?.handleSendFailure(
+                            error.localizedDescription,
+                            connection: connection
+                        )
                     }
                     return
                 }
@@ -276,52 +354,122 @@ final class CellularWireGuardUDPClient {
     private func receive(on connection: NWConnection) {
         logger.debug("cellular wireguard udp receive scheduled")
         connection.receiveMessage { [weak self, weak connection] data, _, isComplete, error in
-            if let error {
-                logger.error(
-                    "cellular wireguard udp receive failed error=\(error.localizedDescription, privacy: .public)"
+            Task { @MainActor [weak self, weak connection] in
+                self?.handleReceiveResult(
+                    data: data,
+                    isComplete: isComplete,
+                    error: error,
+                    connection: connection
                 )
-                Task { @MainActor [weak self] in
-                    self?.reportError(error.localizedDescription)
-                }
-                return
-            }
-
-            if let data, !data.isEmpty {
-                logger.debug(
-                    "cellular wireguard udp received datagram bytes=\(data.count, privacy: .public)"
-                )
-                Task { @MainActor [weak self] in
-                    guard let self else {
-                        return
-                    }
-                    do {
-                        let datagram = try WireGuardDatagram(
-                            data: data, addressFamily: endpointFamily)
-                        datagramHandler?(datagram)
-                    } catch {
-                        logger.error(
-                            """
-                            cellular wireguard udp datagram rejected \
-                            error=\(error.localizedDescription, privacy: .public) recovery=drop-datagram
-                            """
-                        )
-                    }
-                }
-            }
-
-            if isComplete {
-                logger.debug("cellular wireguard udp message completed")
-            }
-
-            guard let connection else {
-                logger.notice("cellular wireguard udp receive stopped")
-                return
-            }
-
-            Task { @MainActor [weak self] in
-                self?.receive(on: connection)
             }
         }
+    }
+
+    private func handleStateUpdate(
+        _ state: CellularWireGuardUDPState,
+        errorMessage: String?,
+        connection: NWConnection?
+    ) {
+        guard
+            guardCurrentConnection(
+                connection,
+                staleMessage: "cellular wireguard udp stale state update ignored"
+            )
+        else {
+            return
+        }
+        handle(connectionState: state, errorMessage: errorMessage)
+    }
+
+    private func handleSendFailure(_ message: String, connection: NWConnection?) {
+        guard
+            guardCurrentConnection(
+                connection,
+                staleMessage: "cellular wireguard udp stale send failure ignored"
+            )
+        else {
+            return
+        }
+        reportError(message)
+    }
+
+    private func handleReceiveResult(
+        data: Data?,
+        isComplete: Bool,
+        error: NWError?,
+        connection: NWConnection?
+    ) {
+        guard
+            guardCurrentConnection(
+                connection,
+                staleMessage: "cellular wireguard udp stale receive loop ignored"
+            )
+        else {
+            return
+        }
+
+        if let error {
+            logger.error(
+                "cellular wireguard udp receive failed error=\(error.localizedDescription, privacy: .public)"
+            )
+            reportError(error.localizedDescription)
+            return
+        }
+
+        if let data, !data.isEmpty {
+            forwardReceivedDatagram(data, connection: connection)
+        }
+
+        if isComplete {
+            logger.debug("cellular wireguard udp message completed")
+        }
+
+        guard let connection else {
+            logger.notice("cellular wireguard udp receive stopped")
+            return
+        }
+        receive(on: connection)
+    }
+
+    private func forwardReceivedDatagram(_ data: Data, connection: NWConnection?) {
+        guard
+            guardCurrentConnection(
+                connection,
+                staleMessage: "cellular wireguard udp stale datagram ignored"
+            )
+        else {
+            return
+        }
+
+        logger.debug(
+            "cellular wireguard udp received datagram bytes=\(data.count, privacy: .public)"
+        )
+        do {
+            let datagram = try WireGuardDatagram(data: data, addressFamily: endpointFamily)
+            datagramHandler?(datagram)
+        } catch {
+            logger.error(
+                """
+                cellular wireguard udp datagram rejected \
+                error=\(error.localizedDescription, privacy: .public) recovery=drop-datagram
+                """
+            )
+        }
+    }
+
+    private func guardCurrentConnection(_ connection: NWConnection?, staleMessage: String) -> Bool {
+        guard isCurrentConnection(connection) else {
+            logger.debug("\(staleMessage, privacy: .public)")
+            return false
+        }
+        return true
+    }
+
+    private func isCurrentConnection(_ connection: NWConnection?) -> Bool {
+        guard let connection else {
+            return false
+        }
+        return self.connection === connection
     }
 }
 

@@ -1,6 +1,9 @@
+import CellTunnelLog
 import Foundation
 
 enum ActivationActions {}
+
+private let activationLogger = CellTunnelLog.logger(category: .build)
 
 func activateTarget(_ target: ActivationTarget, configuration: String) throws {
     switch target {
@@ -21,6 +24,79 @@ func activateMacApp(configuration: String) throws {
 
     _ = try capture("pkill", ["-x", "CellTunnelMac"], echoOutput: false)
     try run("open", ["-n", appPath.path, "--args", macActivationArgument])
+}
+
+func refreshMacHelper(configuration: String) throws {
+    try installMacHelper(configuration: configuration)
+}
+
+func installMacHelper(configuration: String) throws {
+    let expectedAppPath = macAppPath(configuration: configuration).standardizedFileURL
+    guard fileManager.fileExists(atPath: expectedAppPath.path) else {
+        throw ToolError.failure("built app not found: \(expectedAppPath.path)")
+    }
+    let expectedHelperPath = expectedAppPath.appendingPathComponent(helperExecutableRelativePath)
+    let expectedHelperFingerprint = try helperFingerprint(at: expectedHelperPath)
+    let previousHelperProcessID = currentHelperProcessID()
+
+    uninstallMacHelper()
+    try installMacAppBundle(from: expectedAppPath)
+    try registerInstalledMacHelper()
+
+    let deadline = ContinuousClock.now + helperRefreshTimeout
+    while ContinuousClock.now < deadline {
+        let verification = currentInstalledHelperVerification(
+            expectedHelperFingerprint: expectedHelperFingerprint,
+            previousProcessID: previousHelperProcessID
+        )
+        if verification.isVerifiedCurrentBuild {
+            return
+        }
+        try throwIfHelperVerificationIsStale(
+            verification,
+            expectedHelperFingerprint: expectedHelperFingerprint
+        )
+        waitForHelperVerificationPollInterval()
+    }
+
+    throw ToolError.failure(
+        """
+        helper verification timed out target=\(helperServiceTarget) \
+        expected_bundle=\(expectedAppPath.path) \
+        expected_fingerprint=\(expectedHelperFingerprint)
+        """
+    )
+}
+
+func uninstallMacHelper() {
+    activationLogger.notice("helper uninstall removing registered launchd and app artifacts")
+    _ = runBestEffort("pkill", ["-x", "CellTunnelMac"])
+    _ = runBestEffort("sudo", ["launchctl", "bootout", "system/\(helperServiceLabel)"])
+    _ = runBestEffort("sudo", ["sfltool", "resetbtm"])
+    _ = runBestEffort(
+        "sudo",
+        ["rm", "-f", "/Library/LaunchDaemons/\(daemonLaunchDaemonPlistName)"])
+    _ = runBestEffort(
+        "sudo",
+        ["rm", "-f", "/Library/PrivilegedHelperTools/\(helperServiceLabel)"])
+    _ = runBestEffort("sudo", ["rm", "-rf", installedMacAppPath.path])
+}
+
+func installMacAppBundle(from sourceAppPath: URL) throws {
+    let installedParentPath = installedMacAppPath.deletingLastPathComponent().path
+    try run("sudo", ["rm", "-rf", installedMacAppPath.path])
+    try run("sudo", ["cp", "-R", sourceAppPath.path, installedParentPath])
+    try run("sudo", ["chown", "-R", "root:wheel", installedMacAppPath.path])
+}
+
+func registerInstalledMacHelper() throws {
+    let executablePath =
+        installedMacAppPath
+        .appendingPathComponent("Contents/MacOS/CellTunnelMac")
+    guard fileManager.fileExists(atPath: executablePath.path) else {
+        throw ToolError.failure("installed app executable not found: \(executablePath.path)")
+    }
+    try run("open", ["-W", "-n", installedMacAppPath.path, "--args", macHelperInstallArgument])
 }
 
 func activatePhoneDevice(configuration: String) throws {
@@ -45,6 +121,7 @@ func activatePhoneSimulator(configuration: String) throws {
             "--terminate-running-process",
             simulatorIdentifier,
             phoneBundleIdentifier,
+            phoneActivationArgument,
         ]
     )
 }
@@ -112,6 +189,7 @@ func launchInstalledPhoneDevice() throws {
             "--device",
             deviceIdentifier,
             phoneBundleIdentifier,
+            phoneActivationArgument,
         ]
     )
 }
@@ -297,4 +375,65 @@ func compareVersionComponents(lhs: [Int], rhs: [Int]) -> Int {
         }
     }
     return 0
+}
+
+func currentHelperProcessID() -> Int? {
+    activationLogger.notice(
+        "helper verification querying launchctl target=\(helperServiceTarget, privacy: .public)")
+    let result: CommandResult
+    do {
+        result = try capture("launchctl", ["print", helperServiceTarget], echoOutput: false)
+    } catch {
+        activationLogger.error(
+            "helper verification launchctl query failed error=\(error.localizedDescription, privacy: .public)"
+        )
+        return nil
+    }
+    guard result.status == 0 else {
+        return nil
+    }
+    guard let processIDRange = result.output.range(of: "pid = ") else {
+        return nil
+    }
+    let pidSuffix = result.output[processIDRange.upperBound...]
+    let processIDText = pidSuffix.prefix(while: \.isNumber)
+    guard let processID = Int(processIDText) else {
+        return nil
+    }
+    return processID
+}
+
+func waitForHelperVerificationPollInterval() {
+    activationLogger.debug("helper verification waiting for next poll interval")
+    RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+}
+
+func throwIfHelperVerificationIsStale(
+    _ verification: HelperVerification,
+    expectedHelperFingerprint: String
+) throws {
+    activationLogger.notice(
+        "helper verification evaluating registration expectedFingerprint=\(expectedHelperFingerprint, privacy: .public)"
+    )
+    switch verification {
+    case .staleRegistration(let registeredState):
+        activationLogger.error(
+            """
+            helper verification detected stale registration \
+            appPath=\(registeredState.appPath.path, privacy: .public) \
+            fingerprint=\(registeredState.helperFingerprint, privacy: .public) \
+            expectedFingerprint=\(expectedHelperFingerprint, privacy: .public)
+            """
+        )
+        throw ToolError.failure(
+            """
+            helper is registered from \(registeredState.appPath.path) \
+            fingerprint=\(registeredState.helperFingerprint) \
+            expected_fingerprint=\(expectedHelperFingerprint); \
+            run make install-helper to reinstall the privileged helper from the current build
+            """
+        )
+    case .currentBuild, .notRegistered, .registeredButUnavailable:
+        return
+    }
 }

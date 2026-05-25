@@ -44,8 +44,19 @@ let macOSPlatformName = "macosx"
 let iOSDevicePlatformName = "iphoneos"
 let iOSSimulatorPlatformName = "iphonesimulator"
 let phoneBundleIdentifier = "io.goodkind.CellTunnelPhone"
+let macBundleIdentifier = "io.goodkind.CellTunnelMac"
 let macActivationArgument = "--cell-tunnel-activate-helper"
+let macHelperInstallArgument = "--cell-tunnel-install-helper"
+let phoneActivationArgument = "--cell-tunnel-start-relay"
 let autoCreatedSimulatorNamePrefix = "CellTunnelPhone Auto"
+let helperServiceTarget = "system/io.goodkind.celltunneld"
+let helperServiceLabel = "io.goodkind.celltunneld"
+let helperItemIdentifier = "16.io.goodkind.celltunneld"
+let helperParentItemIdentifier = "2.io.goodkind.CellTunnelMac"
+let helperExecutableRelativePath = "Contents/Library/LaunchServices/celltunneld"
+let helperRefreshPollingInterval = Duration.milliseconds(500)
+let helperRefreshTimeout = Duration.seconds(15)
+let installedMacAppPath = URL(fileURLWithPath: "/Applications/CellTunnelMac.app")
 
 enum ActivationTarget: String, CaseIterable {
     case mac
@@ -53,7 +64,40 @@ enum ActivationTarget: String, CaseIterable {
     case iphoneSimulator = "iphone-simulator"
 }
 
+enum XcodeBuildCacheMode {
+    case enabled
+    case disabled
+}
+
 let activationTargetUsage = ActivationTarget.allCases.map(\.rawValue).joined(separator: "|")
+
+func environmentArguments(_ key: String) -> [String] {
+    let environmentValue = ProcessInfo.processInfo.environment[key] ?? ""
+    return environmentValue.split(whereSeparator: \.isWhitespace).map(String.init)
+}
+
+func swiftBuildArguments(_ additionalArguments: [String]) -> [String] {
+    var arguments = ["build"]
+    arguments.append(contentsOf: environmentArguments("SWIFT_MK_SWIFTPM_CACHE_ARGS"))
+    arguments.append(contentsOf: additionalArguments)
+    return arguments
+}
+
+func swiftTestArguments(_ additionalArguments: [String] = []) -> [String] {
+    var arguments = ["test"]
+    arguments.append(contentsOf: environmentArguments("SWIFT_MK_SWIFTPM_CACHE_ARGS"))
+    arguments.append(contentsOf: additionalArguments)
+    return arguments
+}
+
+func xcodeBuildCacheArguments(_ mode: XcodeBuildCacheMode) -> [String] {
+    switch mode {
+    case .enabled:
+        return environmentArguments("SWIFT_MK_XCODEBUILD_ARGS")
+    case .disabled:
+        return environmentArguments("SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS")
+    }
+}
 
 func run(
     _ executable: String,
@@ -75,6 +119,28 @@ func run(
         let renderedCommand = failureMessage ?? ([executable] + arguments).joined(separator: " ")
         throw ToolError.failure(
             "\(renderedCommand) failed with status \(process.terminationStatus)")
+    }
+}
+
+@discardableResult
+func runBestEffort(
+    _ executable: String,
+    _ arguments: [String],
+    environment: [String: String] = [:],
+    workingDirectory: URL = repoRoot
+) -> Int32 {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    process.arguments = [executable] + arguments
+    process.currentDirectoryURL = workingDirectory
+    process.environment = mergedEnvironment(environment)
+
+    do {
+        try process.run()
+        process.waitUntilExit()
+        return process.terminationStatus
+    } catch {
+        return 127
     }
 }
 

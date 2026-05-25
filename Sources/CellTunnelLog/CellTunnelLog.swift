@@ -6,6 +6,7 @@ public enum CellTunnelLog {
 
     public enum Category: String, Sendable {
         case app
+        case build
         case daemon
         case relay
         case store

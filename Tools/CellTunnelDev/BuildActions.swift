@@ -7,40 +7,6 @@ func generateProject() throws {
     try run("tuist", ["generate", "--no-open"])
 }
 
-func buildProject(configuration: String) throws {
-    try generateProject()
-    try lintSwiftProject()
-    try lintGoProject()
-    try auditLogging()
-    try auditGoProject()
-    let config = try signingConfig()
-    try requireSigningIdentity(config)
-    try buildSwiftProduct("celltunnelctl")
-    try fileManager.createDirectory(at: productsDirectory, withIntermediateDirectories: true)
-    try installSwiftExecutable(productName: "celltunnelctl", outputName: "celltunnelctl")
-    try runGoMake("build")
-    try buildScheme(
-        scheme: "CellTunnelMac",
-        configuration: configuration,
-        destination: "platform=macOS",
-        platformName: macOSPlatformName
-    )
-    try buildScheme(
-        scheme: "CellTunnelPhone",
-        configuration: configuration,
-        destination: ProcessInfo.processInfo.environment["IOS_SIMULATOR_DESTINATION"]
-            ?? "generic/platform=iOS Simulator",
-        platformName: iOSSimulatorPlatformName
-    )
-    try buildPhoneDevice(
-        configuration: configuration,
-        signing: config,
-        shouldGenerateProject: false
-    )
-    try packageMacBundle(configuration: configuration, signing: config)
-    try signMacProducts(configuration: configuration, signing: config)
-}
-
 func generateTypedIPC() throws {
     try requireTool("protoc")
     try requireTool("protoc-gen-go")
@@ -102,11 +68,15 @@ func generateGoTypedIPC(outputDirectory: URL) throws {
 }
 
 func buildSwiftProduct(_ productName: String) throws {
-    try run("swift", ["build", "--product", productName])
+    try run("swift", swiftBuildArguments(["--product", productName]))
 }
 
 func installSwiftExecutable(productName: String, outputName: String) throws {
-    let binPathResult = try capture("swift", ["build", "--show-bin-path"], echoOutput: false)
+    let binPathResult = try capture(
+        "swift",
+        swiftBuildArguments(["--show-bin-path"]),
+        echoOutput: false
+    )
     guard binPathResult.status == 0 else {
         throw ToolError.failure("swift build --show-bin-path failed")
     }
@@ -150,6 +120,7 @@ func buildScheme(
         derivedDataDirectory.path,
     ]
     arguments.append(contentsOf: xcodebuildOptions)
+    arguments.append(contentsOf: xcodeBuildCacheArguments(.enabled))
     arguments.append(contentsOf: [
         "SYMROOT=\(buildDirectory.path)",
         "OBJROOT=\(buildDirectory.appendingPathComponent("Intermediates.noindex").path)",
@@ -257,7 +228,7 @@ func selectedPhoneDeviceIdentifier() throws -> String {
 }
 func testProject() throws {
     try generateTypedIPC()
-    try run("swift", ["test"])
+    try run("swift", swiftTestArguments())
     try runGoMake("test")
 }
 
@@ -390,6 +361,7 @@ func swiftLintAnalyze() throws {
             "platform=macOS",
             "-derivedDataPath",
             analyzeDirectory.appendingPathComponent("SwiftLintDerivedData").path,
+        ] + xcodeBuildCacheArguments(.disabled) + [
             "clean",
             "build",
         ],
@@ -459,7 +431,7 @@ func goMakeEnvironment() -> [String: String] {
 }
 
 func runMacApp() throws {
-    try buildProject(configuration: "Debug")
+    try buildProject(target: .mac, configuration: "Debug")
     let appPath = productsDirectory.appendingPathComponent("Debug/macosx/CellTunnelMac.app")
     guard fileManager.fileExists(atPath: appPath.path) else {
         throw ToolError.failure("built app not found: \(appPath.path)")

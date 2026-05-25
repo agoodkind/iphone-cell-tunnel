@@ -11,11 +11,13 @@ let package = Package(
         .executable(name: "LoggingAudit", targets: ["LoggingAudit"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/swiftlang/swift-syntax.git", exact: "603.0.0")
+        .package(path: ".."),
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", exact: "603.0.0"),
     ],
     targets: [
         .executableTarget(
             name: "CellTunnelDev",
+            dependencies: [.product(name: "CellTunnelLog", package: "iphone-cell-tunnel")],
             path: "CellTunnelDev"
         ),
         .executableTarget(

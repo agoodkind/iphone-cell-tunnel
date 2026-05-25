@@ -8,12 +8,15 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 )
 
 const (
 	defaultControlSocketPath = "/var/run/io.goodkind.celltunnel/control.sock"
 	controlSocketEnvironment = "CELL_TUNNEL_CONTROL_SOCKET"
+	logLevelEnvironment      = "CELL_TUNNEL_LOG_LEVEL"
+	defaultLogLevel          = slog.LevelDebug
 )
 
 func main() {
@@ -28,9 +31,29 @@ func main() {
 
 func configureLogging() {
 	handler := slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: configuredLogLevel(),
 	})
 	slog.SetDefault(slog.New(handler).With("service", "celltunneld"))
+}
+
+var logLevelByName = map[string]slog.Level{
+	"debug":   slog.LevelDebug,
+	"info":    slog.LevelInfo,
+	"warn":    slog.LevelWarn,
+	"warning": slog.LevelWarn,
+	"error":   slog.LevelError,
+}
+
+func configuredLogLevel() slog.Level {
+	raw := strings.TrimSpace(os.Getenv(logLevelEnvironment))
+	if raw == "" {
+		return defaultLogLevel
+	}
+	if level, ok := logLevelByName[strings.ToLower(raw)]; ok {
+		return level
+	}
+	fmt.Fprintf(os.Stderr, "unknown %s value %q; using debug\n", logLevelEnvironment, raw)
+	return defaultLogLevel
 }
 
 func run(arguments []string) error {

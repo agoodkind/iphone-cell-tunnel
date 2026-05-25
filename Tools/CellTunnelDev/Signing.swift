@@ -303,7 +303,7 @@ func notarizeMacApp(configuration: String) throws {
     let config = try signingConfig()
     let notaryArguments = try notaryCredentialArguments(config)
 
-    try buildProject(configuration: configuration)
+    try buildProject(target: .all, configuration: configuration)
     let appPath = macAppPath(configuration: configuration)
     guard fileManager.fileExists(atPath: appPath.path) else {
         throw ToolError.failure("built app not found: \(appPath.path)")
