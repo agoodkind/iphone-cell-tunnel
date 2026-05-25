@@ -9,6 +9,7 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
     case check
     case discover
     case probe
+    case select(serviceID: String)
     case start(TunnelStartSettings)
     case startDiscovery
     case status
@@ -35,6 +36,8 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
             return .discover
         case "probe":
             return .probe
+        case "select":
+            return try .select(serviceID: parseSelect(arguments: Array(arguments.dropFirst())))
         case "stop":
             return .stop
         case "start":
@@ -42,6 +45,20 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
         default:
             throw TunnelDaemonError.usage("unknown command: \(command)")
         }
+    }
+
+    private static func parseSelect(arguments: [String]) throws -> String {
+        guard let serviceID = arguments.first else {
+            throw TunnelDaemonError.usage("select requires <serviceID>")
+        }
+        guard arguments.count == 1 else {
+            throw TunnelDaemonError.usage("select accepts only <serviceID>")
+        }
+        let trimmed = serviceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw TunnelDaemonError.usage("select <serviceID> must not be empty")
+        }
+        return trimmed
     }
 
     private static func parseStart(arguments: [String]) throws -> TunnelStartSettings {
@@ -102,6 +119,9 @@ public struct TunnelControlCLIExecutor: Sendable {
             return try await discover()
         case .probe:
             return try await probe()
+        case .select(let serviceID):
+            let snapshot = try await client.selectRelayService(serviceID: serviceID)
+            return snapshot.renderedOutput
         case .start(let settings):
             let status = try await client.startTunnel(settings: settings)
             return status.renderedOutput
@@ -117,28 +137,14 @@ public struct TunnelControlCLIExecutor: Sendable {
         let deadline = ContinuousClock.now + discoverTimeout
         while ContinuousClock.now < deadline {
             let snapshot = try await client.listRelayServices()
-            let readyServices = snapshot.services.filter { $0.preferredEndpoint != nil }
-            if snapshot.selectedEndpoint != nil {
+            let hasReadyService = snapshot.services.contains { $0.preferredEndpoint != nil }
+            if hasReadyService {
                 return snapshot.renderedOutput
-            }
-            if readyServices.count == 1 {
-                let selected = try await client.selectRelayService(serviceID: readyServices[0].id)
-                return selected.renderedOutput
             }
             try await Task.sleep(for: discoverPollingInterval)
         }
 
-        let finalSnapshot = try await client.listRelayServices()
-        if finalSnapshot.selectedEndpoint != nil {
-            return finalSnapshot.renderedOutput
-        }
-
-        throw TunnelDaemonError.controlFailure(
-            TunnelControlFailure(
-                errorCode: .relaySelectionRequired,
-                message: "discovery did not resolve exactly one relay service within timeout"
-            )
-        )
+        return try await client.listRelayServices().renderedOutput
     }
 
     private func probe() async throws -> String {

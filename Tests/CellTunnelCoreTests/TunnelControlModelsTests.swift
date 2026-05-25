@@ -39,14 +39,39 @@ final class TunnelControlModelsTests: XCTestCase {
         XCTAssertEqual(action, .probe)
     }
 
-    func testCLIExecutorDiscoverAutoSelectsSingleReadyService() async throws {
+    func testCLIParseSelectRequiresServiceID() {
+        XCTAssertThrowsError(try TunnelControlCLIAction.parse(arguments: ["select"]))
+    }
+
+    func testCLIParseSelectRejectsExtraArguments() {
+        XCTAssertThrowsError(
+            try TunnelControlCLIAction.parse(arguments: ["select", "relay-1", "extra"])
+        )
+    }
+
+    func testCLIParseSelectTrimsAndStoresServiceID() throws {
+        let action = try TunnelControlCLIAction.parse(arguments: ["select", "  relay-1  "])
+
+        XCTAssertEqual(action, .select(serviceID: "relay-1"))
+    }
+
+    func testCLIExecutorDiscoverListsServicesWithoutSelecting() async throws {
         let client = FakeTunnelControlClient()
         let executor = TunnelControlCLIExecutor(client: client)
 
         let output = try await executor.run(action: .discover)
 
-        XCTAssertEqual(
-            client.events, ["startRelayDiscovery", "listRelayServices", "selectRelayService"])
+        XCTAssertEqual(client.events, ["startRelayDiscovery", "listRelayServices"])
+        XCTAssertEqual(output, client.listedDiscoverySnapshot.renderedOutput)
+    }
+
+    func testCLIExecutorSelectCallsSelectRelayService() async throws {
+        let client = FakeTunnelControlClient()
+        let executor = TunnelControlCLIExecutor(client: client)
+
+        let output = try await executor.run(action: .select(serviceID: "relay-1"))
+
+        XCTAssertEqual(client.events, ["selectRelayService"])
         XCTAssertEqual(output, client.selectedDiscoverySnapshot.renderedOutput)
     }
 

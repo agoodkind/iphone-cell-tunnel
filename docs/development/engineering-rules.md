@@ -8,6 +8,18 @@
 - Do not infer architecture from filenames alone.
 - Do not edit generated Xcode projects or workspaces as source of truth.
 
+## Build Guardrails
+
+- `swift Tools/cell-tunnel-dev.swift build` requires an explicit target. Bare `build` exits
+  non-zero. `make build TARGET=<target>` carries the same guardrail.
+- The build runs `generate`, Swift lint, Go lint, log audit, and Go audit before any compile.
+  None of those can be skipped from the command line.
+- The build prints SHA256 fingerprints for `Products/celltunneld` and `Products/celltunnelctl`. The
+  `mac` and `all` targets also fingerprint the daemon copies inside the freshly built bundle and
+  the installed app bundle. Mismatches between source binary, bundle copy, and installed copy
+  indicate stale install state.
+- When the wrapper output is piped through `tee`, read `${PIPESTATUS[0]}` instead of `$?`.
+
 ## Swift
 
 - Swift formatting is owned by `.swift-format`.
