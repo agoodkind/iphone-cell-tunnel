@@ -6,6 +6,10 @@ import Observation
 import UIKit
 
 private let logger = CellTunnelLog.logger(category: .relay)
+private let relayKeepAliveIdleSeconds = 10
+private let relayKeepAliveIntervalSeconds = 5
+private let relayKeepAliveProbeCount = 3
+private let relayHeartbeatInterval: Duration = .seconds(8)
 
 @MainActor
 @Observable
@@ -13,9 +17,10 @@ final class PhoneRelayController: @unchecked Sendable {
     private let monitorQueue = DispatchQueue(label: "CellTunnelPhone.CellularMonitor")
     private var cellularMonitor: NWPathMonitor?
     private var listener: NWListener?
-    private var connections: [PhonePeerConnection] = []
+    var connections: [PhonePeerConnection] = []
     private let jsonEncoder = JSONEncoder()
-    private let wireGuardSession = WireGuardDatagramRelaySession()
+    let wireGuardSession = WireGuardDatagramRelaySession()
+    private var heartbeatTask: Task<Void, Never>?
 
     var isRunning = false
     var isAdvertising = false
@@ -54,6 +59,7 @@ final class PhoneRelayController: @unchecked Sendable {
         startCellularMonitor()
         wireGuardSession.prepareForHandshake()
         startListener()
+        startHeartbeatLoop()
     }
 
     func stop() {
@@ -66,6 +72,7 @@ final class PhoneRelayController: @unchecked Sendable {
         advertisedServiceName = nil
         listenerPort = nil
         UIApplication.shared.isIdleTimerDisabled = false
+        stopHeartbeatLoop()
         wireGuardSession.stop()
         cellularMonitor?.cancel()
         cellularMonitor = nil
@@ -75,6 +82,35 @@ final class PhoneRelayController: @unchecked Sendable {
             connection.connection.cancel()
         }
         connections.removeAll()
+    }
+
+    private func startHeartbeatLoop() {
+        heartbeatTask?.cancel()
+        logger.notice("relay heartbeat loop starting interval=\(relayHeartbeatInterval, privacy: .public)")
+        heartbeatTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: relayHeartbeatInterval)
+                } catch {
+                    logger.notice(
+                        "relay heartbeat loop sleep interrupted recovery=exit-loop error=\(error.localizedDescription, privacy: .public)"
+                    )
+                    return
+                }
+                guard !Task.isCancelled, let self else {
+                    return
+                }
+                for peer in connections {
+                    sendKeepAlive(to: peer)
+                }
+            }
+        }
+    }
+
+    private func stopHeartbeatLoop() {
+        logger.notice("relay heartbeat loop stopping")
+        heartbeatTask?.cancel()
+        heartbeatTask = nil
     }
 }
 
@@ -111,7 +147,12 @@ extension PhoneRelayController {
 
     private func startListener() {
         do {
-            let parameters = NWParameters.tcp
+            let tcpOptions = NWProtocolTCP.Options()
+            tcpOptions.enableKeepalive = true
+            tcpOptions.keepaliveIdle = relayKeepAliveIdleSeconds
+            tcpOptions.keepaliveInterval = relayKeepAliveIntervalSeconds
+            tcpOptions.keepaliveCount = relayKeepAliveProbeCount
+            let parameters = NWParameters(tls: nil, tcp: tcpOptions)
             parameters.includePeerToPeer = true
             let listener = try NWListener(using: parameters)
             let serviceName = UIDevice.current.name
@@ -146,7 +187,7 @@ extension PhoneRelayController {
 
     private func accept(_ connection: NWConnection) {
         let peerConnection = PhonePeerConnection(connection: connection)
-        connections.append(peerConnection)
+        replacePeerConnections(with: peerConnection)
         connectedPeerName = "Mac"
         wireGuardSession.datagramHandler = { [weak self, weak peerConnection] datagram in
             Task { @MainActor [weak self, weak peerConnection] in
@@ -169,22 +210,17 @@ extension PhoneRelayController {
             "accepted relay peer activeConnections=\(activeConnectionCount, privacy: .public)")
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             if case .failed(let error) = state {
-                Task { @MainActor [weak self] in
-                    self?.lastError = error.localizedDescription
-                    logger.error(
-                        "relay peer failed error=\(error.localizedDescription, privacy: .public)")
+                Task { @MainActor [weak self, weak connection] in
+                    guard let connection else {
+                        return
+                    }
+                    self?.handlePeerFailure(error, connection: connection)
                 }
             }
 
             if case .cancelled = state, let connection {
                 Task { @MainActor [weak self] in
-                    self?.connections.removeAll { $0.connection === connection }
-                    self?.connectedPeerName =
-                        self?.connections.isEmpty == true ? nil : self?.connectedPeerName
-                    if self?.connections.isEmpty == true {
-                        self?.wireGuardSession.datagramHandler = nil
-                        self?.wireGuardSession.errorHandler = nil
-                    }
+                    self?.removePeerConnection(connection)
                     logger.notice(
                         "relay peer cancelled activeConnections=\(self?.connections.count ?? 0, privacy: .public)"
                     )
@@ -210,11 +246,11 @@ extension PhoneRelayController {
     ) -> @Sendable (Data?, NWConnection.ContentContext?, Bool, NWError?) -> Void {
         { [weak self, weak peerConnection] data, _, isComplete, error in
             if let error {
-                Task { @MainActor [weak self] in
-                    self?.lastError = error.localizedDescription
-                    logger.error(
-                        "relay receive failed error=\(error.localizedDescription, privacy: .public)"
-                    )
+                Task { @MainActor [weak self, weak peerConnection] in
+                    guard let peerConnection else {
+                        return
+                    }
+                    self?.handlePeerFailure(error, connection: peerConnection.connection)
                 }
                 return
             }
@@ -272,6 +308,8 @@ extension PhoneRelayController {
             handleHello(frame: frame, from: peerConnection)
         case .wireGuardDatagram:
             handleWireGuardDatagram(frame: frame, from: peerConnection)
+        case .keepAlive:
+            logger.notice("relay keepalive received streamID=\(frame.streamID, privacy: .public)")
         case .error:
             lastError = String(data: frame.payload, encoding: .utf8) ?? "Peer reported an error"
             let reportedError = lastError ?? "unknown"
@@ -279,6 +317,17 @@ extension PhoneRelayController {
         default:
             break
         }
+    }
+
+    private func sendKeepAlive(to peerConnection: PhonePeerConnection) {
+        let frame = RelayFrame(
+            streamID: 0,
+            operation: .keepAlive,
+            addressFamily: peerConnection.lastAddressFamily,
+            payload: Data()
+        )
+        logger.notice("sending relay keepalive")
+        send(frame: frame, to: peerConnection)
     }
 
     private func handleHello(frame: RelayFrame, from peerConnection: PhonePeerConnection) {

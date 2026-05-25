@@ -328,7 +328,7 @@ func ParseWireGuardEndpoint(value string) (RelayEndpoint, error) {
 	}
 
 	addressFamily := RelayAddressFamilyIPv4
-	address, err := netip.ParseAddr(host)
+	address, err := netip.ParseAddr(stripScopedHost(host))
 	if err == nil && address.Is6() {
 		addressFamily = RelayAddressFamilyIPv6
 	}
@@ -338,6 +338,19 @@ func ParseWireGuardEndpoint(value string) (RelayEndpoint, error) {
 		Host:          host,
 		Port:          port,
 	}, nil
+}
+
+func stripScopedHost(host string) string {
+	trimmedHost, _ := scopedHostParts(host)
+	return trimmedHost
+}
+
+func scopedHostParts(host string) (string, string) {
+	trimmedHost, scope, found := strings.Cut(host, "%")
+	if found {
+		return trimmedHost, scope
+	}
+	return host, ""
 }
 
 func parsePort(value string) (uint16, error) {

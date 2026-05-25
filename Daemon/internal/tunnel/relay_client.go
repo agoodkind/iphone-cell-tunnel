@@ -1,12 +1,14 @@
 package tunnel
 
 import (
+	"celltunnel/daemon/internal/usbmuxd"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -14,11 +16,18 @@ import (
 	"golang.zx2c4.com/wireguard/conn"
 )
 
+const usbmuxdRelayPrefix = "usbmuxd:"
+
 const (
-	relayDialTimeout = 10 * time.Second
-	relayReadSize    = 64 * 1024
-	relayHelloStream = 1
+	relayDialTimeout       = 10 * time.Second
+	relayReadSize          = 64 * 1024
+	relayHelloStream       = 1
+	relayKeepAliveIdle     = 10 * time.Second
+	relayHeartbeatInterval = 8 * time.Second
 )
+
+// RelayDialer opens the local relay channel used to reach the foreground iPhone app.
+type RelayDialer func(context.Context) (net.Conn, error)
 
 // TCPRelayClient connects the daemon's WireGuard bind to the foreground iPhone relay.
 type TCPRelayClient struct {
@@ -26,6 +35,7 @@ type TCPRelayClient struct {
 	serverEndpoint    RelayEndpoint
 	bind              *RelayDatagramBind
 	logger            *slog.Logger
+	dial              RelayDialer
 	connection        net.Conn
 	peerEndpoint      conn.Endpoint
 	writeMutex        sync.Mutex
@@ -42,11 +52,25 @@ var (
 	errRelayProtocolFrameError = errors.New("relay protocol frame error")
 )
 
-// NewTCPRelayClient creates a relay client for one iPhone relay TCP endpoint.
+// NewTCPRelayClient creates a relay client that dials the iPhone relay over plain TCP.
 func NewTCPRelayClient(
 	localEndpoint string,
 	serverEndpoint RelayEndpoint,
 	bind *RelayDatagramBind,
+) (*TCPRelayClient, error) {
+	dial := func(dialContext context.Context) (net.Conn, error) {
+		dialer := net.Dialer{}
+		return dialer.DialContext(dialContext, "tcp", localEndpoint)
+	}
+	return NewRelayClientWithDialer(localEndpoint, serverEndpoint, bind, dial)
+}
+
+// NewRelayClientWithDialer creates a relay client that uses the supplied dialer to open the local channel.
+func NewRelayClientWithDialer(
+	localEndpoint string,
+	serverEndpoint RelayEndpoint,
+	bind *RelayDatagramBind,
+	dial RelayDialer,
 ) (*TCPRelayClient, error) {
 	peerEndpoint, err := bind.ParseEndpoint(serverEndpoint.AddressPort())
 	if err != nil {
@@ -57,8 +81,96 @@ func NewTCPRelayClient(
 		serverEndpoint: serverEndpoint,
 		bind:           bind,
 		logger:         slog.Default().With("component", "relay-client"),
+		dial:           dial,
 		peerEndpoint:   peerEndpoint,
 	}, nil
+}
+
+// buildRelayClient picks the right transport based on the local endpoint string.
+// An endpoint of the form "usbmuxd:<udid>:<port>" dials through usbmuxd; anything
+// else is treated as a plain TCP "host:port" address.
+func buildRelayClient(
+	localEndpoint string,
+	serverEndpoint RelayEndpoint,
+	bind *RelayDatagramBind,
+) (*TCPRelayClient, error) {
+	if strings.HasPrefix(localEndpoint, usbmuxdRelayPrefix) {
+		udid, port, err := parseUsbmuxdRelayEndpoint(localEndpoint)
+		if err != nil {
+			return nil, err
+		}
+		dial := newUsbmuxdDialer(udid, port)
+		return NewRelayClientWithDialer(localEndpoint, serverEndpoint, bind, dial)
+	}
+	return NewTCPRelayClient(localEndpoint, serverEndpoint, bind)
+}
+
+func parseUsbmuxdRelayEndpoint(localEndpoint string) (string, uint16, error) {
+	body := strings.TrimPrefix(localEndpoint, usbmuxdRelayPrefix)
+	separatorIndex := strings.LastIndex(body, ":")
+	if separatorIndex <= 0 || separatorIndex == len(body)-1 {
+		err := fmt.Errorf("usbmuxd relay endpoint malformed: %q", localEndpoint)
+		slog.Error("usbmuxd relay endpoint parse failed", "err", err, "endpoint", localEndpoint)
+		return "", 0, err
+	}
+	udid := body[:separatorIndex]
+	portText := body[separatorIndex+1:]
+	parsedPort, err := strconv.ParseUint(portText, 10, 16)
+	if err != nil {
+		slog.Error("usbmuxd relay endpoint port parse failed", "err", err, "port", portText)
+		return "", 0, fmt.Errorf("usbmuxd relay endpoint port %q: %w", portText, err)
+	}
+	return udid, uint16(parsedPort), nil
+}
+
+func newUsbmuxdDialer(udid string, port uint16) RelayDialer {
+	dialerLogger := slog.Default().With("component", "relay-client", "transport", "usbmuxd", "udid", udid, "port", port)
+	return func(dialContext context.Context) (net.Conn, error) {
+		devices, err := usbmuxd.ListDevices()
+		if err != nil {
+			dialerLogger.Error("usbmuxd dialer list devices failed", "err", err)
+			return nil, fmt.Errorf("usbmuxd list devices: %w", err)
+		}
+		deviceID, ok := selectUsbmuxdDeviceID(devices, udid)
+		if !ok {
+			err := fmt.Errorf("usbmuxd device with udid %q not attached", udid)
+			dialerLogger.Error("usbmuxd dialer device not attached", "err", err)
+			return nil, err
+		}
+		dialDone := make(chan dialResult, 1)
+		go func() {
+			defer func() {
+				recovered := recover()
+				if recovered == nil {
+					return
+				}
+				dialerLogger.Error("usbmuxd dialer goroutine recovered failure", "err", fmt.Errorf("usbmuxd dial recovered: %v", recovered))
+				dialDone <- dialResult{err: fmt.Errorf("usbmuxd dial recovered: %v", recovered)}
+			}()
+			connection, err := usbmuxd.Dial(deviceID, port)
+			dialDone <- dialResult{connection: connection, err: err}
+		}()
+		select {
+		case <-dialContext.Done():
+			return nil, dialContext.Err()
+		case result := <-dialDone:
+			return result.connection, result.err
+		}
+	}
+}
+
+type dialResult struct {
+	connection net.Conn
+	err        error
+}
+
+func selectUsbmuxdDeviceID(devices []usbmuxd.Device, udid string) (int, bool) {
+	for _, device := range devices {
+		if device.UDID == udid {
+			return device.DeviceID, true
+		}
+	}
+	return 0, false
 }
 
 // SetDisconnectHandler registers the callback used by the runtime to stop after unexpected relay loss.
@@ -76,11 +188,19 @@ func (client *TCPRelayClient) Start(parentContext context.Context) error {
 	dialContext, cancelDial := context.WithTimeout(parentContext, relayDialTimeout)
 	defer cancelDial()
 
-	dialer := net.Dialer{}
-	connection, err := dialer.DialContext(dialContext, "tcp", client.localEndpoint)
+	connection, err := client.dial(dialContext)
 	if err != nil {
 		logger.ErrorContext(parentContext, "relay client dial failed", "err", err)
 		return fmt.Errorf("dial relay client: %w", err)
+	}
+
+	if tcpConnection, ok := connection.(*net.TCPConn); ok {
+		if keepAliveErr := tcpConnection.SetKeepAlive(true); keepAliveErr != nil {
+			logger.ErrorContext(parentContext, "relay client set keepalive failed", "err", keepAliveErr)
+		}
+		if keepAlivePeriodErr := tcpConnection.SetKeepAlivePeriod(relayKeepAliveIdle); keepAlivePeriodErr != nil {
+			logger.ErrorContext(parentContext, "relay client set keepalive period failed", "err", keepAlivePeriodErr)
+		}
 	}
 
 	runContext, cancel := context.WithCancel(parentContext)
@@ -111,8 +231,52 @@ func (client *TCPRelayClient) Start(parentContext context.Context) error {
 		}()
 		client.readLoop(runContext)
 	}()
+	go func() {
+		defer func() {
+			recoveredValue := recover()
+			if recoveredValue == nil {
+				return
+			}
+			logger.ErrorContext(
+				runContext,
+				"relay client heartbeat loop recovered failure",
+				"err",
+				fmt.Errorf("relay heartbeat loop failure: %v", recoveredValue),
+			)
+			client.notifyUnexpectedDisconnect(fmt.Errorf("relay heartbeat loop recovered failure: %v", recoveredValue))
+		}()
+		client.heartbeatLoop(runContext)
+	}()
 	logger.InfoContext(parentContext, "relay client started")
 	return nil
+}
+
+func (client *TCPRelayClient) heartbeatLoop(runContext context.Context) {
+	ticker := time.NewTicker(relayHeartbeatInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-runContext.Done():
+			return
+		case <-ticker.C:
+			if err := client.sendKeepAlive(); err != nil {
+				client.logger.ErrorContext(runContext, "relay client heartbeat send failed", "err", err)
+				client.notifyUnexpectedDisconnect(fmt.Errorf("send keepalive: %w", err))
+				return
+			}
+		}
+	}
+}
+
+func (client *TCPRelayClient) sendKeepAlive() error {
+	frame := RelayFrame{
+		Version:       relayFrameVersion,
+		StreamID:      0,
+		Operation:     RelayOperationKeepAlive,
+		AddressFamily: client.serverEndpoint.AddressFamily,
+	}
+	client.logger.Info("relay client sending keepalive")
+	return client.writeFrame(frame)
 }
 
 // SendWireGuardDatagram sends one encrypted WireGuard UDP datagram to the iPhone relay.
@@ -253,6 +417,8 @@ func (client *TCPRelayClient) notifyUnexpectedDisconnect(err error) {
 func (client *TCPRelayClient) handleFrame(frame RelayFrame) {
 	logger := client.logger.With("operation", frame.Operation, "stream_id", frame.StreamID)
 	switch frame.Operation {
+	case RelayOperationKeepAlive:
+		logger.Info("relay client received keepalive")
 	case RelayOperationHello, RelayOperationPairConfirm, RelayOperationStats:
 		logger.Info("relay client ignored control frame", "bytes", len(frame.Payload))
 	case RelayOperationWireGuardDatagram:

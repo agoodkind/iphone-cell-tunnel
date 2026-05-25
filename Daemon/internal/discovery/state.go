@@ -22,6 +22,8 @@ type stateStore struct {
 	lastError         string
 }
 
+var preferredReadyService = selectPreferredReadyService
+
 func newStateStore() stateStore {
 	return stateStore{
 		phase:    PhaseStopped,
@@ -45,6 +47,7 @@ func (store *stateStore) stopBrowsing() {
 func (store *stateStore) fail(message string) {
 	store.phase = PhaseFailed
 	store.lastError = message
+	store.clearSelection()
 }
 
 func (store *stateStore) applyBrowse(event BrowseEvent) string {
@@ -98,7 +101,7 @@ func (store *stateStore) applyAddress(event AddressEvent) {
 	}
 
 	endpoint := Endpoint{
-		Host:   event.Host,
+		Host:   scopedHost(event.Host, event.Family, service.identity.InterfaceIndex),
 		Port:   service.port,
 		Family: event.Family,
 	}
@@ -174,6 +177,13 @@ func (store *stateStore) updateSelection() {
 		selected := *service.preferredEndpoint
 		store.selectedEndpoint = &selected
 		store.selectedAuto = true
+		return
+	}
+	if preferredService := preferredReadyService(readyServices); preferredService != nil {
+		store.selectedServiceID = preferredService.identity.ServiceID
+		selected := *preferredService.preferredEndpoint
+		store.selectedEndpoint = &selected
+		store.selectedAuto = true
 	}
 }
 
@@ -219,5 +229,19 @@ func cloneEndpoint(endpoint *Endpoint) *Endpoint {
 		return nil
 	}
 	selected := *endpoint
+	return &selected
+}
+
+func selectPreferredReadyService(services []serviceState) *serviceState {
+	usbLikeServices := make([]serviceState, 0, len(services))
+	for _, service := range services {
+		if isUSBLocalInterface(service.identity.InterfaceIndex) {
+			usbLikeServices = append(usbLikeServices, service)
+		}
+	}
+	if len(usbLikeServices) != 1 {
+		return nil
+	}
+	selected := usbLikeServices[0]
 	return &selected
 }

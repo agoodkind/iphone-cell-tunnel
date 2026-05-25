@@ -30,7 +30,6 @@ type RelayDatagramBind struct {
 	sink    RelayDatagramSink
 	mutex   sync.Mutex
 	opened  bool
-	closed  bool
 }
 
 var (
@@ -44,9 +43,8 @@ var (
 // NewRelayDatagramBind creates a wireguard-go bind backed by the local relay channel.
 func NewRelayDatagramBind(sink RelayDatagramSink) *RelayDatagramBind {
 	return &RelayDatagramBind{
-		logger:  slog.Default().With("component", "relay-bind"),
-		inbound: make(chan relayInboundDatagram, conn.IdealBatchSize),
-		sink:    sink,
+		logger: slog.Default().With("component", "relay-bind"),
+		sink:   sink,
 	}
 }
 
@@ -63,18 +61,16 @@ func (bind *RelayDatagramBind) Open(port uint16) ([]conn.ReceiveFunc, uint16, er
 	bind.mutex.Lock()
 	defer bind.mutex.Unlock()
 
-	if bind.closed {
-		bind.logger.Error("relay bind open failed", "err", errRelayBindClosed)
-		return nil, 0, errRelayBindClosed
-	}
 	if bind.opened {
 		bind.logger.Error("relay bind open failed", "err", errRelayBindAlreadyOpen)
 		return nil, 0, errRelayBindAlreadyOpen
 	}
 
+	inbound := make(chan relayInboundDatagram, conn.IdealBatchSize)
+	bind.inbound = inbound
 	bind.opened = true
 	bind.logger.Info("relay bind opened", "requested_port", port)
-	return []conn.ReceiveFunc{bind.receive}, 0, nil
+	return []conn.ReceiveFunc{bind.receiveFrom(inbound)}, 0, nil
 }
 
 // Close closes the relay bind and unblocks pending receive calls.
@@ -82,13 +78,15 @@ func (bind *RelayDatagramBind) Close() error {
 	bind.mutex.Lock()
 	defer bind.mutex.Unlock()
 
-	if bind.closed {
+	if !bind.opened {
 		bind.logger.Debug("relay bind close ignored because bind is already closed")
 		return nil
 	}
 
-	bind.closed = true
-	close(bind.inbound)
+	inbound := bind.inbound
+	bind.inbound = nil
+	bind.opened = false
+	close(inbound)
 	bind.logger.Info("relay bind closed")
 	return nil
 }
@@ -103,10 +101,10 @@ func (bind *RelayDatagramBind) SetMark(mark uint32) error {
 func (bind *RelayDatagramBind) Send(bufs [][]byte, endpoint conn.Endpoint) error {
 	bind.mutex.Lock()
 	sink := bind.sink
-	closed := bind.closed
+	opened := bind.opened
 	bind.mutex.Unlock()
 
-	if closed {
+	if !opened {
 		bind.logger.Error("relay bind send failed", "err", errRelayBindClosed)
 		return errRelayBindClosed
 	}
@@ -152,7 +150,7 @@ func (bind *RelayDatagramBind) InjectInboundDatagram(datagram []byte, endpoint c
 	bind.mutex.Lock()
 	defer bind.mutex.Unlock()
 
-	if bind.closed {
+	if !bind.opened || bind.inbound == nil {
 		bind.logger.Error("relay bind inbound inject failed", "err", errRelayBindClosed)
 		return errRelayBindClosed
 	}
@@ -169,37 +167,37 @@ func (bind *RelayDatagramBind) InjectInboundDatagram(datagram []byte, endpoint c
 	}
 }
 
-func (bind *RelayDatagramBind) receive(
-	packets [][]byte,
-	sizes []int,
-	endpoints []conn.Endpoint,
-) (int, error) {
-	datagram, ok := <-bind.inbound
-	if !ok {
-		bind.logger.Info("relay bind receive closed")
-		return 0, net.ErrClosed
-	}
-	if len(packets) == 0 || len(sizes) == 0 || len(endpoints) == 0 {
-		return 0, fmt.Errorf("%w: missing receive slots", errRelayDatagramTooLarge)
-	}
-	if len(packets[0]) < len(datagram.payload) {
-		bind.logger.Error(
-			"relay bind receive buffer too small",
-			"err",
-			errRelayDatagramTooLarge,
-			"datagram_bytes",
-			len(datagram.payload),
-			"buffer_bytes",
-			len(packets[0]),
-		)
-		return 0, errRelayDatagramTooLarge
-	}
+func (bind *RelayDatagramBind) receiveFrom(
+	inbound <-chan relayInboundDatagram,
+) conn.ReceiveFunc {
+	return func(packets [][]byte, sizes []int, endpoints []conn.Endpoint) (int, error) {
+		datagram, ok := <-inbound
+		if !ok {
+			bind.logger.Info("relay bind receive closed")
+			return 0, net.ErrClosed
+		}
+		if len(packets) == 0 || len(sizes) == 0 || len(endpoints) == 0 {
+			return 0, fmt.Errorf("%w: missing receive slots", errRelayDatagramTooLarge)
+		}
+		if len(packets[0]) < len(datagram.payload) {
+			bind.logger.Error(
+				"relay bind receive buffer too small",
+				"err",
+				errRelayDatagramTooLarge,
+				"datagram_bytes",
+				len(datagram.payload),
+				"buffer_bytes",
+				len(packets[0]),
+			)
+			return 0, errRelayDatagramTooLarge
+		}
 
-	copy(packets[0], datagram.payload)
-	sizes[0] = len(datagram.payload)
-	endpoints[0] = datagram.endpoint
-	bind.logger.Debug("relay bind received datagram", "bytes", len(datagram.payload))
-	return 1, nil
+		copy(packets[0], datagram.payload)
+		sizes[0] = len(datagram.payload)
+		endpoints[0] = datagram.endpoint
+		bind.logger.Debug("relay bind received datagram", "bytes", len(datagram.payload))
+		return 1, nil
+	}
 }
 
 // RelayConnEndpoint adapts RelayEndpoint to wireguard-go's conn.Endpoint interface.

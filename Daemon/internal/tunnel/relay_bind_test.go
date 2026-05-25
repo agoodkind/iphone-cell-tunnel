@@ -21,6 +21,9 @@ func (sink *recordingRelaySink) SendWireGuardDatagram(datagram []byte) error {
 func TestRelayDatagramBindPreservesOutgoingDatagramBytes(t *testing.T) {
 	sink := &recordingRelaySink{}
 	bind := NewRelayDatagramBind(sink)
+	if _, _, err := bind.Open(0); err != nil {
+		t.Fatalf("open relay bind: %v", err)
+	}
 	endpoint := NewRelayConnEndpoint(RelayEndpoint{
 		AddressFamily: RelayAddressFamilyIPv4,
 		Host:          "203.0.113.10",
@@ -78,5 +81,44 @@ func TestRelayDatagramBindDeliversInboundDatagramBytes(t *testing.T) {
 	}
 	if endpoints[0].DstToString() != "[2001:db8::10]:51820" {
 		t.Fatalf("unexpected endpoint: %s", endpoints[0].DstToString())
+	}
+}
+
+func TestRelayDatagramBindCanReopenAfterClose(t *testing.T) {
+	bind := NewRelayDatagramBind(nil)
+	firstReceiveFunctions, _, err := bind.Open(0)
+	if err != nil {
+		t.Fatalf("open first relay bind: %v", err)
+	}
+	if err := bind.Close(); err != nil {
+		t.Fatalf("close first relay bind: %v", err)
+	}
+
+	packets := [][]byte{make([]byte, 64)}
+	sizes := make([]int, 1)
+	endpoints := make([]conn.Endpoint, 1)
+	if _, err := firstReceiveFunctions[0](packets, sizes, endpoints); err == nil {
+		t.Fatal("first receive function succeeded after close")
+	}
+
+	secondReceiveFunctions, _, err := bind.Open(0)
+	if err != nil {
+		t.Fatalf("open second relay bind: %v", err)
+	}
+	endpoint := NewRelayConnEndpoint(RelayEndpoint{
+		AddressFamily: RelayAddressFamilyIPv4,
+		Host:          "203.0.113.10",
+		Port:          51820,
+	})
+	if err := bind.InjectInboundDatagram([]byte{0x05, 0x06}, endpoint); err != nil {
+		t.Fatalf("inject second datagram: %v", err)
+	}
+
+	count, err := secondReceiveFunctions[0](packets, sizes, endpoints)
+	if err != nil {
+		t.Fatalf("receive second datagram: %v", err)
+	}
+	if count != 1 || sizes[0] != 2 {
+		t.Fatalf("unexpected second receive result count=%d size=%d", count, sizes[0])
 	}
 }

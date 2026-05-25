@@ -69,16 +69,18 @@ func (manager *Manager) Start() error {
 // Stop ends DNS-SD discovery and preserves the last known selected relay.
 func (manager *Manager) Stop() error {
 	manager.mutex.Lock()
-	defer manager.mutex.Unlock()
 
 	if manager.driver == nil {
 		manager.store.stopBrowsing()
+		manager.mutex.Unlock()
 		return nil
 	}
 
 	activeDriver := manager.driver
 	manager.driver = nil
 	manager.store.stopBrowsing()
+	manager.mutex.Unlock()
+
 	if err := activeDriver.Stop(); err != nil {
 		discoveryLogger.Error("stop discovery driver failed", "err", err)
 		return fmt.Errorf("stop discovery driver: %w", err)

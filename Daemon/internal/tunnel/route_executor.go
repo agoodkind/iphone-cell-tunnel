@@ -36,8 +36,8 @@ type NetworkManager interface {
 	ConfigureIPv4Address(ctx context.Context, operation NetworkOperation) error
 	ConfigureIPv6Address(ctx context.Context, operation NetworkOperation) error
 	ConfigureInterfaceMTUAndUp(ctx context.Context, operation NetworkOperation) error
-	AddDefaultRoute(ctx context.Context, operation NetworkOperation) error
-	DeleteDefaultRoute(ctx context.Context, operation NetworkOperation) error
+	AddRoute(ctx context.Context, operation NetworkOperation) error
+	DeleteRoute(ctx context.Context, operation NetworkOperation) error
 	FindRouteInterface(ctx context.Context, preservation LocalRelayPreservation) (string, error)
 	AddLocalRelayRoute(ctx context.Context, operation NetworkOperation) error
 	DeleteLocalRelayRoute(ctx context.Context, operation NetworkOperation) error
@@ -132,9 +132,10 @@ func (manager DarwinNetworkManager) ConfigureIPv6Address(ctx context.Context, op
 		return err
 	}
 	request := ipv6AliasRequest{
-		Address:    rawIPv6Sockaddr(address),
-		PrefixMask: rawIPv6Sockaddr(mask),
-		Flags:      ipv6NoDadFlag,
+		Address:     rawIPv6Sockaddr(address),
+		Destination: rawIPv6Sockaddr(address),
+		PrefixMask:  rawIPv6Sockaddr(mask),
+		Flags:       ipv6NoDadFlag,
 		Lifetime: ipv6AddressLifetime{
 			ValidLifetime:     nd6InfiniteLifetime,
 			PreferredLifetime: nd6InfiniteLifetime,
@@ -200,25 +201,25 @@ func (manager DarwinNetworkManager) ConfigureInterfaceMTUAndUp(ctx context.Conte
 	return nil
 }
 
-// AddDefaultRoute installs a default IPv4 or IPv6 interface route through a routing socket.
-func (manager DarwinNetworkManager) AddDefaultRoute(ctx context.Context, operation NetworkOperation) error {
-	logger.InfoContext(ctx, "default route add starting", "operation", operation.Kind, "interface_name", operation.InterfaceName)
+// AddRoute installs an IPv4 or IPv6 interface route through a routing socket.
+func (manager DarwinNetworkManager) AddRoute(ctx context.Context, operation NetworkOperation) error {
+	logger.InfoContext(ctx, "route add starting", "operation", operation.Kind, "interface_name", operation.InterfaceName)
 	if err := manager.writeRouteMutation(ctx, unix.RTM_ADD, operation); err != nil {
-		logger.ErrorContext(ctx, "default route add failed", "err", err, "operation", operation.Kind)
+		logger.ErrorContext(ctx, "route add failed", "err", err, "operation", operation.Kind)
 		return err
 	}
-	logger.InfoContext(ctx, "default route add completed", "operation", operation.Kind, "interface_name", operation.InterfaceName)
+	logger.InfoContext(ctx, "route add completed", "operation", operation.Kind, "interface_name", operation.InterfaceName)
 	return nil
 }
 
-// DeleteDefaultRoute removes a default IPv4 or IPv6 interface route through a routing socket.
-func (manager DarwinNetworkManager) DeleteDefaultRoute(ctx context.Context, operation NetworkOperation) error {
-	logger.InfoContext(ctx, "default route delete starting", "operation", operation.Kind, "interface_name", operation.InterfaceName)
+// DeleteRoute removes an IPv4 or IPv6 interface route through a routing socket.
+func (manager DarwinNetworkManager) DeleteRoute(ctx context.Context, operation NetworkOperation) error {
+	logger.InfoContext(ctx, "route delete starting", "operation", operation.Kind, "interface_name", operation.InterfaceName)
 	if err := manager.writeRouteMutation(ctx, unix.RTM_DELETE, operation); err != nil {
-		logger.ErrorContext(ctx, "default route delete failed", "err", err, "operation", operation.Kind)
+		logger.ErrorContext(ctx, "route delete failed", "err", err, "operation", operation.Kind)
 		return err
 	}
-	logger.InfoContext(ctx, "default route delete completed", "operation", operation.Kind, "interface_name", operation.InterfaceName)
+	logger.InfoContext(ctx, "route delete completed", "operation", operation.Kind, "interface_name", operation.InterfaceName)
 	return nil
 }
 
@@ -349,10 +350,8 @@ func routeOperationInterface(operation NetworkOperation) (*net.Interface, error)
 }
 
 func routeOperationNeedsInterface(kind NetworkOperationKind) bool {
-	return kind == networkOperationAddIPv4Default ||
-		kind == networkOperationAddIPv6Default ||
-		kind == networkOperationDeleteIPv4Default ||
-		kind == networkOperationDeleteIPv6Default ||
+	return kind == networkOperationAddIPv4Route ||
+		kind == networkOperationAddIPv6Route ||
 		kind == networkOperationAddIPv4RelayHost ||
 		kind == networkOperationAddIPv6RelayHost
 }
@@ -366,7 +365,11 @@ func routeDestinationAndMask(operation NetworkOperation) (route.Addr, route.Addr
 		if isHostRoute(operation.Kind) {
 			return destination, nil, nil
 		}
-		return destination, &route.Inet6Addr{}, nil
+		netmask, err := ipv6PrefixRouteMask(operation.PrefixLength)
+		if err != nil {
+			return nil, nil, err
+		}
+		return destination, netmask, nil
 	}
 	destination, err := ipv4RouteDestination(operation)
 	if err != nil {
@@ -375,11 +378,15 @@ func routeDestinationAndMask(operation NetworkOperation) (route.Addr, route.Addr
 	if isHostRoute(operation.Kind) {
 		return destination, nil, nil
 	}
-	return destination, &route.Inet4Addr{}, nil
+	netmask, err := ipv4PrefixRouteMask(operation.PrefixLength)
+	if err != nil {
+		return nil, nil, err
+	}
+	return destination, netmask, nil
 }
 
 func ipv4RouteDestination(operation NetworkOperation) (route.Addr, error) {
-	address := "0.0.0.0"
+	address := operation.Address
 	if operation.EndpointHost != "" {
 		address = operation.EndpointHost
 	}
@@ -391,7 +398,7 @@ func ipv4RouteDestination(operation NetworkOperation) (route.Addr, error) {
 }
 
 func ipv6RouteDestination(operation NetworkOperation) (route.Addr, error) {
-	address := "::"
+	address := operation.Address
 	if operation.EndpointHost != "" {
 		address = operation.EndpointHost
 	}
@@ -399,7 +406,27 @@ func ipv6RouteDestination(operation NetworkOperation) (route.Addr, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &route.Inet6Addr{IP: parsedAddress}, nil
+	zoneID, err := routeZoneID(operation.RelayInterface)
+	if err != nil {
+		return nil, err
+	}
+	return &route.Inet6Addr{IP: parsedAddress, ZoneID: zoneID}, nil
+}
+
+func ipv4PrefixRouteMask(prefixLength int) (*route.Inet4Addr, error) {
+	mask, err := ipv4PrefixMask(prefixLength)
+	if err != nil {
+		return nil, err
+	}
+	return &route.Inet4Addr{IP: mask}, nil
+}
+
+func ipv6PrefixRouteMask(prefixLength int) (*route.Inet6Addr, error) {
+	mask, err := ipv6PrefixMask(prefixLength)
+	if err != nil {
+		return nil, err
+	}
+	return &route.Inet6Addr{IP: mask}, nil
 }
 
 func writeRouteMessage(message *route.RouteMessage, expectResponse bool) (*route.RouteMessage, error) {
@@ -468,13 +495,29 @@ func parseRelayAddress(preservation LocalRelayPreservation) (route.Addr, error) 
 		if err != nil {
 			return nil, err
 		}
-		return &route.Inet6Addr{IP: address}, nil
+		zoneID, err := routeZoneID(preservation.EndpointInterface)
+		if err != nil {
+			return nil, err
+		}
+		return &route.Inet6Addr{IP: address, ZoneID: zoneID}, nil
 	}
 	address, err := parseIPv4Address(preservation.EndpointHost)
 	if err != nil {
 		return nil, err
 	}
 	return &route.Inet4Addr{IP: address}, nil
+}
+
+func routeZoneID(interfaceName string) (int, error) {
+	if interfaceName == "" {
+		return 0, nil
+	}
+	networkInterface, err := net.InterfaceByName(interfaceName)
+	if err != nil {
+		logger.Error("route zone interface resolution failed", "err", err, "interface_name", interfaceName)
+		return 0, fmt.Errorf("resolve route zone interface: %w", err)
+	}
+	return networkInterface.Index, nil
 }
 
 func isHostRoute(kind NetworkOperationKind) bool {
@@ -686,10 +729,14 @@ func (executor RouteExecutor) localRelayInstallOperations(
 ) ([]NetworkOperation, error) {
 	operations := make([]NetworkOperation, 0, len(preservations))
 	for _, preservation := range preservations {
-		interfaceName, err := executor.manager.FindRouteInterface(ctx, preservation)
-		if err != nil {
-			logger.ErrorContext(ctx, "local relay route interface lookup failed", "err", err)
-			return nil, fmt.Errorf("find local relay route interface: %w", err)
+		interfaceName := preservation.EndpointInterface
+		if interfaceName == "" {
+			resolvedInterface, err := executor.manager.FindRouteInterface(ctx, preservation)
+			if err != nil {
+				logger.ErrorContext(ctx, "local relay route interface lookup failed", "err", err)
+				return nil, fmt.Errorf("find local relay route interface: %w", err)
+			}
+			interfaceName = resolvedInterface
 		}
 		operations = append(operations, addLocalRelayPreservationOperation(preservation, interfaceName))
 	}
@@ -704,10 +751,10 @@ func (executor RouteExecutor) applyOperation(ctx context.Context, operation Netw
 		return executor.wrapOperationError(ctx, "configure ipv6 address", operation, executor.manager.ConfigureIPv6Address(ctx, operation))
 	case networkOperationInterfaceMTUAndUp:
 		return executor.wrapOperationError(ctx, "configure interface mtu and up", operation, executor.manager.ConfigureInterfaceMTUAndUp(ctx, operation))
-	case networkOperationAddIPv4Default, networkOperationAddIPv6Default:
-		return executor.wrapOperationError(ctx, "add default route", operation, executor.manager.AddDefaultRoute(ctx, operation))
-	case networkOperationDeleteIPv4Default, networkOperationDeleteIPv6Default:
-		return executor.wrapOperationError(ctx, "delete default route", operation, executor.manager.DeleteDefaultRoute(ctx, operation))
+	case networkOperationAddIPv4Route, networkOperationAddIPv6Route:
+		return executor.wrapOperationError(ctx, "add route", operation, executor.manager.AddRoute(ctx, operation))
+	case networkOperationDeleteIPv4Route, networkOperationDeleteIPv6Route:
+		return executor.wrapOperationError(ctx, "delete route", operation, executor.manager.DeleteRoute(ctx, operation))
 	case networkOperationAddIPv4RelayHost, networkOperationAddIPv6RelayHost:
 		return executor.wrapOperationError(ctx, "add local relay route", operation, executor.manager.AddLocalRelayRoute(ctx, operation))
 	case networkOperationDeleteIPv4RelayHost, networkOperationDeleteIPv6RelayHost:
@@ -754,9 +801,10 @@ func addLocalRelayPreservationOperation(
 func removeLocalRelayPreservationOperation(preservation LocalRelayPreservation) NetworkOperation {
 	if preservation.AddressFamily == RelayAddressFamilyIPv6 {
 		return NetworkOperation{
-			Kind:          networkOperationDeleteIPv6RelayHost,
-			EndpointHost:  preservation.EndpointHost,
-			AddressFamily: RelayAddressFamilyIPv6,
+			Kind:           networkOperationDeleteIPv6RelayHost,
+			EndpointHost:   preservation.EndpointHost,
+			RelayInterface: preservation.EndpointInterface,
+			AddressFamily:  RelayAddressFamilyIPv6,
 		}
 	}
 	return NetworkOperation{
@@ -769,9 +817,10 @@ func removeLocalRelayPreservationOperation(preservation LocalRelayPreservation) 
 func localRelayRemoveOperation(operation NetworkOperation) NetworkOperation {
 	if operation.Kind == networkOperationAddIPv6RelayHost {
 		return NetworkOperation{
-			Kind:          networkOperationDeleteIPv6RelayHost,
-			EndpointHost:  operation.EndpointHost,
-			AddressFamily: RelayAddressFamilyIPv6,
+			Kind:           networkOperationDeleteIPv6RelayHost,
+			EndpointHost:   operation.EndpointHost,
+			RelayInterface: operation.RelayInterface,
+			AddressFamily:  RelayAddressFamilyIPv6,
 		}
 	}
 	if operation.Kind == networkOperationAddIPv4RelayHost {

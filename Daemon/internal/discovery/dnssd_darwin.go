@@ -628,8 +628,10 @@ func (loop *serviceLoop) run(onError func(error)) {
 }
 
 func (loop *serviceLoop) poll(pollDescriptor []unix.PollFd) error {
+	logger := slog.Default().With("component", "discovery", "loop", loop.name)
 	_, err := unix.Poll(pollDescriptor, int((250 * time.Millisecond).Milliseconds()))
 	if err != nil {
+		logger.Error("dns-sd socket poll failed", "err", err)
 		return fmt.Errorf("poll dns-sd socket: %w", err)
 	}
 	return nil

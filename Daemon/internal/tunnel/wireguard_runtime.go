@@ -46,8 +46,9 @@ func NewWireGuardRuntime(config Config) (*WireGuardRuntime, error) {
 	if err != nil {
 		return nil, err
 	}
+	config = ConfigWithWireGuardConfig(config, wireGuardConfig)
 	relayBind := NewRelayDatagramBind(nil)
-	relayClient, err := NewTCPRelayClient(config.LocalRelayEndpoint, wireGuardConfig.Peer.Endpoint, relayBind)
+	relayClient, err := buildRelayClient(config.LocalRelayEndpoint, wireGuardConfig.Peer.Endpoint, relayBind)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +109,7 @@ func (runtime *WireGuardRuntime) Start(parentContext context.Context) error {
 		logger.ErrorContext(parentContext, "wireguard runtime tun name failed", "err", err)
 		return fmt.Errorf("read wireguard tun name: %w", err)
 	}
-	runtime.routePlan = BuildRoutePlan(runtime.config, interfaceName)
+	runtime.routePlan = BuildRoutePlan(runtime.config, runtime.wireGuardConfig, interfaceName)
 	logger.InfoContext(
 		parentContext,
 		"wireguard runtime route plan prepared",

@@ -68,4 +68,25 @@ final class RelayCodecTests: XCTestCase {
 
         XCTAssertEqual(decodedPayload.wireGuardServer, endpoint)
     }
+
+    func testFrameBufferDrainsMultipleFramesAfterRemovingPrefix() throws {
+        var buffer = RelayFrameBuffer()
+        let firstFrame = RelayFrame(
+            streamID: 1,
+            operation: .hello,
+            addressFamily: .ipv6,
+            payload: Data("first".utf8)
+        )
+        let secondFrame = RelayFrame(
+            streamID: 2,
+            operation: .wireGuardDatagram,
+            addressFamily: .ipv4,
+            payload: Data([0xde, 0xad, 0xbe, 0xef])
+        )
+
+        let encodedFrames = RelayCodec.encode(firstFrame) + RelayCodec.encode(secondFrame)
+        let decodedFrames = try buffer.append(encodedFrames)
+
+        XCTAssertEqual(decodedFrames, [firstFrame, secondFrame])
+    }
 }

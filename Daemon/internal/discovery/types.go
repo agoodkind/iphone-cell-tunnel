@@ -5,6 +5,7 @@ import (
 	"net"
 	"slices"
 	"strconv"
+	"strings"
 )
 
 // AddressFamily identifies the preferred socket family for a relay endpoint.
@@ -42,7 +43,11 @@ type Endpoint struct {
 
 // SocketAddress renders the endpoint for tunnel runtime configuration.
 func (endpoint Endpoint) SocketAddress() string {
-	return net.JoinHostPort(endpoint.Host, strconv.FormatUint(uint64(endpoint.Port), 10))
+	port := strconv.FormatUint(uint64(endpoint.Port), 10)
+	if strings.HasPrefix(endpoint.Host, "usbmuxd:") {
+		return endpoint.Host + ":" + port
+	}
+	return net.JoinHostPort(endpoint.Host, port)
 }
 
 // Identity is the stable daemon-side identity for one DNS-SD relay service.

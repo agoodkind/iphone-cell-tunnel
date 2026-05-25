@@ -8,6 +8,7 @@ public enum RelayAddressFamily: UInt8, CaseIterable, Codable, Sendable {
 public enum RelayOperation: UInt8, CaseIterable, Codable, Sendable {
     case hello = 1
     case pairConfirm = 2
+    case keepAlive = 10
     case pathStatus = 40
     case wireGuardDatagram = 50
     case error = 250
@@ -115,7 +116,20 @@ public enum RelayCodecError: Error, Equatable {
 }
 
 public enum RelayCodec {
-    public static let headerLength = 17
+    private enum HeaderField {
+        static let versionOffset = 0
+        static let operationOffset = 1
+        static let addressFamilyOffset = 2
+        static let flagsOffset = 3
+        static let flagsLength = 2
+        static let streamIDOffset = 5
+        static let streamIDLength = 8
+        static let payloadLengthOffset = 13
+        static let payloadLengthLength = 4
+    }
+
+    public static let headerLength =
+        HeaderField.payloadLengthOffset + HeaderField.payloadLengthLength
 
     public static func encode(_ frame: RelayFrame) -> Data {
         var data = Data()
@@ -135,12 +149,18 @@ public enum RelayCodec {
             throw RelayCodecError.frameTooShort
         }
 
-        let version = data[0]
+        let version = byte(atOffset: HeaderField.versionOffset, in: data)
         guard version == RelayFrame.currentVersion else {
             throw RelayCodecError.unsupportedVersion(version)
         }
 
-        return integer(bigEndianBytes: data[13..<17])
+        return integer(
+            bigEndianBytes: bytes(
+                in: data,
+                offset: HeaderField.payloadLengthOffset,
+                length: HeaderField.payloadLengthLength
+            )
+        )
     }
 
     public static func decode(_ data: Data) throws -> RelayFrame {
@@ -148,24 +168,42 @@ public enum RelayCodec {
             throw RelayCodecError.frameTooShort
         }
 
-        let version = data[0]
+        let version = byte(atOffset: HeaderField.versionOffset, in: data)
         guard version == RelayFrame.currentVersion else {
             throw RelayCodecError.unsupportedVersion(version)
         }
 
-        let operationValue = data[1]
+        let operationValue = byte(atOffset: HeaderField.operationOffset, in: data)
         guard let operation = RelayOperation(rawValue: operationValue) else {
             throw RelayCodecError.unknownOperation(operationValue)
         }
 
-        let addressFamilyValue = data[2]
+        let addressFamilyValue = byte(atOffset: HeaderField.addressFamilyOffset, in: data)
         guard let addressFamily = RelayAddressFamily(rawValue: addressFamilyValue) else {
             throw RelayCodecError.unknownAddressFamily(addressFamilyValue)
         }
 
-        let flags: UInt16 = integer(bigEndianBytes: data[3..<5])
-        let streamID: UInt64 = integer(bigEndianBytes: data[5..<13])
-        let payloadLength: UInt32 = integer(bigEndianBytes: data[13..<17])
+        let flags: UInt16 = integer(
+            bigEndianBytes: bytes(
+                in: data,
+                offset: HeaderField.flagsOffset,
+                length: HeaderField.flagsLength
+            )
+        )
+        let streamID: UInt64 = integer(
+            bigEndianBytes: bytes(
+                in: data,
+                offset: HeaderField.streamIDOffset,
+                length: HeaderField.streamIDLength
+            )
+        )
+        let payloadLength: UInt32 = integer(
+            bigEndianBytes: bytes(
+                in: data,
+                offset: HeaderField.payloadLengthOffset,
+                length: HeaderField.payloadLengthLength
+            )
+        )
         let payload = data.dropFirst(headerLength)
         guard payload.count == Int(payloadLength) else {
             throw RelayCodecError.payloadLengthMismatch(
@@ -199,6 +237,17 @@ public enum RelayCodec {
             value |= Value(byte)
         }
         return value
+    }
+
+    private static func byte(atOffset offset: Int, in data: Data) -> UInt8 {
+        let index = data.index(data.startIndex, offsetBy: offset)
+        return data[index]
+    }
+
+    private static func bytes(in data: Data, offset: Int, length: Int) -> Data {
+        let lowerBound = data.index(data.startIndex, offsetBy: offset)
+        let upperBound = data.index(lowerBound, offsetBy: length)
+        return data[lowerBound..<upperBound]
     }
 }
 

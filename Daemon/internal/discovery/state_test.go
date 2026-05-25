@@ -138,3 +138,97 @@ func TestStateStoreRequiresExplicitSelectionForMultipleServices(t *testing.T) {
 		t.Fatalf("selected service = %q, want %q", snapshot.SelectedServiceID, secondServiceID)
 	}
 }
+
+func TestStateStorePrefersUSBReadyService(t *testing.T) {
+	originalPreferredReadyService := preferredReadyService
+	preferredReadyService = func(services []serviceState) *serviceState {
+		if len(services) < 2 {
+			return nil
+		}
+		selected := services[1]
+		return &selected
+	}
+	defer func() {
+		preferredReadyService = originalPreferredReadyService
+	}()
+
+	store := newStateStore()
+	store.beginBrowsing()
+
+	firstServiceID := store.applyBrowse(BrowseEvent{
+		Add:            true,
+		ServiceName:    "CellTunnelPhone",
+		ServiceType:    "_cellrelay._tcp",
+		Domain:         "local.",
+		InterfaceIndex: 28,
+	})
+	store.applyResolve(ResolveEvent{
+		ServiceID: firstServiceID,
+		HostName:  "CellTunnelPhone.local",
+		Port:      57386,
+	})
+	store.applyAddress(AddressEvent{
+		ServiceID: firstServiceID,
+		Host:      "fe80::1",
+		Family:    AddressFamilyIPv6,
+	})
+
+	secondServiceID := store.applyBrowse(BrowseEvent{
+		Add:            true,
+		ServiceName:    "CellTunnelPhone",
+		ServiceType:    "_cellrelay._tcp",
+		Domain:         "local.",
+		InterfaceIndex: 29,
+	})
+	store.applyResolve(ResolveEvent{
+		ServiceID: secondServiceID,
+		HostName:  "CellTunnelPhone.local",
+		Port:      57386,
+	})
+	store.applyAddress(AddressEvent{
+		ServiceID: secondServiceID,
+		Host:      "fe80::2",
+		Family:    AddressFamilyIPv6,
+	})
+
+	snapshot := store.snapshot()
+	if snapshot.SelectedServiceID != secondServiceID {
+		t.Fatalf("selected service = %q, want %q", snapshot.SelectedServiceID, secondServiceID)
+	}
+}
+
+func TestStateStoreFailureClearsStaleSelection(t *testing.T) {
+	store := newStateStore()
+	store.beginBrowsing()
+
+	serviceID := store.applyBrowse(BrowseEvent{
+		Add:            true,
+		ServiceName:    "CellTunnelPhone",
+		ServiceType:    "_cellrelay._tcp",
+		Domain:         "local.",
+		InterfaceIndex: 29,
+	})
+	store.applyResolve(ResolveEvent{
+		ServiceID: serviceID,
+		HostName:  "CellTunnelPhone.local",
+		Port:      57387,
+	})
+	store.applyAddress(AddressEvent{
+		ServiceID: serviceID,
+		Host:      "fe80::2",
+		Family:    AddressFamilyIPv6,
+	})
+
+	store.fail("addrinfo loop failed")
+
+	snapshot := store.snapshot()
+	if snapshot.SelectedServiceID != "" {
+		t.Fatalf("selected service = %q, want empty", snapshot.SelectedServiceID)
+	}
+	if snapshot.SelectedEndpoint != nil {
+		t.Fatalf("selected endpoint = %#v, want nil", snapshot.SelectedEndpoint)
+	}
+	if snapshot.LastError != "addrinfo loop failed" {
+		t.Fatalf("last error = %q", snapshot.LastError)
+	}
+}

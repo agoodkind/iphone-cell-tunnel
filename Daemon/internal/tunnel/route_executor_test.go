@@ -32,11 +32,11 @@ func (manager *recordingNetworkManager) ConfigureInterfaceMTUAndUp(
 	return manager.record(operation)
 }
 
-func (manager *recordingNetworkManager) AddDefaultRoute(ctx context.Context, operation NetworkOperation) error {
+func (manager *recordingNetworkManager) AddRoute(ctx context.Context, operation NetworkOperation) error {
 	return manager.record(operation)
 }
 
-func (manager *recordingNetworkManager) DeleteDefaultRoute(ctx context.Context, operation NetworkOperation) error {
+func (manager *recordingNetworkManager) DeleteRoute(ctx context.Context, operation NetworkOperation) error {
 	return manager.record(operation)
 }
 
@@ -70,7 +70,7 @@ func TestRouteExecutorPreservesLocalRelayBeforeDefaultRoutes(t *testing.T) {
 	executor := NewRouteExecutor(manager)
 	config := DefaultConfig()
 	config.LocalRelayEndpoint = "192.0.2.55:51820"
-	plan := BuildRoutePlan(config, "utun42")
+	plan := BuildRoutePlan(config, testWireGuardConfigModel(), "utun42")
 
 	if err := executor.Install(context.Background(), plan); err != nil {
 		t.Fatalf("install routes: %v", err)
@@ -87,12 +87,40 @@ func TestRouteExecutorPreservesLocalRelayBeforeDefaultRoutes(t *testing.T) {
 		networkOperationIPv4Address,
 		networkOperationIPv6Address,
 		networkOperationInterfaceMTUAndUp,
-		networkOperationAddIPv4Default,
-		networkOperationAddIPv6Default,
+		networkOperationAddIPv4Route,
+		networkOperationAddIPv6Route,
 	}
 	assertOperationOrder(t, manager.operations, expectedOperations)
 	if manager.operationText[0] != "operation=add-ipv4-relay-host host=192.0.2.55 relay_interface=en0 family=4" {
 		t.Fatalf("local relay route was not installed first: %#v", manager.operationText)
+	}
+}
+
+func TestRouteExecutorUsesScopedRelayInterfaceWithoutRouteQuery(t *testing.T) {
+	manager := &recordingNetworkManager{}
+	executor := NewRouteExecutor(manager)
+	config := DefaultConfig()
+	config.LocalRelayEndpoint = "[fe80::1%en11]:57400"
+	plan := BuildRoutePlan(config, testWireGuardConfigModel(), "utun42")
+
+	if err := executor.Install(context.Background(), plan); err != nil {
+		t.Fatalf("install routes: %v", err)
+	}
+
+	if len(manager.queries) != 0 {
+		t.Fatalf("unexpected scoped route query: %#v", manager.queries)
+	}
+	expectedOperations := []NetworkOperationKind{
+		networkOperationAddIPv6RelayHost,
+		networkOperationIPv4Address,
+		networkOperationIPv6Address,
+		networkOperationInterfaceMTUAndUp,
+		networkOperationAddIPv4Route,
+		networkOperationAddIPv6Route,
+	}
+	assertOperationOrder(t, manager.operations, expectedOperations)
+	if manager.operationText[0] != "operation=add-ipv6-relay-host host=fe80::1 relay_interface=en11 family=6" {
+		t.Fatalf("scoped relay route did not preserve interface: %#v", manager.operationText)
 	}
 }
 
@@ -101,20 +129,39 @@ func TestRouteExecutorRemovesDefaultRoutesAndLocalRelayRoute(t *testing.T) {
 	executor := NewRouteExecutor(manager)
 	config := DefaultConfig()
 	config.LocalRelayEndpoint = "[2001:db8::55]:51820"
-	plan := BuildRoutePlan(config, "utun42")
+	plan := BuildRoutePlan(config, testWireGuardConfigModel(), "utun42")
 
 	if err := executor.Remove(context.Background(), plan); err != nil {
 		t.Fatalf("remove routes: %v", err)
 	}
 
 	expectedOperations := []NetworkOperationKind{
-		networkOperationDeleteIPv4Default,
-		networkOperationDeleteIPv6Default,
+		networkOperationDeleteIPv4Route,
+		networkOperationDeleteIPv6Route,
 		networkOperationDeleteIPv6RelayHost,
 	}
 	assertOperationOrder(t, manager.operations, expectedOperations)
 	if !hasOperationText(manager.operationText, "operation=delete-ipv6-relay-host host=2001:db8::55 family=6") {
 		t.Fatalf("missing local relay IPv6 route removal: %#v", manager.operationText)
+	}
+}
+
+func TestRouteExecutorRemovesScopedIPv6LocalRelayRoute(t *testing.T) {
+	manager := &recordingNetworkManager{}
+	executor := NewRouteExecutor(manager)
+	config := DefaultConfig()
+	config.LocalRelayEndpoint = "[fe80::1%en11]:57400"
+	plan := BuildRoutePlan(config, testWireGuardConfigModel(), "utun42")
+
+	if err := executor.Remove(context.Background(), plan); err != nil {
+		t.Fatalf("remove routes: %v", err)
+	}
+
+	if !hasOperationText(
+		manager.operationText,
+		"operation=delete-ipv6-relay-host host=fe80::1 relay_interface=en11 family=6",
+	) {
+		t.Fatalf("missing scoped local relay IPv6 route removal: %#v", manager.operationText)
 	}
 }
 
@@ -126,7 +173,7 @@ func TestRouteExecutorRollsBackLocalRelayWhenInstallFails(t *testing.T) {
 	executor := NewRouteExecutor(manager)
 	config := DefaultConfig()
 	config.LocalRelayEndpoint = "192.0.2.55:51820"
-	plan := BuildRoutePlan(config, "utun42")
+	plan := BuildRoutePlan(config, testWireGuardConfigModel(), "utun42")
 
 	err := executor.Install(context.Background(), plan)
 	if err == nil {

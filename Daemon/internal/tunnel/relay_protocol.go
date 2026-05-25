@@ -16,6 +16,8 @@ const (
 	RelayOperationHello RelayOperation = 1
 	// RelayOperationPairConfirm is reserved for future pairing acknowledgements.
 	RelayOperationPairConfirm RelayOperation = 2
+	// RelayOperationKeepAlive is a no-op frame used to keep the local relay channel warm.
+	RelayOperationKeepAlive RelayOperation = 10
 	// RelayOperationPathStatus carries cellular path status from the iPhone app.
 	RelayOperationPathStatus RelayOperation = 40
 	// RelayOperationWireGuardDatagram carries one encrypted WireGuard UDP datagram.

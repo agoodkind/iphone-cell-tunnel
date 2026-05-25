@@ -2,6 +2,7 @@ package tunnel
 
 import (
 	"context"
+	"net/netip"
 	"runtime"
 	"strings"
 )
@@ -76,6 +77,38 @@ func ConfigWithStartOptions(options StartOptions) (Config, error) {
 	return config, nil
 }
 
+// ConfigWithWireGuardConfig applies interface addresses from the WireGuard config onto the
+// local utun shape so inner packet source addresses match the hosted server expectations.
+func ConfigWithWireGuardConfig(config Config, wireGuardConfig WireGuardConfig) Config {
+	hasIPv4Address := false
+	hasIPv6Address := false
+
+	for _, addressPrefix := range wireGuardConfig.Interface.Addresses {
+		address := addressPrefix.Addr()
+		if address.Is4() && !hasIPv4Address {
+			config.IPv4Address = address.String()
+			config.IPv4PeerAddress = pointToPointPeerAddress(addressPrefix)
+			config.IPv4PrefixLength = addressPrefix.Bits()
+			hasIPv4Address = true
+			continue
+		}
+		if address.Is6() && !hasIPv6Address {
+			config.IPv6Address = address.String()
+			config.IPv6PrefixLength = addressPrefix.Bits()
+			hasIPv6Address = true
+		}
+	}
+
+	logger.Info(
+		"wireguard interface addresses applied",
+		"ipv4_configured",
+		hasIPv4Address,
+		"ipv6_configured",
+		hasIPv6Address,
+	)
+	return config
+}
+
 // Validate checks that a typed start request includes the runtime inputs the daemon needs.
 func (options StartOptions) Validate() error {
 	if strings.TrimSpace(options.WireGuardConfigPath) == "" {
@@ -97,6 +130,9 @@ func Status() RuntimeStatus {
 	runtimeMutex.Lock()
 	running := activeRuntime != nil
 	routesInstalled := running && activeRuntime.routesInstalled
+	if activeRuntime != nil {
+		config = activeRuntime.config
+	}
 	lastError := lastRuntimeError
 	runtimeMutex.Unlock()
 	routeState := "not-installed"
@@ -113,6 +149,10 @@ func Status() RuntimeStatus {
 	}
 	logger.Info("tunnel runtime status resolved", "running", status.Running, "routes", status.RouteState)
 	return status
+}
+
+func pointToPointPeerAddress(prefix netip.Prefix) string {
+	return prefix.Addr().String()
 }
 
 // CheckEnvironment reports local prerequisites needed before route mutation.

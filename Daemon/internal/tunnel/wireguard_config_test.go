@@ -56,7 +56,7 @@ func TestWireGuardConfigRendersUAPIConfig(t *testing.T) {
 
 	uapiConfig := config.UAPIConfig()
 	expectedFragments := []string{
-		"private_key=0000000000000000000000000000000000000000000000000000000000000000",  // gitleaks:allow
+		"private_key=0000000000000000000000000000000000000000000000000000000000000000", // gitleaks:allow
 		"listen_port=51821",
 		"replace_peers=true",
 		"public_key=0101010101010101010101010101010101010101010101010101010101010101",

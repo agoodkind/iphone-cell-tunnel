@@ -1,15 +1,11 @@
 package tunnel
 
 import (
+	"errors"
 	"net"
 	"net/netip"
 	"strconv"
 	"strings"
-)
-
-const (
-	defaultIPv4Route = "0.0.0.0/0"
-	defaultIPv6Route = "::/0"
 )
 
 // RoutePlan describes the typed native network mutations needed by the runtime.
@@ -24,8 +20,9 @@ type RoutePlan struct {
 
 // LocalRelayPreservation records the local iPhone relay route that must survive default route changes.
 type LocalRelayPreservation struct {
-	EndpointHost  string
-	AddressFamily RelayAddressFamily
+	EndpointHost      string
+	EndpointInterface string
+	AddressFamily     RelayAddressFamily
 }
 
 // NetworkOperationKind identifies the closed set of native interface and route mutations.
@@ -35,15 +32,17 @@ const (
 	networkOperationIPv4Address         NetworkOperationKind = "ipv4-address"
 	networkOperationIPv6Address         NetworkOperationKind = "ipv6-address"
 	networkOperationInterfaceMTUAndUp   NetworkOperationKind = "interface-mtu-up"
-	networkOperationAddIPv4Default      NetworkOperationKind = "add-ipv4-default"
-	networkOperationAddIPv6Default      NetworkOperationKind = "add-ipv6-default"
-	networkOperationDeleteIPv4Default   NetworkOperationKind = "delete-ipv4-default"
-	networkOperationDeleteIPv6Default   NetworkOperationKind = "delete-ipv6-default"
+	networkOperationAddIPv4Route        NetworkOperationKind = "add-ipv4-route"
+	networkOperationAddIPv6Route        NetworkOperationKind = "add-ipv6-route"
+	networkOperationDeleteIPv4Route     NetworkOperationKind = "delete-ipv4-route"
+	networkOperationDeleteIPv6Route     NetworkOperationKind = "delete-ipv6-route"
 	networkOperationAddIPv4RelayHost    NetworkOperationKind = "add-ipv4-relay-host"
 	networkOperationAddIPv6RelayHost    NetworkOperationKind = "add-ipv6-relay-host"
 	networkOperationDeleteIPv4RelayHost NetworkOperationKind = "delete-ipv4-relay-host"
 	networkOperationDeleteIPv6RelayHost NetworkOperationKind = "delete-ipv6-relay-host"
 )
+
+var errUnscopedIPv6LinkLocalRelay = errors.New("ipv6 link-local relay endpoint is unscoped")
 
 // NetworkOperation is the typed runtime form of one native network mutation.
 type NetworkOperation struct {
@@ -92,21 +91,28 @@ func (operation NetworkOperation) String() string {
 
 // String renders the local relay preservation marker for dry-run output.
 func (preservation LocalRelayPreservation) String() string {
-	return "host=" + preservation.EndpointHost +
-		" family=" + strconv.Itoa(int(preservation.AddressFamily))
+	parts := []string{
+		"host=" + preservation.EndpointHost,
+	}
+	if preservation.EndpointInterface != "" {
+		parts = append(parts, "interface="+preservation.EndpointInterface)
+	}
+	parts = append(parts, "family="+strconv.Itoa(int(preservation.AddressFamily)))
+	return strings.Join(parts, " ")
 }
 
-// BuildRoutePlan creates the dual-stack native route mutation plan.
-func BuildRoutePlan(config Config, interfaceName string) RoutePlan {
+// BuildRoutePlan creates the native route mutation plan from the WireGuard AllowedIPs.
+func BuildRoutePlan(config Config, wireGuardConfig WireGuardConfig, interfaceName string) RoutePlan {
 	interfaceName = resolvedInterfaceName(config, interfaceName)
-	installOperations := buildInstallOperations(config, interfaceName)
-	removeOperations := buildRemoveOperations(interfaceName)
+	installOperations := buildInstallOperations(config, wireGuardConfig, interfaceName)
+	removeOperations := buildRemoveOperations(wireGuardConfig)
 	preservations := buildLocalRelayPreservations(config)
+	ipv4Routes, ipv6Routes := groupedAllowedIPRoutes(wireGuardConfig)
 
 	plan := RoutePlan{
 		InterfaceName:           interfaceName,
-		IPv4Routes:              []string{defaultIPv4Route},
-		IPv6Routes:              []string{defaultIPv6Route},
+		IPv4Routes:              ipv4Routes,
+		IPv6Routes:              ipv6Routes,
 		LocalRelayPreservations: preservations,
 		InstallOperations:       installOperations,
 		RemoveOperations:        removeOperations,
@@ -131,6 +137,11 @@ func buildLocalRelayPreservations(config Config) []LocalRelayPreservation {
 		return []LocalRelayPreservation{}
 	}
 
+	if strings.HasPrefix(config.LocalRelayEndpoint, usbmuxdRelayPrefix) {
+		logger.Info("route plan local relay preservation skipped because endpoint uses usbmuxd transport")
+		return []LocalRelayPreservation{}
+	}
+
 	endpoint, err := ParseWireGuardEndpoint(config.LocalRelayEndpoint)
 	if err != nil {
 		host, _, splitErr := net.SplitHostPort(config.LocalRelayEndpoint)
@@ -144,24 +155,65 @@ func buildLocalRelayPreservations(config Config) []LocalRelayPreservation {
 		}
 	}
 
+	if isLoopbackHost(endpoint.Host) {
+		logger.Info("route plan local relay preservation skipped because endpoint is loopback")
+		return []LocalRelayPreservation{}
+	}
+
+	endpointHost, endpointInterface := scopedHostParts(endpoint.Host)
+	if isUnscopedIPv6LinkLocal(endpointHost, endpointInterface, endpoint.AddressFamily) {
+		logger.Error(
+			"route plan local relay preservation skipped",
+			"err",
+			errUnscopedIPv6LinkLocalRelay,
+		)
+		return []LocalRelayPreservation{}
+	}
+
 	preservation := LocalRelayPreservation{
-		EndpointHost:  endpoint.Host,
-		AddressFamily: endpoint.AddressFamily,
+		EndpointHost:      endpointHost,
+		EndpointInterface: endpointInterface,
+		AddressFamily:     endpoint.AddressFamily,
 	}
 	logger.Info(
 		"route plan local relay preservation represented",
 		"endpoint_family",
 		preservation.AddressFamily,
+		"endpoint_interface_configured",
+		preservation.EndpointInterface != "",
 	)
 	return []LocalRelayPreservation{preservation}
 }
 
 func localRelayHostFamily(host string) RelayAddressFamily {
-	address, err := netip.ParseAddr(host)
+	address, err := netip.ParseAddr(stripScopedHost(host))
 	if err == nil && address.Is6() {
 		return RelayAddressFamilyIPv6
 	}
 	return RelayAddressFamilyIPv4
+}
+
+func isLoopbackHost(host string) bool {
+	address, err := netip.ParseAddr(stripScopedHost(host))
+	if err != nil {
+		return false
+	}
+	return address.IsLoopback()
+}
+
+func isUnscopedIPv6LinkLocal(
+	host string,
+	endpointInterface string,
+	addressFamily RelayAddressFamily,
+) bool {
+	if addressFamily != RelayAddressFamilyIPv6 || endpointInterface != "" {
+		return false
+	}
+	address, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	return address.IsLinkLocalUnicast()
 }
 
 func resolvedInterfaceName(config Config, interfaceName string) string {
@@ -174,8 +226,12 @@ func resolvedInterfaceName(config Config, interfaceName string) string {
 	return interfaceName
 }
 
-func buildInstallOperations(config Config, interfaceName string) []NetworkOperation {
-	return []NetworkOperation{
+func buildInstallOperations(
+	config Config,
+	wireGuardConfig WireGuardConfig,
+	interfaceName string,
+) []NetworkOperation {
+	operations := []NetworkOperation{
 		{
 			Kind:          networkOperationIPv4Address,
 			InterfaceName: interfaceName,
@@ -194,34 +250,62 @@ func buildInstallOperations(config Config, interfaceName string) []NetworkOperat
 			InterfaceName: interfaceName,
 			MTU:           config.MTU,
 		},
-		{
-			Kind:          networkOperationAddIPv4Default,
-			InterfaceName: interfaceName,
-			Address:       defaultIPv4Route,
-			AddressFamily: RelayAddressFamilyIPv4,
-		},
-		{
-			Kind:          networkOperationAddIPv6Default,
-			InterfaceName: interfaceName,
-			Address:       defaultIPv6Route,
-			AddressFamily: RelayAddressFamilyIPv6,
-		},
 	}
+
+	for _, allowedIP := range wireGuardConfig.Peer.AllowedIPs {
+		operations = append(operations, routeOperationForPrefix(allowedIP, interfaceName, true))
+	}
+	return operations
 }
 
-func buildRemoveOperations(interfaceName string) []NetworkOperation {
-	return []NetworkOperation{
-		{
-			Kind:          networkOperationDeleteIPv4Default,
-			InterfaceName: interfaceName,
-			Address:       defaultIPv4Route,
-			AddressFamily: RelayAddressFamilyIPv4,
-		},
-		{
-			Kind:          networkOperationDeleteIPv6Default,
-			InterfaceName: interfaceName,
-			Address:       defaultIPv6Route,
-			AddressFamily: RelayAddressFamilyIPv6,
-		},
+func buildRemoveOperations(wireGuardConfig WireGuardConfig) []NetworkOperation {
+	operations := make([]NetworkOperation, 0, len(wireGuardConfig.Peer.AllowedIPs))
+	for _, allowedIP := range wireGuardConfig.Peer.AllowedIPs {
+		operations = append(operations, routeOperationForPrefix(allowedIP, "", false))
 	}
+	return operations
+}
+
+func groupedAllowedIPRoutes(wireGuardConfig WireGuardConfig) ([]string, []string) {
+	ipv4Routes := make([]string, 0, len(wireGuardConfig.Peer.AllowedIPs))
+	ipv6Routes := make([]string, 0, len(wireGuardConfig.Peer.AllowedIPs))
+	for _, allowedIP := range wireGuardConfig.Peer.AllowedIPs {
+		if allowedIP.Addr().Is4() {
+			ipv4Routes = append(ipv4Routes, allowedIP.String())
+			continue
+		}
+		if allowedIP.Addr().Is6() {
+			ipv6Routes = append(ipv6Routes, allowedIP.String())
+		}
+	}
+	return ipv4Routes, ipv6Routes
+}
+
+func routeOperationForPrefix(
+	prefix netip.Prefix,
+	interfaceName string,
+	install bool,
+) NetworkOperation {
+	operation := NetworkOperation{
+		InterfaceName: interfaceName,
+		Address:       prefix.Addr().String(),
+		PrefixLength:  prefix.Bits(),
+	}
+	if prefix.Addr().Is4() {
+		operation.AddressFamily = RelayAddressFamilyIPv4
+		if install {
+			operation.Kind = networkOperationAddIPv4Route
+		} else {
+			operation.Kind = networkOperationDeleteIPv4Route
+		}
+		return operation
+	}
+
+	operation.AddressFamily = RelayAddressFamilyIPv6
+	if install {
+		operation.Kind = networkOperationAddIPv6Route
+	} else {
+		operation.Kind = networkOperationDeleteIPv6Route
+	}
+	return operation
 }

@@ -2,6 +2,7 @@ import CellTunnelLog
 import SwiftUI
 
 private let logger = CellTunnelLog.logger(category: .app)
+private let automaticRelayStartArgument = "--cell-tunnel-start-relay"
 
 @main
 struct CellTunnelPhoneApp: App {
@@ -16,6 +17,12 @@ struct CellTunnelPhoneApp: App {
     var body: some Scene {
         WindowGroup {
             PhoneContentView(relayController: relayController)
+                .task {
+                    if CommandLine.arguments.contains(automaticRelayStartArgument) {
+                        logger.notice("phone app automatic relay start requested")
+                        relayController.start()
+                    }
+                }
         }
     }
 }

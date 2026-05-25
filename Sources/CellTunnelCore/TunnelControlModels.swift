@@ -35,6 +35,8 @@ public enum TunnelControlErrorCode: String, Codable, Equatable, Sendable {
     case unspecified = "unspecified"
 }
 
+public let usbmuxdEndpointPrefix = "usbmuxd:"
+
 public struct TunnelRelayEndpoint: Codable, Equatable, Hashable, Sendable {
     public var host: String
     public var port: Int
@@ -55,6 +57,9 @@ public struct TunnelRelayEndpoint: Codable, Equatable, Hashable, Sendable {
     }
 
     public var socketAddress: String {
+        if host.hasPrefix(usbmuxdEndpointPrefix) {
+            return "\(host):\(port)"
+        }
         if host.contains(":") {
             return "[\(host)]:\(port)"
         }
@@ -69,6 +74,25 @@ public struct TunnelRelayEndpoint: Codable, Equatable, Hashable, Sendable {
         let trimmedArgument = argument.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedArgument.isEmpty {
             throw TunnelDaemonError.usage("relay endpoint is empty")
+        }
+
+        if trimmedArgument.hasPrefix(usbmuxdEndpointPrefix) {
+            let body = String(trimmedArgument.dropFirst(usbmuxdEndpointPrefix.count))
+            guard let lastColonIndex = body.lastIndex(of: ":") else {
+                throw TunnelDaemonError.controlFailure(
+                    TunnelControlFailure(
+                        errorCode: .invalidRelayEndpoint, message: "invalid usbmuxd relay endpoint")
+                )
+            }
+            let udid = String(body[..<lastColonIndex])
+            let portString = String(body[body.index(after: lastColonIndex)...])
+            guard !udid.isEmpty, let port = Int(portString), port > 0 else {
+                throw TunnelDaemonError.controlFailure(
+                    TunnelControlFailure(
+                        errorCode: .invalidRelayEndpoint, message: "invalid usbmuxd relay endpoint")
+                )
+            }
+            return Self(host: "\(usbmuxdEndpointPrefix)\(udid)", port: port, addressFamily: .unspecified)
         }
 
         if trimmedArgument.hasPrefix("[") {
@@ -186,6 +210,7 @@ public struct TunnelDiscoverySnapshot: Codable, Equatable, Sendable {
         }
         for service in services {
             lines.append("service=\(service.displayName)")
+            lines.append("  id=\(service.id)")
         }
         if let lastError, !lastError.isEmpty {
             lines.append("last_error=\(lastError)")
