@@ -22,7 +22,8 @@ extension MacTunnelStore {
         refreshHelperStatus()
         switch helperState {
         case .enabled:
-            return
+            activationLogger.notice(
+                "mac automatic helper activation preserving enabled helper registration")
         case .requiresApproval:
             openHelperSettings()
         case .notFound, .notRegistered, .unknown:

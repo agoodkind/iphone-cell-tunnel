@@ -220,6 +220,12 @@ final class MacTunnelStore {
         }
     }
 
+    func refreshHelperRegistration() {
+        daemonOutput = "Use Remove Helper, then Install Helper to replace the privileged helper."
+        logger.notice(
+            "mac helper registration refresh requested action=manual-reinstall-required")
+    }
+
     func openHelperSettings() {
         logger.notice("mac helper settings requested")
         helperService.openSystemSettings()

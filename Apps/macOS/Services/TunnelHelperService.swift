@@ -1,4 +1,5 @@
 import CellTunnelLog
+import Foundation
 import ServiceManagement
 
 private let logger = CellTunnelLog.logger(category: .daemon)
