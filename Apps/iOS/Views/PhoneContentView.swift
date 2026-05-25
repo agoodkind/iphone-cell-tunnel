@@ -26,6 +26,7 @@ struct PhoneContentView: View {
                 StatusGrid(items: relayStatusItems)
                 cellularSection
                 serviceSection
+                settingsSection
                 trafficSection
             }
             .padding(.horizontal, 16)
@@ -33,6 +34,13 @@ struct PhoneContentView: View {
             .padding(.bottom, 82)
         }
         .scrollIndicators(.hidden)
+    }
+
+    private var settingsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionHeader(title: "Settings", systemImage: "slider.horizontal.3")
+            ListenerPortEditor(relayController: relayController)
+        }
     }
 
     private var relayStatusItems: [StatusTileModel] {
@@ -378,6 +386,56 @@ private struct MetricTile: View {
         .background(
             Color(.secondarySystemGroupedBackground),
             in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+}
+
+private struct ListenerPortEditor: View {
+    @Bindable var relayController: PhoneRelayController
+    @State private var portText = String(relayListenerPortDefaultValue)
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        InfoPanel {
+            HStack(spacing: 10) {
+                Image(systemName: "network")
+                    .font(.subheadline)
+                    .foregroundStyle(.indigo)
+                    .frame(width: 24)
+
+                Text("Listener Port")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                Spacer(minLength: 10)
+
+                TextField("Port", text: $portText)
+                    .keyboardType(.numberPad)
+                    .multilineTextAlignment(.trailing)
+                    .focused($isFocused)
+                    .frame(maxWidth: 96)
+
+                Button("Apply") {
+                    isFocused = false
+                    apply()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+            }
+            .frame(minHeight: 38)
+        }
+        .task {
+            portText = String(resolvedRelayListenerPort().rawValue)
+        }
+    }
+
+    private func apply() {
+        let trimmed = portText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let port = UInt16(trimmed), port >= 1 else {
+            portText = String(resolvedRelayListenerPort().rawValue)
+            return
+        }
+        relayController.updateListenerPort(port)
+        portText = String(port)
     }
 }
 

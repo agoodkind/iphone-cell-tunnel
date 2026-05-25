@@ -15,7 +15,6 @@ SWIFT_GENERATE_CMD ?= $(CELL_TUNNEL_DEV) generate
 SWIFT_CLEAN_CMD ?= $(CELL_TUNNEL_DEV) clean
 SWIFT_DEPLOY_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) activate $(TARGET) $(CONFIG),printf 'deploy: TARGET=$(ACTIVATION_TARGET_USAGE) is required\n'; exit 1)
 SWIFT_ANALYZE_CMD ?= $(CELL_TUNNEL_DEV) analyze
-SWIFT_AUDIT_EXTRA_CMD ?= $(CELL_TUNNEL_DEV) go-audit
 SWIFT_LOG_AUDIT_CMD ?= $(CELL_TUNNEL_DEV) log-audit
 
 SWIFT_SOURCE_ROOTS := Apps Sources Tests Tools/CellTunnelCtl Tools/CellTunnelDev Tools/LoggingAudit
@@ -36,13 +35,10 @@ include bootstrap.mk
 
 .DEFAULT_GOAL := check
 
-.PHONY: format go-audit sign signing-check notary-setup notarize-check notarize helper-refresh install-helper uninstall-helper
+.PHONY: format sign signing-check notary-setup notarize-check notarize helper-refresh install-helper uninstall-helper
 
 format:
 	@$(CELL_TUNNEL_DEV) format
-
-go-audit:
-	@$(CELL_TUNNEL_DEV) go-audit
 
 helper-refresh:
 	@$(CELL_TUNNEL_DEV) refresh-helper $(CONFIG)

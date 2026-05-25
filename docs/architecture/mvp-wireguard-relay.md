@@ -3,6 +3,26 @@
 Cell Tunnel carries Mac IPv4 and IPv6 traffic through a foreground iPhone app so the public network
 path uses the iPhone cellular interface.
 
+## Why this project exists
+
+The point is to give the Mac internet access through the iPhone's cellular signal **without using
+iOS Personal Hotspot**. The use case is education and research: carriers may rate-limit hotspot
+data while leaving native cellular data unmetered, so the project routes Mac traffic through a
+custom iPhone app that egresses bytes over its own cellular interface as native cellular traffic.
+
+## What this project is NOT
+
+- **It is not Personal Hotspot.** When Personal Hotspot is on, iOS egresses through the
+  hotspot APN and the carrier accounts the data as hotspot data. The project routes around
+  that. The macOS "iPhone" network service backed by `en7` is the Personal Hotspot interface
+  and only materializes when Personal Hotspot is on; do not use it. Other USB-attached
+  interfaces (the iOS 16+ developer CDC-NCM interfaces, `usbmuxd`, the CoreDevice / RemoteXPC
+  tunnel) do not activate Personal Hotspot and are valid transport candidates.
+- It is not a general VPN. The Mac runs WireGuard, but only Mac traffic that matches the
+  WireGuard `AllowedIPs` enters the tunnel. Everything else stays on the Mac's default route.
+- It is not a packet capture tool on iPhone. The iPhone app is a relay, not a VPN extension that
+  captures iOS-originated traffic.
+
 ## Packet Path
 
 ```text

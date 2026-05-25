@@ -1,5 +1,55 @@
 # Cell Tunnel Agent Entry Point
 
+## Project goal (read this first)
+
+Cell Tunnel gives the Mac internet through the iPhone's cellular signal **without enabling iOS
+Personal Hotspot**. Use case is education and research: carriers may rate-limit hotspot data
+while leaving native cellular data unmetered, so Mac traffic is forwarded over USB or Wi-Fi to
+a custom iPhone app that egresses the bytes through its own cellular UDP connection.
+
+**Hard rule: do not enable Personal Hotspot on the iPhone, and do not propose Personal Hotspot
+as the Mac-to-iPhone link.** When Personal Hotspot is on, iOS egresses through the hotspot
+APN and the carrier accounts the data as hotspot data. That is the thing the project routes
+around.
+
+The macOS "iPhone" network service backed by `en7` is the Personal Hotspot interface and only
+materializes when Personal Hotspot is enabled. Do not use it.
+
+Other USB-attached interfaces appear on macOS without enabling Personal Hotspot: the iOS 16+
+developer CDC-NCM interfaces (on this machine they appear as `en8`, `en9`, and `en11`),
+`usbmuxd`, and the CoreDevice / RemoteXPC tunnel. None of those activate Personal Hotspot on
+the iPhone. The iPhone app makes the cellular UDP egress itself with
+`requiredInterfaceType = .cellular`, which binds to the regular cellular APN, not the hotspot
+APN. The carrier sees encrypted UDP from the iPhone's regular cellular IP, indistinguishable
+from any other iOS app's cellular UDP.
+
+The choice between the non-hotspot transports is an open performance question. The current
+`usbmuxd` path measures around 24 Mbps end-to-end. The cap location is not isolated yet. See
+`docs/temporary/temporary-mvp-notes.md` for the experiment plan.
+
+## Architecture direction: Swift-native
+
+The Mac daemon and supporting tooling rewrite to Swift. Go was a day-0 mistake. Every component
+the Go side covers has a first-party or well-known Swift equivalent:
+
+- WireGuard: **WireGuardKit** (SwiftPM, wraps `wireguard-go` via a C-ABI bridge; used by Mullvad
+  and the official iOS/macOS WireGuard apps).
+- Mac to iPhone transport: **`NWConnection`** on `Network.framework`. The CDC-NCM interface is
+  directly addressable from Swift; no `usbmuxd` or `go-ios` needed.
+- Bonjour / DNS-SD: **`NWBrowser`** / **`NWListener`** on `Network.framework`. Replaces the cgo
+  `dns_sd.h` bindings.
+- BSD routing socket: direct `socket(PF_ROUTE, ...)` syscalls from Swift via the `Darwin` module.
+- utun: `WireGuardKit` manages this internally. Direct `socket(PF_SYSTEM, SYSPROTO_CONTROL)`
+  from Swift if a separate path is ever needed.
+- gRPC control plane: `grpc-swift` (Apple-supported), or a thinner Codable-over-UDS layer.
+
+Phase 1 ships the rewritten `celltunneld` as a plain Swift launchd daemon. This keeps the dev
+loop close to the current one (sudo for dev, `SMAppService` for install).
+
+Phase 2 is a P0 fast-follow once Phase 1 stabilizes: migrate `celltunneld` to a
+`NEPacketTunnelProvider` inside `CellTunnelMac.app`. That gives Apple-managed VPN lifecycle, no
+sudo, system-handled auto-start, and a cleaner long-term home for the daemon.
+
 Read these documents before editing this repository:
 
 - [Architecture](docs/architecture/mvp-wireguard-relay.md)

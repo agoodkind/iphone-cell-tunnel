@@ -5,14 +5,18 @@ enum ActivationActions {}
 
 private let activationLogger = CellTunnelLog.logger(category: .build)
 
-func activateTarget(_ target: ActivationTarget, configuration: String) throws {
+func activateTarget(
+    _ target: ActivationTarget,
+    configuration: String,
+    listenerPort: UInt16? = nil
+) throws {
     switch target {
     case .mac:
         try activateMacApp(configuration: configuration)
     case .iphone:
-        try activatePhoneDevice(configuration: configuration)
+        try activatePhoneDevice(configuration: configuration, listenerPort: listenerPort)
     case .iphoneSimulator:
-        try activatePhoneSimulator(configuration: configuration)
+        try activatePhoneSimulator(configuration: configuration, listenerPort: listenerPort)
     }
 }
 
@@ -99,12 +103,12 @@ func registerInstalledMacHelper() throws {
     try run("open", ["-W", "-n", installedMacAppPath.path, "--args", macHelperInstallArgument])
 }
 
-func activatePhoneDevice(configuration: String) throws {
+func activatePhoneDevice(configuration: String, listenerPort: UInt16? = nil) throws {
     try installBuiltPhoneDevice(configuration: configuration)
-    try launchInstalledPhoneDevice()
+    try launchInstalledPhoneDevice(listenerPort: listenerPort)
 }
 
-func activatePhoneSimulator(configuration: String) throws {
+func activatePhoneSimulator(configuration: String, listenerPort: UInt16? = nil) throws {
     let simulatorIdentifier = try selectedPhoneSimulatorIdentifier()
     let appPath = phoneSimulatorAppPath(configuration: configuration)
     guard fileManager.fileExists(atPath: appPath.path) else {
@@ -113,17 +117,16 @@ func activatePhoneSimulator(configuration: String) throws {
 
     try bootPhoneSimulator(identifier: simulatorIdentifier)
     try run("xcrun", ["simctl", "install", simulatorIdentifier, appPath.path])
-    try run(
-        "xcrun",
-        [
-            "simctl",
-            "launch",
-            "--terminate-running-process",
-            simulatorIdentifier,
-            phoneBundleIdentifier,
-            phoneActivationArgument,
-        ]
-    )
+    var launchArguments = [
+        "simctl",
+        "launch",
+        "--terminate-running-process",
+        simulatorIdentifier,
+        phoneBundleIdentifier,
+        phoneActivationArgument,
+    ]
+    launchArguments.append(contentsOf: phoneListenerPortLaunchArguments(listenerPort))
+    try run("xcrun", launchArguments)
 }
 
 func phoneSimulatorAppPath(configuration: String) -> URL {
@@ -176,22 +179,28 @@ func phoneDeviceAppPath(configuration: String) -> URL {
     ).appendingPathComponent("CellTunnelPhone.app")
 }
 
-func launchInstalledPhoneDevice() throws {
+func launchInstalledPhoneDevice(listenerPort: UInt16? = nil) throws {
     let deviceIdentifier = try selectedPhoneDeviceIdentifier()
-    try run(
-        "xcrun",
-        [
-            "devicectl",
-            "device",
-            "process",
-            "launch",
-            "--terminate-existing",
-            "--device",
-            deviceIdentifier,
-            phoneBundleIdentifier,
-            phoneActivationArgument,
-        ]
-    )
+    var launchArguments = [
+        "devicectl",
+        "device",
+        "process",
+        "launch",
+        "--terminate-existing",
+        "--device",
+        deviceIdentifier,
+        phoneBundleIdentifier,
+        phoneActivationArgument,
+    ]
+    launchArguments.append(contentsOf: phoneListenerPortLaunchArguments(listenerPort))
+    try run("xcrun", launchArguments)
+}
+
+func phoneListenerPortLaunchArguments(_ listenerPort: UInt16?) -> [String] {
+    guard let listenerPort else {
+        return []
+    }
+    return [phoneListenerPortArgument, String(listenerPort)]
 }
 
 func selectedPhoneSimulatorIdentifier() throws -> String {

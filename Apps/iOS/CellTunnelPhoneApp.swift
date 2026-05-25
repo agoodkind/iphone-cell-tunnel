@@ -4,6 +4,8 @@ import SwiftUI
 private let logger = CellTunnelLog.logger(category: .app)
 private let automaticRelayStartArgument = "--cell-tunnel-start-relay"
 
+@MainActor private var benchListenerInstance: BenchListener?
+
 @main
 struct CellTunnelPhoneApp: App {
     @State private var relayController: PhoneRelayController
@@ -11,6 +13,8 @@ struct CellTunnelPhoneApp: App {
     init() {
         CellTunnelLog.bootstrap()
         logger.notice("CellTunnelPhone app initializing")
+        applyLaunchPortOverride()
+        applyBenchModeIfRequested()
         _relayController = State(initialValue: PhoneRelayController())
     }
 
@@ -25,4 +29,37 @@ struct CellTunnelPhoneApp: App {
                 }
         }
     }
+}
+
+private func applyLaunchPortOverride() {
+    let arguments = CommandLine.arguments
+    guard let argumentIndex = arguments.firstIndex(of: relayListenerPortLaunchArgument) else {
+        return
+    }
+    let valueIndex = arguments.index(after: argumentIndex)
+    guard valueIndex < arguments.endIndex else {
+        logger.notice("phone app launch port argument missing value")
+        return
+    }
+    guard let port = UInt16(arguments[valueIndex]), port >= 1 else {
+        logger.notice(
+            """
+            phone app launch port argument invalid \
+            value=\(arguments[valueIndex], privacy: .public)
+            """
+        )
+        return
+    }
+    storeRelayListenerPort(port)
+    logger.notice(
+        "phone app launch port argument applied port=\(port, privacy: .public)")
+}
+
+@MainActor
+private func applyBenchModeIfRequested() {
+    guard CommandLine.arguments.contains(benchModeLaunchArgument) else { return }
+    let listener = BenchListener()
+    listener.start()
+    benchListenerInstance = listener
+    logger.notice("phone app bench mode enabled")
 }

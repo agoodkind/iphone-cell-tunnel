@@ -12,19 +12,19 @@ func printHelp() {
                       Targets: daemon|mac|iphone-simulator|iphone-device|all
                       Bare `build` with no target prints this and exits non-zero.
           activate    Install, register, and launch the requested target from built products.
+                      Pass --port <listener-port> to override the iPhone relay listener port at launch.
           refresh-helper
                       Verify the registered helper points at the current macOS app bundle.
           install-helper
                       Reinstall the helper from the current built macOS app bundle.
           uninstall-helper
                       Remove the registered helper and installed macOS app bundle.
-          test        Run SwiftPM tests and Go daemon tests.
-          lint        Run Swift and Go lint gates.
-          format      Format Swift and Go sources.
+          test        Run SwiftPM tests.
+          lint        Run Swift lint gates.
+          format      Format Swift sources.
           log-audit   Run the SwiftSyntax logging audit.
-          go-audit    Run Go vet, vuln, deadcode, and staticcheck-extra gates.
-          audit       Run lint, log-audit, and go-audit.
-          analyze     Run Xcode analyze, SwiftLint analyze, Periphery, and Go analyzers.
+          audit       Run lint and log-audit.
+          analyze     Run Xcode analyze, SwiftLint analyze, and Periphery.
           sign        Sign the Mac app bundle and daemon products.
           signing-check
                       Verify signing configuration and signed Mac products.
@@ -70,20 +70,51 @@ func parseBuildTarget() throws -> (BuildTarget, String) {
     return (target, configuration)
 }
 
-func parseActivation(command: String) throws -> (ActivationTarget, String) {
+func parseActivation(command: String) throws -> ActivationOptions {
     let arguments = Array(CommandLine.arguments.dropFirst(2))
+    let usage =
+        "usage: \(command) <\(activationTargetUsage)> [Debug|Release] [--port <listener-port>]"
     guard let rawTarget = arguments.first else {
-        throw ToolError.usage("usage: \(command) <\(activationTargetUsage)> [Debug|Release]")
-    }
-    guard arguments.count <= 2 else {
-        throw ToolError.usage("usage: \(command) <\(activationTargetUsage)> [Debug|Release]")
+        throw ToolError.usage(usage)
     }
     guard let target = ActivationTarget(rawValue: rawTarget) else {
         throw ToolError.usage(
             "unknown target: \(rawTarget); expected one of \(activationTargetUsage)")
     }
-    let configuration = arguments.count == 2 ? arguments[1] : "Debug"
-    return (target, configuration)
+
+    var configuration = "Debug"
+    var listenerPort: UInt16?
+    var index = 1
+    while index < arguments.count {
+        let argument = arguments[index]
+        if argument == "--port" {
+            guard index + 1 < arguments.count else {
+                throw ToolError.usage("missing value for --port. \(usage)")
+            }
+            guard let port = UInt16(arguments[index + 1]), port >= 1 else {
+                throw ToolError.usage(
+                    "invalid --port value: \(arguments[index + 1]). \(usage)")
+            }
+            listenerPort = port
+            index += 2
+            continue
+        }
+        if configuration == "Debug", argument == "Debug" || argument == "Release" {
+            configuration = argument
+            index += 1
+            continue
+        }
+        throw ToolError.usage("unknown activation argument: \(argument). \(usage)")
+    }
+
+    return ActivationOptions(
+        target: target, configuration: configuration, listenerPort: listenerPort)
+}
+
+struct ActivationOptions {
+    let target: ActivationTarget
+    let configuration: String
+    let listenerPort: UInt16?
 }
 
 func runCommand(_ command: String) throws {
@@ -129,8 +160,12 @@ func runCoreCommand(_ command: String) throws -> Bool {
         try buildProject(target: target, configuration: configuration)
         return true
     case "activate":
-        let (target, configuration) = try parseActivation(command: command)
-        try activateTarget(target, configuration: configuration)
+        let options = try parseActivation(command: command)
+        try activateTarget(
+            options.target,
+            configuration: options.configuration,
+            listenerPort: options.listenerPort
+        )
         return true
     case "test":
         try testProject()
@@ -175,13 +210,9 @@ func runReleaseCommand(_ command: String) throws -> Bool {
     case "log-audit":
         try auditLogging()
         return true
-    case "go-audit":
-        try auditGoProject()
-        return true
     case "audit":
         try lintProject()
         try auditLogging()
-        try auditGoProject()
         return true
     case "analyze":
         try analyzeProject()

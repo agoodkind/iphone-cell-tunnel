@@ -1,4 +1,0 @@
-# deadcode: generated_at=2026-05-24T03:47:02Z
-internal/discovery/dnssd_callbacks_darwin.go:107:6: unreachable func: GoAddrInfoCallback	# deadcode:first_added=2026-05-24T03:47:02Z last_seen=2026-05-24T03:47:02Z
-internal/discovery/dnssd_callbacks_darwin.go:24:6: unreachable func: GoBrowseCallback	# deadcode:first_added=2026-05-24T03:47:02Z last_seen=2026-05-24T03:47:02Z
-internal/discovery/dnssd_callbacks_darwin.go:66:6: unreachable func: GoResolveCallback	# deadcode:first_added=2026-05-24T03:47:02Z last_seen=2026-05-24T03:47:02Z

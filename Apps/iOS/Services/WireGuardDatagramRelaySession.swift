@@ -64,9 +64,6 @@ final class WireGuardDatagramRelaySession {
         state = .waitingForHandshake
         udpClient.datagramHandler = { [weak self] datagram in
             Task { @MainActor [weak self] in
-                logger.debug(
-                    "wireguard datagram relay received hosted datagram bytes=\(datagram.data.count, privacy: .public)"
-                )
                 self?.datagramHandler?(datagram)
             }
         }
@@ -124,12 +121,6 @@ final class WireGuardDatagramRelaySession {
             throw WireGuardDatagramRelayError.udpConnectionUnavailable
         }
 
-        logger.debug(
-            """
-            wireguard datagram relay forwarding to hosted server \
-            endpointFamily=\(datagram.addressFamily.rawValue, privacy: .public) bytes=\(datagram.data.count, privacy: .public)
-            """
-        )
         try udpClient.send(datagram: datagram)
     }
 
@@ -299,28 +290,21 @@ final class CellularWireGuardUDPClient {
             throw WireGuardDatagramRelayError.udpConnectionUnavailable
         }
 
-        logger.debug(
-            "cellular wireguard udp sending datagram bytes=\(datagram.data.count, privacy: .public)"
-        )
         connection.send(
             content: datagram.data,
             completion: .contentProcessed { [weak self, weak connection] error in
-                if let error {
-                    logger.error(
-                        "cellular wireguard udp send failed error=\(error.localizedDescription, privacy: .public)"
-                    )
-                    Task { @MainActor [weak self, weak connection] in
-                        self?.handleSendFailure(
-                            error.localizedDescription,
-                            connection: connection
-                        )
-                    }
+                guard let error else {
                     return
                 }
-
-                logger.debug(
-                    "cellular wireguard udp send completed bytes=\(datagram.data.count, privacy: .public)"
+                logger.error(
+                    "cellular wireguard udp send failed error=\(error.localizedDescription, privacy: .public)"
                 )
+                Task { @MainActor [weak self, weak connection] in
+                    self?.handleSendFailure(
+                        error.localizedDescription,
+                        connection: connection
+                    )
+                }
             })
     }
 
@@ -352,12 +336,10 @@ final class CellularWireGuardUDPClient {
     }
 
     private func receive(on connection: NWConnection) {
-        logger.debug("cellular wireguard udp receive scheduled")
-        connection.receiveMessage { [weak self, weak connection] data, _, isComplete, error in
+        connection.receiveMessage { [weak self, weak connection] data, _, _, error in
             Task { @MainActor [weak self, weak connection] in
                 self?.handleReceiveResult(
                     data: data,
-                    isComplete: isComplete,
                     error: error,
                     connection: connection
                 )
@@ -395,7 +377,6 @@ final class CellularWireGuardUDPClient {
 
     private func handleReceiveResult(
         data: Data?,
-        isComplete: Bool,
         error: NWError?,
         connection: NWConnection?
     ) {
@@ -420,10 +401,6 @@ final class CellularWireGuardUDPClient {
             forwardReceivedDatagram(data, connection: connection)
         }
 
-        if isComplete {
-            logger.debug("cellular wireguard udp message completed")
-        }
-
         guard let connection else {
             logger.notice("cellular wireguard udp receive stopped")
             return
@@ -441,9 +418,6 @@ final class CellularWireGuardUDPClient {
             return
         }
 
-        logger.debug(
-            "cellular wireguard udp received datagram bytes=\(data.count, privacy: .public)"
-        )
         do {
             let datagram = try WireGuardDatagram(data: data, addressFamily: endpointFamily)
             datagramHandler?(datagram)

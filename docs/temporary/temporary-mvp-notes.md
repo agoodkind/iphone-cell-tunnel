@@ -6,6 +6,8 @@ This file is the single durable handoff for the Cell Tunnel project. An agent wi
 
 The Mac wants to use the internet through the iPhone cellular signal instead of through wifi. Traffic on the Mac is encapsulated and forwarded over USB to the iPhone. The iPhone forwards each packet over its cellular interface to a hosted server we own. The hosted server unwraps and forwards each packet to the real internet.
 
+The use case is education and research. The motivation is to route Mac traffic through the iPhone cellular signal **without** using iOS Personal Hotspot. Carriers may rate-limit Personal Hotspot data while leaving native cellular data unmetered, so we want native cellular egress from the iPhone, not the tethered path. That is why the project carries a custom iPhone app instead of using the stock hotspot. Do not propose Personal Hotspot as the answer for the Mac to iPhone link, because Personal Hotspot is exactly the thing we are routing around.
+
 The path is:
 
 1. The Mac sends each packet to a fake network card on the Mac.
@@ -27,7 +29,33 @@ Names for the pieces:
 
 ## Current state, in one paragraph
 
-IPv4 traffic works end-to-end through the relay over USB and exits via the iPhone cellular signal. The tunnel survives stop and start cycles. The route table for `208.67.222.222/32` resolves through our `utun` interface during a session. IPv6 also works at the relay level on the Mac and iPhone side, but the hosted WireGuard server is currently not replying to v6 echoes during this session window. The user is investigating the v6 problem on the server side. Phase 1 acceptance is met for IPv4 over the usbmuxd transport, pending the server v6 fix.
+IPv4 traffic works end-to-end through the relay over USB and exits via the iPhone cellular signal. The tunnel survives stop and start cycles. Routes for `208.67.222.222/32` and the speedtest IPs (151.101.*, 104.17.*, 68.65.224.181) install through the `utun` interface. IPv6 still has a server-side issue. Phase 1 acceptance is met for IPv4 over the usbmuxd transport. Current measured throughput through the tunnel: about 19 Mbps down, 4 Mbps up. The cellular link itself does 200 to 300 Mbps down, 80 Mbps up under Apple's Personal Hotspot, and direct WireGuard from iPhone gets 300 down 90 up. The hosted server has 2 Gbps symmetric fiber, 1 mile away. Inferred from those three measurements: the cap sits somewhere in the Mac-to-iPhone relay pipeline, since the cellular link and the server both have headroom. The exact location inside that pipeline is not isolated. The next step is the three-experiment sequence at the end of this doc, which isolates whether the cap is in `usbmuxd`, in our framing code, in WireGuard, or in the iPhone receive code.
+
+## Goal, in one line
+
+Fast, durable, reliable, latest technology. The relay measures about 24 Mbps end-to-end today. The cap location inside the pipeline is not isolated yet. Goal is to match or approach the 300 Mbps the cellular link is capable of.
+
+## Architecture pivot: Swift-native rewrite
+
+The Mac daemon rewrites to Swift. Go was a day-0 mistake. Every component has a Swift equivalent (see AGENTS.md "Architecture direction"). Phase 1 ships a plain Swift launchd daemon. Phase 2 is a P0 fast-follow: migrate to `NEPacketTunnelProvider` inside `CellTunnelMac.app` for Apple-managed VPN lifecycle. Phase 2 starts the moment Phase 1 stabilizes and the throughput goal is met.
+
+The Go daemon (`Daemon/`), `go-ios` usage, and cgo DNS-SD bindings retire as the Swift daemon takes over. WireGuardKit replaces `wireguard-go`. `NWConnection` replaces the `usbmuxd` dial path. `NWBrowser` replaces the cgo Bonjour code. Route management calls BSD routing socket syscalls from Swift directly via the `Darwin` module.
+
+## Transport options for the Mac to iPhone link
+
+The Mac to iPhone link is the suspected bottleneck. None of these have been compared head to head with isolated measurements yet. The candidates:
+
+- **`usbmuxd`** (today). Apple's USB Multiplex daemon. The end-to-end pipeline through this transport measures around 24 Mbps for WireGuard datagrams. Whether the cap is in `usbmuxd` itself, in our framing code, in WireGuard, or in the iPhone receive code is the question Exp 1 in the experiment plan answers.
+- **Developer CDC-NCM interface via Apple's `Network.framework`** (untried). The interface where Go's `net.Dial` hit the 18 second TCP death over link-local IPv6. UDP and `NWConnection` TCP on this interface have not been tested. Apple's own tools use `NWConnection` and do not appear to hit the bug; observed not proven. Exp 2 and Exp 3 probe this path.
+- **CoreDevice / RemoteXPC tunnel** (Apple's name, not "tunneld"). Modern Apple device communication. Used by Xcode and `devicectl`. Community reports suggest higher throughput than `usbmuxd`; not measured here. `go-ios` wraps it but is blocked on a `gvisor` version conflict that broke our build last attempt and was reverted. Two ways forward if revisited: fork `go-ios` with a minimal patch, or call Apple's `CoreDevice.framework` directly from Swift.
+- **Wi-Fi Aware** (iOS 26+, new in WWDC25). Direct device-to-device Wi-Fi peer transport with authentication and high throughput. Wireless, not USB. Untried.
+
+## Aspirations and pending architecture decisions
+
+- The experiment sequence (Exp 1 -> 2 -> 3, defined below) decides the next transport. Each one is cheap and isolates one variable. Run them in order and let the data choose.
+- **Network Extension on iPhone** (`NEPacketTunnelProvider`) is a separate concern from throughput. It addresses durability and background execution. The packet-capture half of the API does not apply because our packets originate on the Mac, not on iOS. The extension lifecycle is what we want for "iOS keeps the listener alive in the background, survives lock screen and app suspension." Tracked as task #17.
+- WireGuard stays as the wire format for now, because it gives us "single UDP destination" on the cellular leg and avoids NAT or source IP rewriting that raw packet tunneling would force.
+- **Personal Hotspot is explicitly off the table** because the use case is bypassing it. See AGENTS.md for the grounded version of this rule, including which CDC-NCM interfaces do and do not activate Personal Hotspot.
 
 ## What the working setup looks like, end to end
 
@@ -105,6 +133,36 @@ The Makefile mirrors this. `make build TARGET=daemon`, `make build TARGET=mac`, 
 
 The control socket defaults to `/var/run/io.goodkind.celltunnel/control.sock` on both the daemon side (`Daemon/cmd/celltunneld/main.go`) and the Swift CLI side (`Sources/CellTunnelCore/TunnelControlClient.swift`). Both sides honor `CELL_TUNNEL_CONTROL_SOCKET` at runtime to override the path. A Swift test at `Tests/CellTunnelCoreTests/TunnelControlSocketPathTests.swift` reads the Go source and fails if the default literal or the env var name drifts apart between the two languages.
 
+## iPhone listener port
+
+The iPhone-side relay listener binds to a fixed port. Default 51821. The value comes from `Apps/iOS/Services/RelayPortSettings.swift`. Three ways to set it:
+
+- Default. If nothing is configured the app uses 51821.
+- Launch argument `--cell-tunnel-port <port>`. The Mac CLI `swift Tools/cell-tunnel-dev.swift activate iphone --port <port>` passes this through.
+- iPhone Settings section. The "Listener Port" row in the iPhone UI lets the operator edit and apply a new port. The new value persists in `UserDefaults` under `io.goodkind.celltunnel.relay.port`.
+
+The relay listener does not pick an ephemeral port any more. Bonjour still publishes the listener too, but the canonical CLI start uses the explicit port: `start --relay usbmuxd:<UDID>:51821`.
+
+## Tuist project generation
+
+`swift Tools/cell-tunnel-dev.swift generate` is the only thing that should regenerate `CellTunnel.xcworkspace`. The build prologue calls it. The generator now skips re-running `tuist install` and `tuist generate` when nothing relevant has changed. The cache lives at `.build/CellTunnelDev/project-fingerprint.txt` and stores a fingerprint of `Project.swift`, `Tuist.swift`, `Tuist/Package.swift`, and the resolved `DEVELOPMENT_TEAM`. Delete that file to force a fresh regen.
+
+The signing team gets pinned into the generated project from `signingConfig().developmentTeam`. The Tuist evaluator does not see normal env vars, so `generateProject` passes `DEVELOPMENT_TEAM` and `TUIST_DEVELOPMENT_TEAM` through to `tuist install` and `tuist generate`. `Project.swift` reads `TUIST_DEVELOPMENT_TEAM` first then `DEVELOPMENT_TEAM`. If neither is set, `Project.swift` omits the signing keys and Xcode falls back to its own logic. The default development team source is `defaultDevelopmentTeam` in `Tools/CellTunnelDev/Support.swift`.
+
+## Throughput instrumentation
+
+Both sides emit 1 Hz throughput summaries to log. On the Mac daemon side `TCPRelayClient` keeps `datagramsSent`, `datagramsReceived`, `bytesSent`, `bytesReceived` as `atomic.Uint64` counters. The `throughputLoop` goroutine wakes every second, computes deltas, and calls `emitThroughputSample`. The hot path no longer logs per datagram.
+
+On the iPhone side `PhoneRelayController+Throughput.swift` runs a Task that samples the `TunnelCounters` struct every second and logs deltas. Hot-path debug and info logs in `PhoneRelayController.swift` and `WireGuardDatagramRelaySession.swift` are stripped. State transitions still log at `.notice` and errors at `.error`.
+
+## Performance tunables landed
+
+- WireGuard MTU bumped from 1280 to 1420 in `Daemon/internal/tunnel/config.go`.
+- TCP_NODELAY on the relay TCP dial in `Daemon/internal/tunnel/relay_client.go`. Does nothing for the usbmuxd path because that path is a Unix socket. Will matter for the eventual tunneld TCP6 path.
+- WireGuard config `PersistentKeepalive = 5` in `/Users/agoodkind/Desktop/wireguard-export/example.com only.conf`.
+- Hot-path log strip described above.
+- Atomic counters described above.
+
 ## iPhone log viewing
 
 `swift Tools/cell-tunnel-dev.swift iphone-logs` streams the full iPhone syslog over USB via `idevicesyslog`.
@@ -175,8 +233,14 @@ Tooling:
 
 ## Open tasks worth knowing about
 
-- #10 The 18 second bug deeper write-up. The functional fix via usbmuxd is shipped. This would be a longer post-mortem if anyone wants one.
-- #13 The usbmuxd transport itself. Done end to end for IPv4. The iPhone-side `includePeerToPeer = true` could be dropped now since the usbmuxd path uses iPhone loopback. Bonjour discovery still needs it for the wifi fallback that does not exist yet.
+- #10 The 18 second bug deeper write-up. Still smelly: we bypassed it with usbmuxd but never root-caused. Working theory (not proven): Apple's TCP stack does not ACK correctly on link-local IPv6 over USB-NCM for raw Go `net.Dial`, while `usbmuxd` dodges it by not relying on that route. Whether Apple's `NWConnection` dodges it too is what Exp 3 measures.
+- #13 The usbmuxd transport itself. Done end to end for IPv4.
+- #14 Diagnose tunnel throughput cap vs Personal Hotspot baseline. Partial. The 24 Mbps measurement is end-to-end. The cap location inside the pipeline is not isolated. The three-experiment plan below addresses this.
+- #16 Retired. CoreDevice tunneld attempt failed on a `gvisor` dependency conflict in `go-ios` and was reverted with no main-tree cruft. Future CoreDevice work, if any, calls Apple's `CoreDevice.framework` from Swift instead of going through `go-ios`.
+- #17 Wrap iPhone relay in Network Extension for background durability. Queued. Picks up after the transport choice is settled.
+- #20 Exp 1: raw byte throughput through usbmuxd, no WireGuard. Isolates whether the cap is in usbmuxd or in our framing code.
+- #21 Exp 2: raw UDP throughput over CDC-NCM link-local IPv6. Tests whether UDP on the developer CDC-NCM interface beats usbmuxd. No TCP, no usbmuxd, no WireGuard.
+- #22 Exp 3: `NWConnection` TCP probe over CDC-NCM. Only run if Exp 1 or Exp 2 leave TCP-vs-Go-stack questions open.
 
 ## What is definitively known to work
 

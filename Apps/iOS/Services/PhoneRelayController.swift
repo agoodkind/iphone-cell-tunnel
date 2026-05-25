@@ -21,6 +21,8 @@ final class PhoneRelayController: @unchecked Sendable {
     private let jsonEncoder = JSONEncoder()
     let wireGuardSession = WireGuardDatagramRelaySession()
     private var heartbeatTask: Task<Void, Never>?
+    var throughputTask: Task<Void, Never>?
+    var throughputBaseline = TunnelCounters()
 
     var isRunning = false
     var isAdvertising = false
@@ -46,6 +48,21 @@ final class PhoneRelayController: @unchecked Sendable {
         start()
     }
 
+    func updateListenerPort(_ port: UInt16) {
+        let wasRunning = isRunning
+        logger.notice(
+            """
+            phone relay listener port update requested \
+            port=\(port, privacy: .public) wasRunning=\(wasRunning, privacy: .public)
+            """
+        )
+        storeRelayListenerPort(port)
+        if wasRunning {
+            stop()
+            start()
+        }
+    }
+
     func start() {
         guard !isRunning else {
             logger.debug("phone relay start ignored because relay is already running")
@@ -60,6 +77,7 @@ final class PhoneRelayController: @unchecked Sendable {
         wireGuardSession.prepareForHandshake()
         startListener()
         startHeartbeatLoop()
+        startThroughputLoop()
     }
 
     func stop() {
@@ -73,6 +91,7 @@ final class PhoneRelayController: @unchecked Sendable {
         listenerPort = nil
         UIApplication.shared.isIdleTimerDisabled = false
         stopHeartbeatLoop()
+        stopThroughputLoop()
         wireGuardSession.stop()
         cellularMonitor?.cancel()
         cellularMonitor = nil
@@ -154,7 +173,7 @@ extension PhoneRelayController {
             tcpOptions.keepaliveCount = relayKeepAliveProbeCount
             let parameters = NWParameters(tls: nil, tcp: tcpOptions)
             parameters.includePeerToPeer = true
-            let listener = try NWListener(using: parameters)
+            let listener = try NWListener(using: parameters, on: resolvedRelayListenerPort())
             let serviceName = UIDevice.current.name
             advertisedServiceName = serviceName
             listener.service = NWListener.Service(name: serviceName, type: "_cellrelay._tcp")
@@ -256,7 +275,6 @@ extension PhoneRelayController {
             }
 
             if let data, !data.isEmpty {
-                logger.debug("relay received bytes=\(data.count, privacy: .public)")
                 Task { @MainActor [weak self, weak peerConnection] in
                     guard let peerConnection else {
                         return
@@ -282,7 +300,6 @@ extension PhoneRelayController {
 
         do {
             let frames = try peerConnection.frameBuffer.append(data)
-            logger.debug("decoded relay frames count=\(frames.count, privacy: .public)")
             for frame in frames {
                 handle(frame: frame, from: peerConnection)
             }
@@ -296,12 +313,6 @@ extension PhoneRelayController {
 
     private func handle(frame: RelayFrame, from peerConnection: PhonePeerConnection) {
         peerConnection.lastAddressFamily = frame.addressFamily
-        logger.debug(
-            """
-            handling relay frame operation=\(frame.operation.rawValue, privacy: .public) \
-            streamID=\(frame.streamID, privacy: .public) bytes=\(frame.payload.count, privacy: .public)
-            """
-        )
         switch frame.operation {
         case .hello:
             connectedPeerName = "Mac"
@@ -369,12 +380,6 @@ extension PhoneRelayController {
         do {
             let datagram = try WireGuardDatagram(frame: frame)
             counters.wireGuardDatagramsFromMac += 1
-            logger.info(
-                """
-                wireguard datagram frame accepted family=\(datagram.addressFamily.rawValue, privacy: .public) \
-                streamID=\(frame.streamID, privacy: .public) bytes=\(datagram.data.count, privacy: .public)
-                """
-            )
             try wireGuardSession.sendToServer(datagram)
             counters.wireGuardDatagramsToServer += 1
         } catch {
@@ -427,12 +432,8 @@ extension PhoneRelayController {
         let frame = datagram.relayFrame(streamID: streamID)
         counters.wireGuardDatagramsFromServer += 1
         counters.wireGuardDatagramsToMac += 1
-        logger.info(
-            """
-            sending wireguard datagram from hosted server \
-            family=\(datagram.addressFamily.rawValue, privacy: .public) \
-            streamID=\(streamID, privacy: .public) bytes=\(datagram.data.count, privacy: .public)
-            """
+        logger.debug(
+            "sending wireguard datagram streamID=\(streamID, privacy: .public)"
         )
         send(frame: frame, to: peerConnection)
     }
@@ -481,7 +482,6 @@ extension PhoneRelayController {
                     }
 
                     self?.counters.relayBytesOut += UInt64(encodedFrame.count)
-                    logger.debug("relay sent bytes=\(encodedFrame.count, privacy: .public)")
                 }
             })
     }

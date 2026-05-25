@@ -36,6 +36,16 @@ public enum TunnelControlErrorCode: String, Codable, Equatable, Sendable {
 }
 
 public let usbmuxdEndpointPrefix = "usbmuxd:"
+public let tunneldEndpointPrefix = "tunneld:"
+
+private let prefixedEndpointSchemes = [usbmuxdEndpointPrefix, tunneldEndpointPrefix]
+
+private func prefixedSchemeForHost(_ host: String) -> String? {
+    for scheme in prefixedEndpointSchemes where host.hasPrefix(scheme) {
+        return scheme
+    }
+    return nil
+}
 
 public struct TunnelRelayEndpoint: Codable, Equatable, Hashable, Sendable {
     public var host: String
@@ -57,7 +67,7 @@ public struct TunnelRelayEndpoint: Codable, Equatable, Hashable, Sendable {
     }
 
     public var socketAddress: String {
-        if host.hasPrefix(usbmuxdEndpointPrefix) {
+        if prefixedSchemeForHost(host) != nil {
             return "\(host):\(port)"
         }
         if host.contains(":") {
@@ -76,12 +86,13 @@ public struct TunnelRelayEndpoint: Codable, Equatable, Hashable, Sendable {
             throw TunnelDaemonError.usage("relay endpoint is empty")
         }
 
-        if trimmedArgument.hasPrefix(usbmuxdEndpointPrefix) {
-            let body = String(trimmedArgument.dropFirst(usbmuxdEndpointPrefix.count))
+        for scheme in prefixedEndpointSchemes where trimmedArgument.hasPrefix(scheme) {
+            let body = String(trimmedArgument.dropFirst(scheme.count))
             guard let lastColonIndex = body.lastIndex(of: ":") else {
                 throw TunnelDaemonError.controlFailure(
                     TunnelControlFailure(
-                        errorCode: .invalidRelayEndpoint, message: "invalid usbmuxd relay endpoint")
+                        errorCode: .invalidRelayEndpoint,
+                        message: "invalid \(scheme.dropLast()) relay endpoint")
                 )
             }
             let udid = String(body[..<lastColonIndex])
@@ -89,10 +100,11 @@ public struct TunnelRelayEndpoint: Codable, Equatable, Hashable, Sendable {
             guard !udid.isEmpty, let port = Int(portString), port > 0 else {
                 throw TunnelDaemonError.controlFailure(
                     TunnelControlFailure(
-                        errorCode: .invalidRelayEndpoint, message: "invalid usbmuxd relay endpoint")
+                        errorCode: .invalidRelayEndpoint,
+                        message: "invalid \(scheme.dropLast()) relay endpoint")
                 )
             }
-            return Self(host: "\(usbmuxdEndpointPrefix)\(udid)", port: port, addressFamily: .unspecified)
+            return Self(host: "\(scheme)\(udid)", port: port, addressFamily: .unspecified)
         }
 
         if trimmedArgument.hasPrefix("[") {

@@ -11,8 +11,14 @@ enum BuildTarget: String, CaseIterable {
 let buildTargetUsage = BuildTarget.allCases.map(\.rawValue).joined(separator: "|")
 
 func buildProject(target: BuildTarget, configuration: String) throws {
+    if target == .daemon {
+        throw ToolError.failure(
+            "Go daemon removed; Swift daemon rewrite in progress. "
+                + "Targets available: mac, iphone-simulator, iphone-device.")
+    }
+
     try runBuildPrologue()
-    try buildDaemonAndCLI()
+    try buildCLI()
 
     switch target {
     case .daemon:
@@ -52,16 +58,13 @@ private func requireSigningConfig() throws -> SigningConfig {
 private func runBuildPrologue() throws {
     try generateProject()
     try lintSwiftProject()
-    try lintGoProject()
     try auditLogging()
-    try auditGoProject()
 }
 
-private func buildDaemonAndCLI() throws {
+private func buildCLI() throws {
     try buildSwiftProduct("celltunnelctl")
     try fileManager.createDirectory(at: productsDirectory, withIntermediateDirectories: true)
     try installSwiftExecutable(productName: "celltunnelctl", outputName: "celltunnelctl")
-    try runGoMake("build")
 }
 
 private func buildMacBundle(configuration: String, signing: SigningConfig) throws {
@@ -86,25 +89,10 @@ private func buildIPhoneSimulator(configuration: String) throws {
 }
 
 private func printBuildArtifactFingerprints(target: BuildTarget, configuration: String) throws {
-    let daemonPath = productsDirectory.appendingPathComponent("celltunneld").path
     let ctlPath = productsDirectory.appendingPathComponent("celltunnelctl").path
     print("")
     print("build artifacts (target=\(target.rawValue) configuration=\(configuration)):")
-    try printArtifactFingerprint(label: "celltunneld   ", path: daemonPath)
     try printArtifactFingerprint(label: "celltunnelctl ", path: ctlPath)
-
-    if target == .mac || target == .all {
-        let bundledDaemon = installedMacAppPath.appendingPathComponent(helperExecutableRelativePath)
-            .path
-        let bundledLocal = xcodeConfigurationBuildDirectory(
-            configuration: configuration, platformName: macOSPlatformName
-        )
-        .appendingPathComponent("CellTunnelMac.app")
-        .appendingPathComponent(helperExecutableRelativePath)
-        .path
-        try printArtifactFingerprint(label: "bundle daemon ", path: bundledLocal)
-        try printArtifactFingerprint(label: "installed dmn ", path: bundledDaemon)
-    }
 }
 
 private func printArtifactFingerprint(label: String, path: String) throws {

@@ -25,6 +25,7 @@
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_cellrelay._tcp</string>
+		<string>_celltunnelbench._udp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Cell Tunnel uses local peer-to-peer networking to relay traffic to your iPhone.</string>

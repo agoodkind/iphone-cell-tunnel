@@ -1,3 +1,4 @@
+import Foundation
 import ProjectDescription
 
 let projectName = "CellTunnel"
@@ -27,6 +28,22 @@ let appDependencies: [TargetDependency] = [
     .target(name: "CellTunnelCore"),
     .target(name: "CellTunnelLog"),
 ]
+
+let cellTunnelPhoneBaseSettings: SettingsDictionary = {
+    var settings: SettingsDictionary = [
+        "PRODUCT_NAME": "CellTunnelPhone",
+        "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "",
+    ]
+    let environment = ProcessInfo.processInfo.environment
+    let team =
+        (environment["TUIST_DEVELOPMENT_TEAM"] ?? environment["DEVELOPMENT_TEAM"] ?? "")
+        .trimmingCharacters(in: .whitespaces)
+    if !team.isEmpty {
+        settings["DEVELOPMENT_TEAM"] = SettingValue(stringLiteral: team)
+        settings["CODE_SIGN_STYLE"] = "Automatic"
+    }
+    return settings
+}()
 
 let project = Project(
     name: projectName,
@@ -78,10 +95,7 @@ let project = Project(
             ],
             dependencies: appDependencies,
             settings: .settings(
-                base: [
-                    "PRODUCT_NAME": "CellTunnelPhone",
-                    "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "",
-                ]
+                base: cellTunnelPhoneBaseSettings
             )
         ),
         .target(

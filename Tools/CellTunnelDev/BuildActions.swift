@@ -3,33 +3,75 @@ import Foundation
 func generateProject() throws {
     try generateTypedIPC()
     try requireTool("tuist")
-    try run("tuist", ["install"])
-    try run("tuist", ["generate", "--no-open"])
+    if try projectGenerationIsCurrent() {
+        return
+    }
+    let team = try signingConfig().developmentTeam
+    let environment = [
+        "DEVELOPMENT_TEAM": team,
+        "TUIST_DEVELOPMENT_TEAM": team,
+    ]
+    try run("tuist", ["install"], environment: environment)
+    try run("tuist", ["generate", "--no-open"], environment: environment)
+    try recordProjectGenerationFingerprint()
+}
+
+private let projectGenerationSources: [URL] = [
+    repoRoot.appendingPathComponent("Project.swift"),
+    repoRoot.appendingPathComponent("Tuist.swift"),
+    repoRoot.appendingPathComponent("Tuist/Package.swift"),
+]
+
+private let projectGenerationFingerprintURL: URL =
+    repoRoot
+    .appendingPathComponent(".build", isDirectory: true)
+    .appendingPathComponent("CellTunnelDev", isDirectory: true)
+    .appendingPathComponent("project-fingerprint.txt", isDirectory: false)
+
+private func projectGenerationIsCurrent() throws -> Bool {
+    let workspacePath = repoRoot.appendingPathComponent("CellTunnel.xcworkspace").path
+    guard fileManager.fileExists(atPath: workspacePath) else {
+        return false
+    }
+    let fingerprint = try projectGenerationSourceFingerprint()
+    guard fileManager.fileExists(atPath: projectGenerationFingerprintURL.path) else {
+        return false
+    }
+    let stored = try String(contentsOf: projectGenerationFingerprintURL, encoding: .utf8)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    return stored == fingerprint
+}
+
+private func recordProjectGenerationFingerprint() throws {
+    let fingerprint = try projectGenerationSourceFingerprint()
+    let parent = projectGenerationFingerprintURL.deletingLastPathComponent()
+    try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
+    try fingerprint.write(
+        to: projectGenerationFingerprintURL, atomically: true, encoding: .utf8)
+}
+
+private func projectGenerationSourceFingerprint() throws -> String {
+    var parts: [String] = []
+    let team = try signingConfig().developmentTeam.trimmingCharacters(in: .whitespaces)
+    parts.append("team:\(team)")
+    for source in projectGenerationSources {
+        let attributes = try fileManager.attributesOfItem(atPath: source.path)
+        let modificationDate = attributes[.modificationDate] as? Date ?? Date.distantPast
+        let size = attributes[.size] as? Int ?? 0
+        parts.append("\(source.lastPathComponent):\(modificationDate.timeIntervalSince1970):\(size)")
+    }
+    return parts.joined(separator: "|")
 }
 
 func generateTypedIPC() throws {
-    try requireTool("protoc")
-    try requireTool("protoc-gen-go")
-    try requireTool("protoc-gen-go-grpc")
     let stagingDirectory = try makeTemporaryDirectory(name: "GeneratedStaging")
     defer {
         try? fileManager.removeItem(at: stagingDirectory)
     }
 
     let swiftStagingDirectory = stagingDirectory.appendingPathComponent("swift")
-    let goStagingRoot = stagingDirectory.appendingPathComponent("go")
-    let goStagingDirectory = goStagingRoot.appendingPathComponent("internal/controlv1")
-
     try generateSwiftTypedIPC(outputDirectory: swiftStagingDirectory)
-    try generateGoTypedIPC(outputDirectory: goStagingRoot)
-
-    guard fileManager.fileExists(atPath: goStagingDirectory.path) else {
-        throw ToolError.failure(
-            "generated Go control sources not found: \(goStagingDirectory.path)")
-    }
-
     try replaceDirectory(at: swiftGeneratedDirectory, withItemAt: swiftStagingDirectory)
-    try replaceDirectory(at: goControlGeneratedDirectory, withItemAt: goStagingDirectory)
 }
 
 func generateSwiftTypedIPC(outputDirectory: URL) throws {
@@ -49,19 +91,6 @@ func generateSwiftTypedIPC(outputDirectory: URL) throws {
             "--output-path",
             outputDirectory.path,
             "--",
-            swiftControlProtoPath.path,
-        ]
-    )
-}
-
-func generateGoTypedIPC(outputDirectory: URL) throws {
-    try fileManager.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
-    try run(
-        "protoc",
-        [
-            "--proto_path=\(protoDirectory.path)",
-            "--go_out=module=celltunnel/daemon:\(outputDirectory.path)",
-            "--go-grpc_out=module=celltunnel/daemon:\(outputDirectory.path)",
             swiftControlProtoPath.path,
         ]
     )
@@ -229,13 +258,11 @@ func selectedPhoneDeviceIdentifier() throws -> String {
 func testProject() throws {
     try generateTypedIPC()
     try run("swift", swiftTestArguments())
-    try runGoMake("test")
 }
 
 func lintProject() throws {
     try generateTypedIPC()
     try lintSwiftProject()
-    try lintGoProject()
 }
 
 func lintSwiftProject() throws {
@@ -269,7 +296,6 @@ func lintSwiftProject() throws {
 func formatProject() throws {
     try generateTypedIPC()
     try formatSwiftProject()
-    try formatGoProject()
 }
 
 func formatSwiftProject() throws {
@@ -298,14 +324,6 @@ func formatSwiftProject() throws {
     )
 }
 
-func formatGoProject() throws {
-    try runGoMake("fmt")
-}
-
-func lintGoProject() throws {
-    try runGoMake("lint")
-}
-
 func auditLogging() throws {
     try run(
         "swift",
@@ -313,9 +331,6 @@ func auditLogging() throws {
     )
 }
 
-func auditGoProject() throws {
-    try runGoMake("build-check")
-}
 func analyzeProject() throws {
     try requireTool("swiftlint")
     try requireTool("periphery")
@@ -323,7 +338,6 @@ func analyzeProject() throws {
     try xcodeAnalyze()
     try swiftLintAnalyze()
     try run("periphery", ["scan", "--config", ".periphery.yml"])
-    try analyzeGoProject()
 }
 
 func xcodeAnalyze() throws {
@@ -383,11 +397,6 @@ func swiftLintAnalyze() throws {
     )
 }
 
-func analyzeGoProject() throws {
-    try runGoMake("lint-deadcode")
-    try runGoMake("staticcheck-extra")
-}
-
 func cleanProject() throws {
     let paths = [
         buildDirectory,
@@ -396,38 +405,11 @@ func cleanProject() throws {
         repoRoot.appendingPathComponent("Tools/.build"),
         repoRoot.appendingPathComponent("CellTunnel.xcodeproj"),
         repoRoot.appendingPathComponent("CellTunnel.xcworkspace"),
-        repoRoot.appendingPathComponent("Daemon/celltunneld"),
     ]
 
     for path in paths where fileManager.fileExists(atPath: path.path) {
         try fileManager.removeItem(at: path)
     }
-}
-
-func runGoMake(_ target: String) throws {
-    try run(
-        "make",
-        ["-C", daemonDirectory.path, target],
-        environment: goMakeEnvironment()
-    )
-}
-
-func goMakeEnvironment() -> [String: String] {
-    guard ProcessInfo.processInfo.environment["GO_MK_DEV_DIR"] == nil else {
-        return [:]
-    }
-
-    let configuredDirectory = ProcessInfo.processInfo.environment["GO_MAKEFILE_DIR"]
-    if let configuredDirectory, !configuredDirectory.isEmpty {
-        return ["GO_MK_DEV_DIR": configuredDirectory]
-    }
-
-    let localDirectory = "\(NSHomeDirectory())/Sites/go-makefile"
-    if fileManager.fileExists(atPath: localDirectory) {
-        return ["GO_MK_DEV_DIR": localDirectory]
-    }
-
-    return [:]
 }
 
 func runMacApp() throws {
