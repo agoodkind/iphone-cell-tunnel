@@ -41,6 +41,22 @@ The Mac daemon rewrites to Swift. Go was a day-0 mistake. Every component has a 
 
 The Go daemon (`Daemon/`), `go-ios` usage, and cgo DNS-SD bindings retire as the Swift daemon takes over. WireGuardKit replaces `wireguard-go`. `NWConnection` replaces the `usbmuxd` dial path. `NWBrowser` replaces the cgo Bonjour code. Route management calls BSD routing socket syscalls from Swift directly via the `Darwin` module.
 
+As of the commit "Delete Daemon Go tree and add NWConnection UDP bench listener", the entire `Daemon/` directory, `go.work`, and `go.work.sum` are deleted. The Swift CLI (`celltunnelctl`), Mac app, and launch daemon plist still reference the deleted binary names at runtime; they will fail to start a tunnel until the Phase 1 Swift daemon replaces them. The iPhone app is unaffected.
+
+## Exp 2 result: UDP over CDC-NCM via NWConnection
+
+Mac TX averaged 1.16 Gbps over a 60-second probe (8.72 GB total). iPhone RX averaged ~925 Mbps sustained during the receive window before iOS killed the unthrottled listener under Network framework memory pressure. That is 38 to 48 times the current `usbmuxd` path of 24 Mbps end-to-end.
+
+The Mac-to-iPhone leg is no longer the bottleneck. Cellular (~300 Mbps) is now the cap, which is the desired state. In production, the Mac throttles to match cellular and packet loss goes to zero.
+
+Test setup:
+- Mac dials iPhone via Bonjour `_celltunnelbench._udp`, resolved over the developer CDC-NCM interface, IPv6 link-local.
+- Bench listener at `Apps/iOS/Services/BenchListener.swift` is gated by `--cell-tunnel-bench-mode` launch arg. Auto-starts on app init when the flag is present, zero footprint otherwise.
+- Mac bench at `/tmp/celltunnel-bench-mac.swift` is a single-file Swift script (run with `swift /tmp/celltunnel-bench-mac.swift`). Not in the repo tree; can graduate to `Tools/` later if useful.
+- `NSBonjourServices` arrays in both `Apps/iOS/Info.plist` and `Apps/macOS/Info.plist` now include `_celltunnelbench._udp`.
+
+Decision: the Phase 1 Swift daemon uses `NWConnection` UDP over CDC-NCM as the Mac-to-iPhone transport. No need to try CoreDevice tunnel or NWConnection TCP; this is fast enough.
+
 ## Transport options for the Mac to iPhone link
 
 The Mac to iPhone link is the suspected bottleneck. None of these have been compared head to head with isolated measurements yet. The candidates:
