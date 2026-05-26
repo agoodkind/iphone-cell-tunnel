@@ -11,20 +11,15 @@ enum BuildTarget: String, CaseIterable {
 let buildTargetUsage = BuildTarget.allCases.map(\.rawValue).joined(separator: "|")
 
 func buildProject(target: BuildTarget, configuration: String) throws {
-    if target == .daemon {
-        throw ToolError.failure(
-            "Go daemon removed; Swift daemon rewrite in progress. "
-                + "Targets available: mac, iphone-simulator, iphone-device.")
-    }
-
     try runBuildPrologue()
     try buildCLI()
 
     switch target {
     case .daemon:
-        break
+        try buildDaemon()
     case .mac:
         let signing = try requireSigningConfig()
+        try buildDaemon()
         try buildMacBundle(configuration: configuration, signing: signing)
     case .iphoneSimulator:
         try buildIPhoneSimulator(configuration: configuration)
@@ -37,6 +32,7 @@ func buildProject(target: BuildTarget, configuration: String) throws {
         )
     case .all:
         let signing = try requireSigningConfig()
+        try buildDaemon()
         try buildMacBundle(configuration: configuration, signing: signing)
         try buildIPhoneSimulator(configuration: configuration)
         try buildPhoneDevice(
@@ -67,6 +63,12 @@ private func buildCLI() throws {
     try installSwiftExecutable(productName: "celltunnelctl", outputName: "celltunnelctl")
 }
 
+private func buildDaemon() throws {
+    try buildSwiftProduct("celltunneld")
+    try fileManager.createDirectory(at: productsDirectory, withIntermediateDirectories: true)
+    try installSwiftExecutable(productName: "celltunneld", outputName: "celltunneld")
+}
+
 private func buildMacBundle(configuration: String, signing: SigningConfig) throws {
     try buildScheme(
         scheme: "CellTunnelMac",
@@ -90,9 +92,13 @@ private func buildIPhoneSimulator(configuration: String) throws {
 
 private func printBuildArtifactFingerprints(target: BuildTarget, configuration: String) throws {
     let ctlPath = productsDirectory.appendingPathComponent("celltunnelctl").path
+    let daemonPath = productsDirectory.appendingPathComponent("celltunneld").path
     print("")
     print("build artifacts (target=\(target.rawValue) configuration=\(configuration)):")
     try printArtifactFingerprint(label: "celltunnelctl ", path: ctlPath)
+    if target == .daemon || target == .mac || target == .all {
+        try printArtifactFingerprint(label: "celltunneld   ", path: daemonPath)
+    }
 }
 
 private func printArtifactFingerprint(label: String, path: String) throws {
