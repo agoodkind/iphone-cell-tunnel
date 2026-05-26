@@ -224,6 +224,67 @@ func launchPhoneDevice() throws {
     try launchInstalledPhoneDevice()
 }
 
+private let wireGuardGoBridgeSourcePath: URL =
+    repoRoot
+    .appendingPathComponent("Tuist", isDirectory: true)
+    .appendingPathComponent(".build", isDirectory: true)
+    .appendingPathComponent("checkouts", isDirectory: true)
+    .appendingPathComponent("wireguard-apple", isDirectory: true)
+    .appendingPathComponent("Sources", isDirectory: true)
+    .appendingPathComponent("WireGuardKitGo", isDirectory: true)
+
+private let wireGuardGoBridgeLibraryDirectory: URL =
+    repoRoot
+    .appendingPathComponent(".build", isDirectory: true)
+    .appendingPathComponent("vendor", isDirectory: true)
+
+private let wireGuardGoBridgeTempDirectory: URL =
+    repoRoot
+    .appendingPathComponent(".build", isDirectory: true)
+    .appendingPathComponent("vendor-temp", isDirectory: true)
+
+func buildWireGuardGoBridge() throws {
+    guard fileManager.fileExists(atPath: wireGuardGoBridgeSourcePath.path) else {
+        throw ToolError.failure(
+            """
+            wireguard-apple WireGuardKitGo source not found at \
+            \(wireGuardGoBridgeSourcePath.path); run tuist install first
+            """
+        )
+    }
+    try fileManager.createDirectory(
+        at: wireGuardGoBridgeLibraryDirectory, withIntermediateDirectories: true)
+    try fileManager.createDirectory(
+        at: wireGuardGoBridgeTempDirectory, withIntermediateDirectories: true)
+    try run(
+        "make",
+        [
+            "-C", wireGuardGoBridgeSourcePath.path,
+            "build",
+        ],
+        environment: [
+            "CONFIGURATION_BUILD_DIR": wireGuardGoBridgeLibraryDirectory.path,
+            "CONFIGURATION_TEMP_DIR": wireGuardGoBridgeTempDirectory.path,
+            "ARCHS": "arm64",
+            "PLATFORM_NAME": "macosx",
+        ]
+    )
+}
+
+func installBuiltDaemon(configuration: String) throws {
+    let source = xcodeConfigurationBuildDirectory(
+        configuration: configuration,
+        platformName: macOSPlatformName
+    ).appendingPathComponent("celltunneld")
+    let destination = productsDirectory.appendingPathComponent("celltunneld")
+    guard fileManager.fileExists(atPath: source.path) else {
+        throw ToolError.failure("built celltunneld not found: \(source.path)")
+    }
+    try copyReplacingItem(at: source, to: destination)
+    try fileManager.setAttributes(
+        [.posixPermissions: 0o755], ofItemAtPath: destination.path)
+}
+
 struct XcodeDevice: Decodable {
     let simulator: Bool
     let available: Bool

@@ -59,7 +59,7 @@ let project = Project(
         .target(
             name: "CellTunnelCore",
             destinations: [.iPhone, .mac],
-            product: .framework,
+            product: .staticFramework,
             bundleId: "io.goodkind.CellTunnelCore",
             infoPlist: .default,
             sources: [
@@ -76,7 +76,7 @@ let project = Project(
         .target(
             name: "CellTunnelLog",
             destinations: [.iPhone, .mac],
-            product: .framework,
+            product: .staticFramework,
             bundleId: "io.goodkind.CellTunnelLog",
             infoPlist: .default,
             sources: [
@@ -117,6 +117,29 @@ let project = Project(
                 ]
             )
         ),
+        .target(
+            name: "celltunneld",
+            destinations: [.mac],
+            product: .commandLineTool,
+            bundleId: "io.goodkind.celltunneld",
+            deploymentTargets: macOSDeploymentTarget,
+            sources: [
+                "Sources/CellTunnelDaemon/**"
+            ],
+            dependencies: [
+                .target(name: "CellTunnelCore"),
+                .target(name: "CellTunnelLog"),
+                .external(name: "WireGuardKit"),
+            ],
+            settings: .settings(
+                base: [
+                    "PRODUCT_NAME": "celltunneld",
+                    "CODE_SIGN_ENTITLEMENTS": "Apps/macOS/Entitlements/celltunneld.entitlements",
+                    "LIBRARY_SEARCH_PATHS": "$(SRCROOT)/.build/vendor",
+                    "OTHER_LDFLAGS": "-lwg-go",
+                ]
+            )
+        ),
     ],
     schemes: [
         .scheme(
@@ -132,6 +155,15 @@ let project = Project(
             name: "CellTunnelMac",
             shared: true,
             buildAction: .buildAction(targets: [.target("CellTunnelMac")]),
+            runAction: .runAction(configuration: "Debug"),
+            archiveAction: .archiveAction(configuration: "Release"),
+            profileAction: .profileAction(configuration: "Release"),
+            analyzeAction: .analyzeAction(configuration: "Debug")
+        ),
+        .scheme(
+            name: "celltunneld",
+            shared: true,
+            buildAction: .buildAction(targets: [.target("celltunneld")]),
             runAction: .runAction(configuration: "Debug"),
             archiveAction: .archiveAction(configuration: "Release"),
             profileAction: .profileAction(configuration: "Release"),

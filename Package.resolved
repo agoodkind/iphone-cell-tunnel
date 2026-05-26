@@ -1,5 +1,5 @@
 {
-  "originHash" : "51990a53c50545a4d8f7eeb4f2653e27f8abff3caaff65535b1591f3e382a78c",
+  "originHash" : "8695629f312a34a37900c4e1fb9e6fca9015ed45052e41c38f0ec6677d61e591",
   "pins" : [
     {
       "identity" : "grpc-swift-2",
@@ -197,15 +197,6 @@
       "state" : {
         "revision" : "7c6ad0fc39d0763e0b699210e4124afd5041c5df",
         "version" : "1.6.4"
-      }
-    },
-    {
-      "identity" : "wireguard-apple",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/agoodkind/wireguard-apple.git",
-      "state" : {
-        "branch" : "097baca",
-        "revision" : "097baca9aeec90f2648bf2b1cda7209caa748180"
       }
     }
   ],

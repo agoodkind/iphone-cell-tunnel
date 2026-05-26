@@ -16,10 +16,10 @@ func buildProject(target: BuildTarget, configuration: String) throws {
 
     switch target {
     case .daemon:
-        try buildDaemon()
+        try buildDaemon(configuration: configuration)
     case .mac:
         let signing = try requireSigningConfig()
-        try buildDaemon()
+        try buildDaemon(configuration: configuration)
         try buildMacBundle(configuration: configuration, signing: signing)
     case .iphoneSimulator:
         try buildIPhoneSimulator(configuration: configuration)
@@ -32,7 +32,7 @@ func buildProject(target: BuildTarget, configuration: String) throws {
         )
     case .all:
         let signing = try requireSigningConfig()
-        try buildDaemon()
+        try buildDaemon(configuration: configuration)
         try buildMacBundle(configuration: configuration, signing: signing)
         try buildIPhoneSimulator(configuration: configuration)
         try buildPhoneDevice(
@@ -63,10 +63,16 @@ private func buildCLI() throws {
     try installSwiftExecutable(productName: "celltunnelctl", outputName: "celltunnelctl")
 }
 
-private func buildDaemon() throws {
-    try buildSwiftProduct("celltunneld")
+private func buildDaemon(configuration: String) throws {
+    try buildWireGuardGoBridge()
+    try buildScheme(
+        scheme: "celltunneld",
+        configuration: configuration,
+        destination: "platform=macOS",
+        platformName: macOSPlatformName
+    )
     try fileManager.createDirectory(at: productsDirectory, withIntermediateDirectories: true)
-    try installSwiftExecutable(productName: "celltunneld", outputName: "celltunneld")
+    try installBuiltDaemon(configuration: configuration)
 }
 
 private func buildMacBundle(configuration: String, signing: SigningConfig) throws {
