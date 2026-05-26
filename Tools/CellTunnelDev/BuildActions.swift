@@ -1,7 +1,6 @@
 import Foundation
 
 func generateProject() throws {
-    try generateTypedIPC()
     try requireTool("tuist")
     if try projectGenerationIsCurrent() {
         return
@@ -61,39 +60,6 @@ private func projectGenerationSourceFingerprint() throws -> String {
         parts.append("\(source.lastPathComponent):\(modificationDate.timeIntervalSince1970):\(size)")
     }
     return parts.joined(separator: "|")
-}
-
-func generateTypedIPC() throws {
-    let stagingDirectory = try makeTemporaryDirectory(name: "GeneratedStaging")
-    defer {
-        try? fileManager.removeItem(at: stagingDirectory)
-    }
-
-    let swiftStagingDirectory = stagingDirectory.appendingPathComponent("swift")
-    try generateSwiftTypedIPC(outputDirectory: swiftStagingDirectory)
-    try replaceDirectory(at: swiftGeneratedDirectory, withItemAt: swiftStagingDirectory)
-}
-
-func generateSwiftTypedIPC(outputDirectory: URL) throws {
-    try fileManager.createDirectory(at: outputDirectory, withIntermediateDirectories: true)
-    try run(
-        "swift",
-        [
-            "package",
-            "--allow-writing-to-package-directory",
-            "generate-grpc-code-from-protos",
-            "--access-level",
-            "public",
-            "--file-naming",
-            "dropPath",
-            "--import-path",
-            protoDirectory.path,
-            "--output-path",
-            outputDirectory.path,
-            "--",
-            swiftControlProtoPath.path,
-        ]
-    )
 }
 
 func buildSwiftProduct(_ productName: String) throws {
@@ -317,12 +283,10 @@ func selectedPhoneDeviceIdentifier() throws -> String {
     return phone.identifier
 }
 func testProject() throws {
-    try generateTypedIPC()
     try run("swift", swiftTestArguments())
 }
 
 func lintProject() throws {
-    try generateTypedIPC()
     try lintSwiftProject()
 }
 
@@ -355,7 +319,6 @@ func lintSwiftProject() throws {
 }
 
 func formatProject() throws {
-    try generateTypedIPC()
     try formatSwiftProject()
 }
 

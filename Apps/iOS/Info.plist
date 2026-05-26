@@ -22,7 +22,7 @@
 	<string>1</string>
 	<key>NSBonjourServices</key>
 	<array>
-		<string>_cellrelay._tcp</string>
+		<string>_cellrelay._udp</string>
 		<string>_celltunnelbench._udp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>

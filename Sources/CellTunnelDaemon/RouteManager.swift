@@ -135,7 +135,11 @@ final class RouteManager {
             sockets.append(mask)
         }
 
-        let flags: Int32 = Int32(RTF_UP) | Int32(RTF_STATIC) | Int32(RTF_HOST)
+        let maxPrefix = prefix.family == .ipv4 ? 32 : 128
+        var flags: Int32 = Int32(RTF_UP) | Int32(RTF_STATIC)
+        if prefix.prefixLength == maxPrefix {
+            flags |= Int32(RTF_HOST)
+        }
         let addressMask: Int32 = Int32(RTA_DST) | Int32(RTA_GATEWAY) | Int32(RTA_NETMASK)
 
         sequenceCounter &+= 1

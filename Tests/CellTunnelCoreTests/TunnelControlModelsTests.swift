@@ -87,22 +87,25 @@ final class TunnelControlModelsTests: XCTestCase {
         XCTAssertTrue(output.contains("probe=list-relay-services"))
     }
 
-    func testTypedStatusMappingUsesDiscoverySelection() {
-        var proto = CTControlV1_DaemonStatus()
-        proto.running = true
-        proto.route.state = .installed
-        proto.peer.state = .wireguardConfigured
-        proto.ipv4Address = "198.18.0.2"
-        proto.ipv6Address = "fd7a:ce11:7a11::2"
-        proto.activeRelayEndpoint = makeEndpoint(host: "fd00::1", port: 5_354, family: .ipv6)
-
-        var discovery = CTControlV1_DiscoveryState()
-        discovery.phase = .ready
-        discovery.selectedServiceID = "relay-1"
-        discovery.selectedEndpoint = makeEndpoint(host: "fd00::1", port: 5_354, family: .ipv6)
-        proto.discovery = discovery
-
-        let snapshot = TunnelDaemonStatusSnapshot(proto: proto)
+    func testStatusSnapshotRendersDiscoverySelection() {
+        let endpoint = TunnelRelayEndpoint(host: "fd00::1", port: 5_354, addressFamily: .ipv6)
+        let discovery = TunnelDiscoverySnapshot(
+            phase: .ready,
+            services: [],
+            selectedServiceID: "relay-1",
+            selectedEndpoint: endpoint,
+            lastError: nil
+        )
+        let snapshot = TunnelDaemonStatusSnapshot(
+            running: true,
+            routeState: .installed,
+            peerState: .wireGuardConfigured,
+            ipv4Address: "198.18.0.2",
+            ipv6Address: "fd7a:ce11:7a11::2",
+            lastError: nil,
+            discovery: discovery,
+            activeRelayEndpoint: endpoint
+        )
 
         XCTAssertTrue(snapshot.running)
         XCTAssertEqual(snapshot.routeState, .installed)
@@ -112,16 +115,30 @@ final class TunnelControlModelsTests: XCTestCase {
     }
 }
 
-private func makeEndpoint(
+private func makeRelayService(
+    serviceID: String,
+    serviceName: String,
     host: String,
-    port: UInt32,
-    family: CTControlV1_AddressFamily
-) -> CTControlV1_RelayEndpoint {
-    var endpoint = CTControlV1_RelayEndpoint()
-    endpoint.host = host
-    endpoint.port = port
-    endpoint.addressFamily = family
-    return endpoint
+    endpointHost: String,
+    endpointPort: Int,
+    isSelected: Bool = false
+) -> TunnelRelayService {
+    let endpoint = TunnelRelayEndpoint(
+        host: endpointHost,
+        port: endpointPort,
+        addressFamily: .ipv6
+    )
+    return TunnelRelayService(
+        id: serviceID,
+        serviceName: serviceName,
+        serviceType: "_cellrelay._udp",
+        domain: "local.",
+        interfaceIndex: 0,
+        hostName: host,
+        endpoints: [endpoint],
+        preferredEndpoint: endpoint,
+        isSelected: isSelected
+    )
 }
 
 private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unchecked Sendable {
@@ -136,14 +153,12 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
     let listedDiscoverySnapshot = TunnelDiscoverySnapshot(
         phase: .ready,
         services: [
-            TunnelRelayService(
-                proto: makeRelayServiceProto(
-                    serviceID: "relay-1",
-                    serviceName: "CellTunnelPhone",
-                    host: "iphone.local",
-                    endpointHost: "fd00::44",
-                    endpointPort: 51_820
-                )
+            makeRelayService(
+                serviceID: "relay-1",
+                serviceName: "CellTunnelPhone",
+                host: "iphone.local",
+                endpointHost: "fd00::44",
+                endpointPort: 51_820
             )
         ],
         selectedServiceID: nil,
@@ -153,15 +168,13 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
     let selectedDiscoverySnapshot = TunnelDiscoverySnapshot(
         phase: .ready,
         services: [
-            TunnelRelayService(
-                proto: makeRelayServiceProto(
-                    serviceID: "relay-1",
-                    serviceName: "CellTunnelPhone",
-                    host: "iphone.local",
-                    endpointHost: "fd00::44",
-                    endpointPort: 51_820,
-                    isSelected: true
-                )
+            makeRelayService(
+                serviceID: "relay-1",
+                serviceName: "CellTunnelPhone",
+                host: "iphone.local",
+                endpointHost: "fd00::44",
+                endpointPort: 51_820,
+                isSelected: true
             )
         ],
         selectedServiceID: "relay-1",
@@ -218,24 +231,4 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
         XCTAssertEqual(serviceID, "relay-1")
         return selectedDiscoverySnapshot
     }
-}
-
-private func makeRelayServiceProto(
-    serviceID: String,
-    serviceName: String,
-    host: String,
-    endpointHost: String,
-    endpointPort: UInt32,
-    isSelected: Bool = false
-) -> CTControlV1_RelayService {
-    var proto = CTControlV1_RelayService()
-    proto.identity.serviceID = serviceID
-    proto.identity.serviceName = serviceName
-    proto.identity.serviceType = "_cellrelay._tcp"
-    proto.identity.domain = "local."
-    proto.hostName = host
-    proto.endpoints = [makeEndpoint(host: endpointHost, port: endpointPort, family: .ipv6)]
-    proto.preferredEndpoint = makeEndpoint(host: endpointHost, port: endpointPort, family: .ipv6)
-    proto.isSelected = isSelected
-    return proto
 }

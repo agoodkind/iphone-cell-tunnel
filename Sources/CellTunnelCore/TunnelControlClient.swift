@@ -1,19 +1,14 @@
 import CellTunnelLog
 import Foundation
-import GRPCCore
-import GRPCNIOTransportHTTP2
+
+#if os(macOS)
+    import XPC
+#endif
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 
-private let tunnelControlAuthority = "localhost"
-private let initialRPCRetryDelay = Duration.milliseconds(250)
-private let initialRPCAttemptCount = 2
-
-private typealias RuntimeTransport = HTTP2ClientTransport.Posix
-private typealias RuntimeClient = GRPCClient<RuntimeTransport>
-private typealias GeneratedTunnelControlStub = CTControlV1_TunnelControlService.Client<
-    RuntimeTransport
->
+public let daemonControlMachServiceName = "io.goodkind.celltunneld.xpc"
+public let daemonControlWireVersion = 1
 
 public let defaultTunnelControlSocketPath = "/var/run/io.goodkind.celltunnel/control.sock"
 public let tunnelControlSocketEnvironmentVariable = "CELL_TUNNEL_CONTROL_SOCKET"
@@ -31,6 +26,68 @@ public func resolvedTunnelControlSocketPath(
     return trimmed
 }
 
+public enum DaemonControlRPC: String, Codable, Sendable {
+    case status
+    case check
+    case startTunnel = "start-tunnel"
+    case stopTunnel = "stop-tunnel"
+    case startRelayDiscovery = "start-relay-discovery"
+    case stopRelayDiscovery = "stop-relay-discovery"
+    case listRelayServices = "list-relay-services"
+    case selectRelayService = "select-relay-service"
+}
+
+public struct DaemonControlRequest: Codable, Sendable {
+    public var version: Int
+    public var rpc: DaemonControlRPC
+    public var startSettings: TunnelStartSettings?
+    public var serviceID: String?
+
+    public init(
+        rpc: DaemonControlRPC,
+        startSettings: TunnelStartSettings? = nil,
+        serviceID: String? = nil,
+        version: Int = daemonControlWireVersion
+    ) {
+        self.version = version
+        self.rpc = rpc
+        self.startSettings = startSettings
+        self.serviceID = serviceID
+    }
+}
+
+public struct DaemonControlResponse: Codable, Sendable {
+    public var version: Int
+    public var status: TunnelDaemonStatusSnapshot?
+    public var report: TunnelEnvironmentReport?
+    public var discovery: TunnelDiscoverySnapshot?
+    public var failure: DaemonControlResponseFailure?
+
+    public init(
+        status: TunnelDaemonStatusSnapshot? = nil,
+        report: TunnelEnvironmentReport? = nil,
+        discovery: TunnelDiscoverySnapshot? = nil,
+        failure: DaemonControlResponseFailure? = nil,
+        version: Int = daemonControlWireVersion
+    ) {
+        self.version = version
+        self.status = status
+        self.report = report
+        self.discovery = discovery
+        self.failure = failure
+    }
+}
+
+public struct DaemonControlResponseFailure: Codable, Sendable {
+    public var errorCode: TunnelControlErrorCode
+    public var message: String
+
+    public init(errorCode: TunnelControlErrorCode, message: String) {
+        self.errorCode = errorCode
+        self.message = message
+    }
+}
+
 public protocol TunnelControlClientProtocol: Sendable {
     func status() async throws -> TunnelDaemonStatusSnapshot
     func check() async throws -> TunnelEnvironmentReport
@@ -42,371 +99,259 @@ public protocol TunnelControlClientProtocol: Sendable {
     func selectRelayService(serviceID: String) async throws -> TunnelDiscoverySnapshot
 }
 
-public actor TunnelControlClient: TunnelControlClientProtocol {
-    private let socketPath: String
-    private var activeClientID: UUID?
-    private var client: RuntimeClient?
-    private var runnerTask: Task<Void, Never>?
-    private var shouldRetryInitialRPC = false
+#if os(macOS)
+    public actor TunnelControlClient: TunnelControlClientProtocol {
+        private let machServiceName: String
+        private let socketPath: String
+        private var session: XPCSession?
 
-    public init(socketPath: String = resolvedTunnelControlSocketPath()) {
-        self.socketPath = socketPath
-    }
-
-    public func shutdown() {
-        logger.notice(
-            "tunnel control client shutdown requested socket=\(self.socketPath, privacy: .public)")
-        teardownClientRuntime(reason: "shutdown")
-    }
-
-    public func status() async throws -> TunnelDaemonStatusSnapshot {
-        logger.notice("requesting tunnel daemon status socket=\(self.socketPath, privacy: .public)")
-        let response = try await performRPC(operationName: "status") { stub in
-            try await stub.status(CTControlV1_StatusRequest())
-        }
-        switch response.result {
-        case .status(let status):
-            return TunnelDaemonStatusSnapshot(proto: status)
-        case .error(let error):
-            throw TunnelDaemonError(proto: error)
-        case .none:
-            throw TunnelDaemonError.transportFailure("missing status response payload")
-        }
-    }
-
-    public func check() async throws -> TunnelEnvironmentReport {
-        logger.notice(
-            "requesting tunnel daemon environment check socket=\(self.socketPath, privacy: .public)"
-        )
-        let response = try await performRPC(operationName: "check") { stub in
-            try await stub.check(CTControlV1_CheckRequest())
-        }
-        switch response.result {
-        case .report(let report):
-            return TunnelEnvironmentReport(proto: report)
-        case .error(let error):
-            throw TunnelDaemonError(proto: error)
-        case .none:
-            throw TunnelDaemonError.transportFailure("missing check response payload")
-        }
-    }
-
-    public func startTunnel(
-        settings: TunnelStartSettings
-    ) async throws -> TunnelDaemonStatusSnapshot {
-        logger.notice(
-            """
-            requesting tunnel daemon start socket=\(self.socketPath, privacy: .public) \
-            relayOverrideConfigured=\(settings.hasLocalRelayEndpoint, privacy: .public)
-            """
-        )
-        var request = CTControlV1_StartTunnelRequest()
-        request.settings.wireGuardConfigPath = settings.wireGuardConfigPath
-        if let relayEndpoint = settings.relayEndpoint {
-            request.settings.relayEndpoint = relayEndpoint.proto
-        }
-        let immutableRequest = request
-        let response = try await performRPC(operationName: "startTunnel") { stub in
-            try await stub.startTunnel(immutableRequest)
-        }
-        switch response.result {
-        case .status(let status):
-            return TunnelDaemonStatusSnapshot(proto: status)
-        case .error(let error):
-            throw TunnelDaemonError(proto: error)
-        case .none:
-            throw TunnelDaemonError.transportFailure("missing start response payload")
-        }
-    }
-
-    public func stopTunnel() async throws -> TunnelDaemonStatusSnapshot {
-        logger.notice("requesting tunnel daemon stop socket=\(self.socketPath, privacy: .public)")
-        let response = try await performRPC(operationName: "stopTunnel") { stub in
-            try await stub.stopTunnel(CTControlV1_StopTunnelRequest())
-        }
-        switch response.result {
-        case .status(let status):
-            return TunnelDaemonStatusSnapshot(proto: status)
-        case .error(let error):
-            throw TunnelDaemonError(proto: error)
-        case .none:
-            throw TunnelDaemonError.transportFailure("missing stop response payload")
-        }
-    }
-
-    public func startRelayDiscovery() async throws -> TunnelDiscoverySnapshot {
-        logger.notice(
-            "requesting relay discovery start socket=\(self.socketPath, privacy: .public)")
-        let response = try await performRPC(operationName: "startRelayDiscovery") { stub in
-            try await stub.startRelayDiscovery(CTControlV1_StartRelayDiscoveryRequest())
-        }
-        return try decodeDiscovery(
-            response.result, missingPayloadMessage: "missing discovery start payload")
-    }
-
-    public func stopRelayDiscovery() async throws -> TunnelDiscoverySnapshot {
-        logger.notice("requesting relay discovery stop socket=\(self.socketPath, privacy: .public)")
-        let response = try await performRPC(operationName: "stopRelayDiscovery") { stub in
-            try await stub.stopRelayDiscovery(CTControlV1_StopRelayDiscoveryRequest())
-        }
-        return try decodeDiscovery(
-            response.result, missingPayloadMessage: "missing discovery stop payload")
-    }
-
-    public func listRelayServices() async throws -> TunnelDiscoverySnapshot {
-        logger.notice("requesting relay discovery list socket=\(self.socketPath, privacy: .public)")
-        let response = try await performRPC(operationName: "listRelayServices") { stub in
-            try await stub.listRelayServices(CTControlV1_ListRelayServicesRequest())
-        }
-        return try decodeDiscovery(
-            response.result, missingPayloadMessage: "missing discovery list payload")
-    }
-
-    public func selectRelayService(serviceID: String) async throws -> TunnelDiscoverySnapshot {
-        logger.notice(
-            "requesting relay service selection socket=\(self.socketPath, privacy: .public)")
-        var request = CTControlV1_SelectRelayServiceRequest()
-        request.serviceID = serviceID
-        let immutableRequest = request
-        let response = try await performRPC(operationName: "selectRelayService") { stub in
-            try await stub.selectRelayService(immutableRequest)
-        }
-        return try decodeDiscovery(
-            response.result, missingPayloadMessage: "missing relay selection payload")
-    }
-}
-
-extension TunnelControlClient {
-    private func performRPC<Result: Sendable>(
-        operationName: String,
-        _ operation: @Sendable (GeneratedTunnelControlStub) async throws -> Result
-    ) async throws -> Result {
-        var attempt = 1
-
-        while true {
-            let stub = try makeStub()
-            do {
-                let result = try await operation(stub)
-                shouldRetryInitialRPC = false
-                logger.notice(
-                    "\(operationName) rpc completed attempt=\(attempt, privacy: .public) socket=\(self.socketPath, privacy: .public)"
-                )
-                return result
-            } catch {
-                let renderedError = renderTransportError(error)
-                let shouldRetryInitialRequest = shouldRetryInitialRPC
-                let shouldRetry =
-                    shouldRetryInitialRequest
-                    && attempt < initialRPCAttemptCount
-                    && shouldRetryInitialRPCFailure(error)
-                shouldRetryInitialRPC = false
-                logger.error(
-                    """
-                    \(operationName) rpc failed attempt=\(attempt, privacy: .public) \
-                    socket=\(self.socketPath, privacy: .public) details=\(renderedError, privacy: .public)
-                    """
-                )
-                if shouldRetry {
-                    teardownClientRuntime(reason: "\(operationName)-initial-rpc-retry")
-                    try await Task.sleep(for: initialRPCRetryDelay)
-                    attempt += 1
-                    continue
-                }
-                throw mapClientError(error)
-            }
-        }
-    }
-
-    private func makeStub() throws -> GeneratedTunnelControlStub {
-        let client = try activeClient()
-        return GeneratedTunnelControlStub(wrapping: client)
-    }
-
-    private func activeClient() throws -> RuntimeClient {
-        guard FileManager.default.fileExists(atPath: socketPath) else {
-            throw TunnelDaemonError.daemonUnavailable(socketPath)
+        public init(
+            socketPath: String = resolvedTunnelControlSocketPath(),
+            machServiceName: String = daemonControlMachServiceName
+        ) {
+            self.socketPath = socketPath
+            self.machServiceName = machServiceName
         }
 
-        if let client {
-            return client
-        }
-
-        let clientID = UUID()
-        let transport = try buildTransport()
-        let client = RuntimeClient(transport: transport)
-        shouldRetryInitialRPC = true
-        activeClientID = clientID
-        self.client = client
-        runnerTask = Task {
-            do {
-                try await client.runConnections()
-                self.handleClientRunnerExit(clientID: clientID, error: nil)
-            } catch {
-                logger.error(
-                    "tunnel control client runtime task failed socket=\(self.socketPath, privacy: .public) details=\(renderTransportError(error), privacy: .public)"
-                )
-                self.handleClientRunnerExit(clientID: clientID, error: error)
-            }
-        }
-        logger.notice(
-            "tunnel control client runtime started socket=\(self.socketPath, privacy: .public)")
-        return client
-    }
-
-    private func buildTransport() throws -> RuntimeTransport {
-        let transport = try RuntimeTransport(
-            target: .unixDomainSocket(path: socketPath, authority: tunnelControlAuthority),
-            transportSecurity: .plaintext,
-            config: .defaults { config in
-                config.http2.authority = tunnelControlAuthority
-            }
-        )
-        logger.notice(
-            """
-            configured tunnel control transport socket=\(self.socketPath, privacy: .public) \
-            authority=\(tunnelControlAuthority, privacy: .public)
-            """
-        )
-        return transport
-    }
-
-    private func handleClientRunnerExit(clientID: UUID, error: Error?) {
-        guard activeClientID == clientID else {
-            logger.notice("tunnel control client runtime exit ignored for stale client")
-            return
-        }
-
-        activeClientID = nil
-        client = nil
-        runnerTask = nil
-        shouldRetryInitialRPC = false
-
-        if let error {
-            logger.error(
-                "tunnel control client runtime stopped with error socket=\(self.socketPath, privacy: .public) details=\(renderTransportError(error), privacy: .public)"
-            )
-        } else {
+        public func shutdown() {
             logger.notice(
-                "tunnel control client runtime stopped socket=\(self.socketPath, privacy: .public)")
-        }
-    }
-
-    private func teardownClientRuntime(reason: String) {
-        guard let client else {
-            return
-        }
-
-        let runnerTask = self.runnerTask
-        let clientID = activeClientID
-        activeClientID = nil
-        self.client = nil
-        self.runnerTask = nil
-        shouldRetryInitialRPC = false
-
-        logger.notice(
-            """
-            tearing down tunnel control client runtime reason=\(reason, privacy: .public) \
-            socket=\(self.socketPath, privacy: .public) clientConfigured=\(clientID != nil, privacy: .public)
-            """
-        )
-        client.beginGracefulShutdown()
-        runnerTask?.cancel()
-    }
-
-    private func decodeDiscovery(
-        _ result: CTControlV1_StartRelayDiscoveryResponse.OneOf_Result?,
-        missingPayloadMessage: String
-    ) throws -> TunnelDiscoverySnapshot {
-        switch result {
-        case .discovery(let discovery):
-            return TunnelDiscoverySnapshot(proto: discovery)
-        case .error(let error):
-            throw TunnelDaemonError(proto: error)
-        case .none:
-            throw TunnelDaemonError.transportFailure(missingPayloadMessage)
-        }
-    }
-
-    private func decodeDiscovery(
-        _ result: CTControlV1_StopRelayDiscoveryResponse.OneOf_Result?,
-        missingPayloadMessage: String
-    ) throws -> TunnelDiscoverySnapshot {
-        switch result {
-        case .discovery(let discovery):
-            return TunnelDiscoverySnapshot(proto: discovery)
-        case .error(let error):
-            throw TunnelDaemonError(proto: error)
-        case .none:
-            throw TunnelDaemonError.transportFailure(missingPayloadMessage)
-        }
-    }
-
-    private func decodeDiscovery(
-        _ result: CTControlV1_ListRelayServicesResponse.OneOf_Result?,
-        missingPayloadMessage: String
-    ) throws -> TunnelDiscoverySnapshot {
-        switch result {
-        case .discovery(let discovery):
-            return TunnelDiscoverySnapshot(proto: discovery)
-        case .error(let error):
-            throw TunnelDaemonError(proto: error)
-        case .none:
-            throw TunnelDaemonError.transportFailure(missingPayloadMessage)
-        }
-    }
-
-    private func decodeDiscovery(
-        _ result: CTControlV1_SelectRelayServiceResponse.OneOf_Result?,
-        missingPayloadMessage: String
-    ) throws -> TunnelDiscoverySnapshot {
-        switch result {
-        case .discovery(let discovery):
-            return TunnelDiscoverySnapshot(proto: discovery)
-        case .error(let error):
-            throw TunnelDaemonError(proto: error)
-        case .none:
-            throw TunnelDaemonError.transportFailure(missingPayloadMessage)
-        }
-    }
-
-    private func shouldRetryInitialRPCFailure(_ error: Error) -> Bool {
-        guard let rpcError = error as? RPCError else {
-            return false
-        }
-
-        switch rpcError.code {
-        case .deadlineExceeded, .unavailable, .unknown, .internalError:
-            return true
-        default:
-            return false
-        }
-    }
-}
-
-private func renderTransportError(_ error: Error) -> String {
-    if let rpcError = error as? RPCError {
-        let cause = rpcError.cause.map { String(describing: $0) }
-        if let cause, !cause.isEmpty {
-            return "rpc_code=\(rpcError.code) message=\(rpcError.message) cause=\(cause)"
-        }
-        return "rpc_code=\(rpcError.code) message=\(rpcError.message)"
-    }
-
-    return String(describing: error)
-}
-
-private func mapClientError(_ error: Error) -> TunnelDaemonError {
-    if let daemonError = error as? TunnelDaemonError {
-        return daemonError
-    }
-    if let rpcError = error as? RPCError {
-        return TunnelDaemonError.rpcFailure(
-            TunnelRPCFailure(
-                code: String(describing: rpcError.code),
-                message: rpcError.message,
-                cause: rpcError.cause.map { String(describing: $0) }
+                "tunnel control client shutdown requested service=\(self.machServiceName, privacy: .public)"
             )
-        )
+            tearDownSession(reason: "shutdown")
+        }
+
+        public func status() async throws -> TunnelDaemonStatusSnapshot {
+            logger.notice("tunnel control client invoked rpc=status")
+            let response = try await send(
+                request: DaemonControlRequest(rpc: .status),
+                operationName: "status"
+            )
+            return try requireStatus(from: response, operationName: "status")
+        }
+
+        public func check() async throws -> TunnelEnvironmentReport {
+            logger.notice("tunnel control client invoked rpc=check")
+            let response = try await send(
+                request: DaemonControlRequest(rpc: .check),
+                operationName: "check"
+            )
+            if let failure = response.failure {
+                throw mapFailure(failure)
+            }
+            guard let report = response.report else {
+                throw TunnelDaemonError.transportFailure("missing check response payload")
+            }
+            return report
+        }
+
+        public func startTunnel(
+            settings: TunnelStartSettings
+        ) async throws -> TunnelDaemonStatusSnapshot {
+            logger.notice("tunnel control client invoked rpc=start-tunnel")
+            let response = try await send(
+                request: DaemonControlRequest(rpc: .startTunnel, startSettings: settings),
+                operationName: "startTunnel"
+            )
+            return try requireStatus(from: response, operationName: "startTunnel")
+        }
+
+        public func stopTunnel() async throws -> TunnelDaemonStatusSnapshot {
+            logger.notice("tunnel control client invoked rpc=stop-tunnel")
+            let response = try await send(
+                request: DaemonControlRequest(rpc: .stopTunnel),
+                operationName: "stopTunnel"
+            )
+            return try requireStatus(from: response, operationName: "stopTunnel")
+        }
+
+        public func startRelayDiscovery() async throws -> TunnelDiscoverySnapshot {
+            logger.notice("tunnel control client invoked rpc=start-relay-discovery")
+            let response = try await send(
+                request: DaemonControlRequest(rpc: .startRelayDiscovery),
+                operationName: "startRelayDiscovery"
+            )
+            return try requireDiscovery(from: response, operationName: "startRelayDiscovery")
+        }
+
+        public func stopRelayDiscovery() async throws -> TunnelDiscoverySnapshot {
+            logger.notice("tunnel control client invoked rpc=stop-relay-discovery")
+            let response = try await send(
+                request: DaemonControlRequest(rpc: .stopRelayDiscovery),
+                operationName: "stopRelayDiscovery"
+            )
+            return try requireDiscovery(from: response, operationName: "stopRelayDiscovery")
+        }
+
+        public func listRelayServices() async throws -> TunnelDiscoverySnapshot {
+            logger.notice("tunnel control client invoked rpc=list-relay-services")
+            let response = try await send(
+                request: DaemonControlRequest(rpc: .listRelayServices),
+                operationName: "listRelayServices"
+            )
+            return try requireDiscovery(from: response, operationName: "listRelayServices")
+        }
+
+        public func selectRelayService(serviceID: String) async throws -> TunnelDiscoverySnapshot {
+            logger.notice(
+                "tunnel control client invoked rpc=select-relay-service serviceID=\(serviceID, privacy: .public)"
+            )
+            let response = try await send(
+                request: DaemonControlRequest(rpc: .selectRelayService, serviceID: serviceID),
+                operationName: "selectRelayService"
+            )
+            return try requireDiscovery(from: response, operationName: "selectRelayService")
+        }
     }
-    return TunnelDaemonError.transportFailure(String(describing: error))
-}
+
+    extension TunnelControlClient {
+        private func send(
+            request: DaemonControlRequest,
+            operationName: String
+        ) async throws -> DaemonControlResponse {
+            let activeSession = try activeSession()
+            let response: DaemonControlResponse
+            do {
+                response = try await withCheckedThrowingContinuation { continuation in
+                    do {
+                        try activeSession.send(request) { (result: Result<DaemonControlResponse, any Error>) in
+                            continuation.resume(with: result)
+                        }
+                    } catch {
+                        logger.error(
+                            """
+                            \(operationName) xpc send dispatch failed \
+                            service=\(self.machServiceName, privacy: .public) \
+                            details=\(String(describing: error), privacy: .public)
+                            """
+                        )
+                        continuation.resume(throwing: error)
+                    }
+                }
+            } catch let error as TunnelDaemonError {
+                logger.error(
+                    """
+                    \(operationName) xpc rethrowing tunnel daemon error \
+                    service=\(self.machServiceName, privacy: .public) \
+                    details=\(String(describing: error), privacy: .public)
+                    """
+                )
+                throw error
+            } catch let error as XPCRichError {
+                tearDownSession(reason: "\(operationName)-xpc-error")
+                logger.error(
+                    """
+                    \(operationName) xpc failed \
+                    service=\(self.machServiceName, privacy: .public) \
+                    details=\(String(describing: error), privacy: .public)
+                    """
+                )
+                throw TunnelDaemonError.daemonUnavailable(self.machServiceName)
+            } catch {
+                tearDownSession(reason: "\(operationName)-error")
+                logger.error(
+                    """
+                    \(operationName) xpc failed \
+                    service=\(self.machServiceName, privacy: .public) \
+                    details=\(String(describing: error), privacy: .public)
+                    """
+                )
+                throw TunnelDaemonError.transportFailure(String(describing: error))
+            }
+
+            try validate(responseVersion: response.version, operationName: operationName)
+            logger.notice(
+                """
+                \(operationName) xpc completed \
+                service=\(self.machServiceName, privacy: .public) \
+                responseVersion=\(response.version, privacy: .public)
+                """
+            )
+            return response
+        }
+
+        private func activeSession() throws -> XPCSession {
+            if let session {
+                return session
+            }
+            do {
+                let created = try XPCSession(machService: machServiceName)
+                session = created
+                logger.notice(
+                    "tunnel control xpc session opened service=\(self.machServiceName, privacy: .public)"
+                )
+                return created
+            } catch {
+                logger.error(
+                    """
+                    tunnel control xpc session open failed \
+                    service=\(self.machServiceName, privacy: .public) \
+                    details=\(String(describing: error), privacy: .public)
+                    """
+                )
+                throw TunnelDaemonError.daemonUnavailable(machServiceName)
+            }
+        }
+
+        private func tearDownSession(reason: String) {
+            guard let active = session else {
+                return
+            }
+            active.cancel(reason: reason)
+            session = nil
+            logger.notice(
+                """
+                tunnel control xpc session torn down \
+                reason=\(reason, privacy: .public) \
+                service=\(self.machServiceName, privacy: .public)
+                """
+            )
+        }
+
+        private func validate(responseVersion: Int, operationName: String) throws {
+            if responseVersion > daemonControlWireVersion {
+                logger.error(
+                    """
+                    \(operationName) xpc response rejected \
+                    receivedVersion=\(responseVersion, privacy: .public) \
+                    supportedVersion=\(daemonControlWireVersion, privacy: .public)
+                    """
+                )
+                throw TunnelDaemonError.transportFailure(
+                    "unsupported daemon response version \(responseVersion)"
+                )
+            }
+        }
+
+        private func requireStatus(
+            from response: DaemonControlResponse,
+            operationName: String
+        ) throws -> TunnelDaemonStatusSnapshot {
+            if let failure = response.failure {
+                throw mapFailure(failure)
+            }
+            guard let status = response.status else {
+                throw TunnelDaemonError.transportFailure("missing \(operationName) status payload")
+            }
+            return status
+        }
+
+        private func requireDiscovery(
+            from response: DaemonControlResponse,
+            operationName: String
+        ) throws -> TunnelDiscoverySnapshot {
+            if let failure = response.failure {
+                throw mapFailure(failure)
+            }
+            guard let discovery = response.discovery else {
+                throw TunnelDaemonError.transportFailure("missing \(operationName) discovery payload")
+            }
+            return discovery
+        }
+
+        private func mapFailure(_ failure: DaemonControlResponseFailure) -> TunnelDaemonError {
+            TunnelDaemonError.controlFailure(
+                TunnelControlFailure(errorCode: failure.errorCode, message: failure.message)
+            )
+        }
+    }
+#endif

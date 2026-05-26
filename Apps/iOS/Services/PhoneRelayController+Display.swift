@@ -5,9 +5,9 @@ extension PhoneRelayController {
         }
         let serviceName = advertisedServiceName ?? "Unknown"
         if let listenerPort {
-            return "\(serviceName) _cellrelay._tcp \(listenerPort)"
+            return "\(serviceName) _cellrelay._udp \(listenerPort)"
         }
-        return "\(serviceName) _cellrelay._tcp"
+        return "\(serviceName) _cellrelay._udp"
     }
 
     var serviceNameDescription: String {

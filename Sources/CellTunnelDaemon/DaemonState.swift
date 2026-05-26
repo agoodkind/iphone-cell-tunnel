@@ -36,14 +36,24 @@ struct DaemonControlResponseFailure: Codable, Sendable {
     var message: String
 }
 
+struct TunnelComponents {
+    let device: UtunDevice
+    let transport: RelayTransport
+    let runtime: WireGuardRuntime
+    let routes: RouteManager
+    let parsedConfig: WireGuardClientConfig
+    let relayEndpoint: TunnelRelayEndpoint
+    let plan: RoutePlan
+}
+
 actor DaemonState {
-    private var status = TunnelDaemonStatusSnapshot()
-    private var discovery = TunnelDiscoverySnapshot()
-    private var wireGuardRuntime: WireGuardRuntime?
-    private var relayTransport: RelayTransport?
-    private var discoveryManager: DiscoveryManager?
-    private var utunDevice: UtunDevice?
-    private var routeManager: RouteManager?
+    var status = TunnelDaemonStatusSnapshot()
+    var discovery = TunnelDiscoverySnapshot()
+    var wireGuardRuntime: WireGuardRuntime?
+    var relayTransport: RelayTransport?
+    var discoveryManager: DiscoveryManager?
+    var utunDevice: UtunDevice?
+    var routeManager: RouteManager?
 
     func currentStatus() -> TunnelDaemonStatusSnapshot {
         var snapshot = status
@@ -57,7 +67,6 @@ actor DaemonState {
             ("wireguard_runtime_active", "\(wireGuardRuntime != nil)"),
             ("utun_open", "\(utunDevice?.interfaceName ?? "")"),
         ]
-        // Build via JSON round-trip since TunnelEnvironmentCheckResult's memberwise init is internal.
         let payload: [[String: String]] = pairs.map { ["name": $0.0, "value": $0.1] }
         let report: TunnelEnvironmentReport
         do {
@@ -70,45 +79,6 @@ actor DaemonState {
             report = TunnelEnvironmentReport()
         }
         return report
-    }
-
-    func startTunnel(settings: TunnelStartSettings) throws -> TunnelDaemonStatusSnapshot {
-        // Phase 1 wiring is intentionally minimal; the user runs end-to-end smoke tests separately.
-        guard settings.isReadyToStart else {
-            throw daemonError(
-                code: .missingWireGuardConfigPath,
-                message: "wireguard config path is required"
-            )
-        }
-        status.running = true
-        status.peerState = .wireGuardConfigured
-        status.activeRelayEndpoint = settings.relayEndpoint
-        logger.notice(
-            """
-            daemon start request settings_ready=\(settings.isReadyToStart, privacy: .public) \
-            has_local_relay=\(settings.hasLocalRelayEndpoint, privacy: .public)
-            """
-        )
-        return currentStatus()
-    }
-
-    func stopTunnel() async -> TunnelDaemonStatusSnapshot {
-        try? routeManager?.removeAll()
-        if let runtime = wireGuardRuntime {
-            await runtime.stop()
-        }
-        relayTransport?.disconnect()
-        utunDevice?.close()
-        wireGuardRuntime = nil
-        relayTransport = nil
-        utunDevice = nil
-        routeManager = nil
-        status.running = false
-        status.routeState = .notInstalled
-        status.peerState = .notSelected
-        status.activeRelayEndpoint = nil
-        logger.notice("daemon stop request applied")
-        return currentStatus()
     }
 
     func startDiscovery() async -> TunnelDiscoverySnapshot {
@@ -152,7 +122,7 @@ actor DaemonState {
         logger.notice("daemon state shutdown complete")
     }
 
-    private func daemonError(code: TunnelControlErrorCode, message: String) -> TunnelDaemonError {
+    func daemonError(code: TunnelControlErrorCode, message: String) -> TunnelDaemonError {
         TunnelDaemonError.controlFailure(
             TunnelControlFailure(errorCode: code, message: message)
         )

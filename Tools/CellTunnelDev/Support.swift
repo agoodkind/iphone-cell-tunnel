@@ -28,10 +28,6 @@ let toolsPackageDirectory = repoRoot.appendingPathComponent("Tools")
 let productsDirectory = repoRoot.appendingPathComponent("Products")
 let buildDirectory = repoRoot.appendingPathComponent("build")
 let derivedDataDirectory = buildDirectory.appendingPathComponent("DerivedData")
-let protoDirectory = repoRoot.appendingPathComponent("Protos")
-let swiftGeneratedDirectory = repoRoot.appendingPathComponent("Sources/CellTunnelCore/Generated")
-let swiftControlProtoPath = protoDirectory.appendingPathComponent(
-    "io/goodkind/celltunnel/control/v1/control.proto")
 let signingConfigURL = repoRoot.appendingPathComponent("config/signing.env")
 let defaultDeveloperIDIdentity = "Developer ID Application: Alex Goodkind (H3BMXM4W7H)"
 let defaultDevelopmentTeam = "H3BMXM4W7H"
