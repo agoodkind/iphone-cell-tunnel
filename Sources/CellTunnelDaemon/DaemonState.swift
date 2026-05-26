@@ -39,6 +39,7 @@ struct DaemonControlResponseFailure: Codable, Sendable {
 struct TunnelComponents {
     let device: UtunDevice
     let transport: RelayTransport
+    let bindBridge: LoopbackBindBridge
     let runtime: WireGuardRuntime
     let routes: RouteManager
     let parsedConfig: WireGuardClientConfig
@@ -51,6 +52,7 @@ actor DaemonState {
     var discovery = TunnelDiscoverySnapshot()
     var wireGuardRuntime: WireGuardRuntime?
     var relayTransport: RelayTransport?
+    var loopbackBridge: LoopbackBindBridge?
     var discoveryManager: DiscoveryManager?
     var utunDevice: UtunDevice?
     var routeManager: RouteManager?

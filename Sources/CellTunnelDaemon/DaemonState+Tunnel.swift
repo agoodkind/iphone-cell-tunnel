@@ -42,9 +42,13 @@ extension DaemonState {
         if let runtime = wireGuardRuntime {
             await runtime.stop()
         }
+        if let bridge = loopbackBridge {
+            await bridge.stop()
+        }
         relayTransport?.disconnect()
         utunDevice?.close()
         wireGuardRuntime = nil
+        loopbackBridge = nil
         relayTransport = nil
         utunDevice = nil
         routeManager = nil
@@ -106,11 +110,39 @@ extension DaemonState {
             }
         }
 
-        wireBindBridgeStub(transport: transport)
+        let bridge: LoopbackBindBridge
+        do {
+            bridge = try LoopbackBindBridge()
+        } catch {
+            throw daemonError(
+                code: .runtimeStartFailure,
+                message: "loopback bridge init failed: \(error.localizedDescription)"
+            )
+        }
+        var bridgeCleanup = true
+        defer {
+            if bridgeCleanup {
+                Task { await bridge.stop() }
+            }
+        }
+        do {
+            try await bridge.start(relay: transport)
+        } catch {
+            throw daemonError(
+                code: .runtimeStartFailure,
+                message: "loopback bridge start failed: \(error.localizedDescription)"
+            )
+        }
 
+        let loopbackEndpoint = WireGuardEndpoint(
+            host: bridge.loopbackEndpoint.host,
+            port: bridge.loopbackEndpoint.port,
+            isIPv6Literal: false
+        )
         let runtime = try await startWireGuardRuntime(
             parsedConfig: parsedConfig,
-            utunFd: device.fileDescriptor
+            utunFd: device.fileDescriptor,
+            endpointOverride: loopbackEndpoint
         )
         var runtimeCleanup = true
         defer {
@@ -124,10 +156,12 @@ extension DaemonState {
 
         deviceCleanup = false
         transportCleanup = false
+        bridgeCleanup = false
         runtimeCleanup = false
         return TunnelComponents(
             device: device,
             transport: transport,
+            bindBridge: bridge,
             runtime: runtime,
             routes: routes,
             parsedConfig: parsedConfig,
@@ -151,9 +185,10 @@ extension DaemonState {
 
     private func startWireGuardRuntime(
         parsedConfig: WireGuardClientConfig,
-        utunFd: Int32
+        utunFd: Int32,
+        endpointOverride: WireGuardEndpoint?
     ) async throws -> WireGuardRuntime {
-        let uapi = parsedConfig.uapiConfig()
+        let uapi = parsedConfig.uapiConfig(endpointOverride: endpointOverride)
         let runtime = WireGuardRuntime()
         do {
             try await runtime.start(uapiConfig: uapi, utunFd: utunFd)
@@ -182,6 +217,7 @@ extension DaemonState {
     private func commit(components: TunnelComponents) {
         utunDevice = components.device
         relayTransport = components.transport
+        loopbackBridge = components.bindBridge
         wireGuardRuntime = components.runtime
         routeManager = components.routes
     }
@@ -235,29 +271,4 @@ extension DaemonState {
         return NWEndpoint.hostPort(host: host, port: port)
     }
 
-    private func wireBindBridgeStub(transport: RelayTransport) {
-        // Bind bridge gap, tracked separately. wireguard-go's bundled api-apple.go pins the
-        // bind to conn.NewStdNetBind(), which opens its own UDP socket and sends WireGuard
-        // datagrams out the host's default route. RelayTransport receives have no path into
-        // the device, and device sends never reach RelayTransport. Bridging the two ends
-        // requires either forking WireGuardKitGo to accept a custom conn.Bind (preferred) or
-        // running a localhost UDP loopback that the device's bind talks to and RelayTransport
-        // pumps. Neither is in scope for this commit. The sink below is reserved for the
-        // moment that bridge lands; until then incoming relay datagrams are dropped.
-        transport.onReceive = { _ in
-            // pending bind bridge; see comment above
-        }
-        assertBindBridgeNotForced()
-    }
-
-    private func assertBindBridgeNotForced() {
-        #if DEBUG
-            let env = ProcessInfo.processInfo.environment
-            if env["CELLTUNNELD_FORCE_BIND_BRIDGE"] != nil {
-                fatalError(
-                    "wireguard-go bind bridge is not implemented; see DaemonState+Tunnel"
-                )
-            }
-        #endif
-    }
 }
