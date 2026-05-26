@@ -40,8 +40,11 @@ func installMacHelper(configuration: String) throws {
         throw ToolError.failure("built app not found: \(expectedAppPath.path)")
     }
     let expectedHelperPath = expectedAppPath.appendingPathComponent(helperExecutableRelativePath)
+    let expectedDaemonPath = expectedAppPath.appendingPathComponent(daemonExecutableRelativePath)
     let expectedHelperFingerprint = try helperFingerprint(at: expectedHelperPath)
-    let previousHelperProcessID = currentHelperProcessID()
+    let expectedDaemonFingerprint = try helperFingerprint(at: expectedDaemonPath)
+    let previousHelperProcessID = launchctlProcessID(target: helperServiceTarget)
+    let previousDaemonProcessID = launchctlProcessID(target: daemonServiceTarget())
 
     uninstallMacHelper()
     try installMacAppBundle(from: expectedAppPath)
@@ -49,25 +52,35 @@ func installMacHelper(configuration: String) throws {
 
     let deadline = ContinuousClock.now + helperRefreshTimeout
     while ContinuousClock.now < deadline {
-        let verification = currentInstalledHelperVerification(
+        let verification = currentInstalledVerification(
             expectedHelperFingerprint: expectedHelperFingerprint,
-            previousProcessID: previousHelperProcessID
+            expectedDaemonFingerprint: expectedDaemonFingerprint,
+            previousHelperProcessID: previousHelperProcessID,
+            previousDaemonProcessID: previousDaemonProcessID
         )
         if verification.isVerifiedCurrentBuild {
             return
         }
-        try throwIfHelperVerificationIsStale(
-            verification,
-            expectedHelperFingerprint: expectedHelperFingerprint
+        try throwIfVerificationIsStale(
+            verification.helper,
+            expectedFingerprint: expectedHelperFingerprint,
+            serviceTarget: helperServiceTarget
+        )
+        try throwIfVerificationIsStale(
+            verification.daemon,
+            expectedFingerprint: expectedDaemonFingerprint,
+            serviceTarget: daemonServiceTarget()
         )
         waitForHelperVerificationPollInterval()
     }
 
     throw ToolError.failure(
         """
-        helper verification timed out target=\(helperServiceTarget) \
+        install verification timed out helper_target=\(helperServiceTarget) \
+        daemon_target=\(daemonServiceTarget()) \
         expected_bundle=\(expectedAppPath.path) \
-        expected_fingerprint=\(expectedHelperFingerprint)
+        expected_helper_fingerprint=\(expectedHelperFingerprint) \
+        expected_daemon_fingerprint=\(expectedDaemonFingerprint)
         """
     )
 }
@@ -75,11 +88,12 @@ func installMacHelper(configuration: String) throws {
 func uninstallMacHelper() {
     activationLogger.notice("helper uninstall removing registered launchd and app artifacts")
     _ = runBestEffort("pkill", ["-x", "CellTunnelMac"])
-    _ = runBestEffort("sudo", ["launchctl", "bootout", "system/\(helperServiceLabel)"])
+    _ = runBestEffort("launchctl", ["bootout", daemonServiceTarget()])
+    _ = runBestEffort("sudo", ["launchctl", "bootout", helperServiceTarget])
     _ = runBestEffort("sudo", ["sfltool", "resetbtm"])
     _ = runBestEffort(
         "sudo",
-        ["rm", "-f", "/Library/LaunchDaemons/\(daemonLaunchDaemonPlistName)"])
+        ["rm", "-f", "/Library/LaunchDaemons/\(helperLaunchDaemonPlistName)"])
     _ = runBestEffort(
         "sudo",
         ["rm", "-f", "/Library/PrivilegedHelperTools/\(helperServiceLabel)"])
@@ -386,15 +400,15 @@ func compareVersionComponents(lhs: [Int], rhs: [Int]) -> Int {
     return 0
 }
 
-func currentHelperProcessID() -> Int? {
+func launchctlProcessID(target: String) -> Int? {
     activationLogger.notice(
-        "helper verification querying launchctl target=\(helperServiceTarget, privacy: .public)")
+        "launchctl querying target=\(target, privacy: .public)")
     let result: CommandResult
     do {
-        result = try capture("launchctl", ["print", helperServiceTarget], echoOutput: false)
+        result = try capture("launchctl", ["print", target], echoOutput: false)
     } catch {
         activationLogger.error(
-            "helper verification launchctl query failed error=\(error.localizedDescription, privacy: .public)"
+            "launchctl query failed error=\(error.localizedDescription, privacy: .public)"
         )
         return nil
     }
@@ -413,33 +427,39 @@ func currentHelperProcessID() -> Int? {
 }
 
 func waitForHelperVerificationPollInterval() {
-    activationLogger.debug("helper verification waiting for next poll interval")
+    activationLogger.debug("install verification waiting for next poll interval")
     RunLoop.current.run(until: Date().addingTimeInterval(0.5))
 }
 
-func throwIfHelperVerificationIsStale(
-    _ verification: HelperVerification,
-    expectedHelperFingerprint: String
+func throwIfVerificationIsStale(
+    _ verification: BinaryVerification,
+    expectedFingerprint: String,
+    serviceTarget: String
 ) throws {
     activationLogger.notice(
-        "helper verification evaluating registration expectedFingerprint=\(expectedHelperFingerprint, privacy: .public)"
+        """
+        install verification evaluating \
+        target=\(serviceTarget, privacy: .public) \
+        expectedFingerprint=\(expectedFingerprint, privacy: .public)
+        """
     )
     switch verification {
     case .staleRegistration(let registeredState):
         activationLogger.error(
             """
-            helper verification detected stale registration \
+            install verification detected stale registration \
+            target=\(serviceTarget, privacy: .public) \
             appPath=\(registeredState.appPath.path, privacy: .public) \
-            fingerprint=\(registeredState.helperFingerprint, privacy: .public) \
-            expectedFingerprint=\(expectedHelperFingerprint, privacy: .public)
+            fingerprint=\(registeredState.binaryFingerprint, privacy: .public) \
+            expectedFingerprint=\(expectedFingerprint, privacy: .public)
             """
         )
         throw ToolError.failure(
             """
-            helper is registered from \(registeredState.appPath.path) \
-            fingerprint=\(registeredState.helperFingerprint) \
-            expected_fingerprint=\(expectedHelperFingerprint); \
-            run make install-helper to reinstall the privileged helper from the current build
+            \(serviceTarget) is registered from \(registeredState.appPath.path) \
+            fingerprint=\(registeredState.binaryFingerprint) \
+            expected_fingerprint=\(expectedFingerprint); \
+            run make install-helper to reinstall from the current build
             """
         )
     case .currentBuild, .notRegistered, .registeredButUnavailable:

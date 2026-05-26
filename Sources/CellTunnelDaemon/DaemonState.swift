@@ -93,10 +93,18 @@ actor DaemonState {
     func startDiscovery() async -> TunnelDiscoverySnapshot {
         if discoveryManager == nil {
             let manager = DiscoveryManager()
-            await manager.start()
+            await manager.start { [weak self] services in
+                guard self != nil else {
+                    return
+                }
+                Task { [weak self] in
+                    await self?.applyDiscoveredServices(services)
+                }
+            }
             discoveryManager = manager
         }
         discovery.phase = .browsing
+        discovery.lastError = nil
         logger.notice("relay discovery requested")
         return discovery
     }
@@ -108,6 +116,7 @@ actor DaemonState {
         discoveryManager = nil
         discovery.phase = .stopped
         discovery.services = []
+        discovery.selectedEndpoint = nil
         logger.notice("relay discovery stopped")
         return discovery
     }
@@ -116,13 +125,95 @@ actor DaemonState {
         discovery
     }
 
-    func selectRelay(serviceID: String) -> TunnelDiscoverySnapshot {
+    func selectRelay(serviceID: String) async -> TunnelDiscoverySnapshot {
         discovery.selectedServiceID = serviceID
+        discovery.selectedEndpoint = nil
+        discovery.lastError = nil
         for index in discovery.services.indices {
             discovery.services[index].isSelected = discovery.services[index].id == serviceID
         }
         logger.notice("relay service selected id=\(serviceID, privacy: .public)")
+
+        guard let manager = discoveryManager else {
+            discovery.lastError = "discovery not running"
+            return discovery
+        }
+
+        do {
+            let resolved = try await manager.resolve(serviceID)
+            discovery.selectedEndpoint = resolved
+            discovery.phase = .ready
+            if let preferred = resolved.host as String?, !preferred.isEmpty {
+                logger.notice(
+                    """
+                    relay service resolved id=\(serviceID, privacy: .public) \
+                    endpoint=\(resolved.socketAddress, privacy: .public)
+                    """
+                )
+            }
+            applyResolvedEndpoint(resolved, to: serviceID)
+        } catch {
+            let description = String(describing: error)
+            discovery.lastError = description
+            discovery.phase = .failed
+            logger.error(
+                """
+                relay service resolve failed id=\(serviceID, privacy: .public) \
+                error=\(description, privacy: .public)
+                """
+            )
+        }
         return discovery
+    }
+
+    private func applyDiscoveredServices(_ services: Set<DiscoveredService>) {
+        var mapped: [TunnelRelayService] = []
+        mapped.reserveCapacity(services.count)
+        for service in services {
+            let resolved = service.resolvedEndpoint
+            let endpoints: [TunnelRelayEndpoint]
+            if let resolved {
+                endpoints = [resolved]
+            } else {
+                endpoints = []
+            }
+            mapped.append(
+                TunnelRelayService(
+                    id: service.identifier,
+                    serviceName: service.serviceName,
+                    serviceType: service.serviceType,
+                    domain: service.domain,
+                    interfaceIndex: service.interfaceIndex,
+                    hostName: service.serviceName,
+                    endpoints: endpoints,
+                    preferredEndpoint: resolved,
+                    isSelected: service.identifier == discovery.selectedServiceID
+                )
+            )
+        }
+        mapped.sort { $0.serviceName < $1.serviceName }
+        discovery.services = mapped
+        if !mapped.isEmpty, discovery.phase == .browsing {
+            discovery.phase = .ready
+        }
+        guard let selectedID = discovery.selectedServiceID else {
+            return
+        }
+        guard let match = mapped.first(where: { $0.id == selectedID }) else {
+            return
+        }
+        if let resolved = match.preferredEndpoint {
+            discovery.selectedEndpoint = resolved
+        }
+    }
+
+    private func applyResolvedEndpoint(_ endpoint: TunnelRelayEndpoint, to serviceID: String) {
+        for index in discovery.services.indices where discovery.services[index].id == serviceID {
+            discovery.services[index].preferredEndpoint = endpoint
+            if !discovery.services[index].endpoints.contains(endpoint) {
+                discovery.services[index].endpoints.append(endpoint)
+            }
+        }
     }
 
     func shutdown() async {

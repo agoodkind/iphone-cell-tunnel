@@ -4,16 +4,16 @@ import Foundation
 
 private let helperVerificationLogger = CellTunnelLog.logger(category: .build)
 
-struct RegisteredHelperState {
+struct RegisteredBinaryState {
     let appPath: URL
-    let helperFingerprint: String
+    let binaryFingerprint: String
 }
 
-enum HelperVerification {
-    case currentBuild(RegisteredHelperState)
+enum BinaryVerification {
+    case currentBuild(RegisteredBinaryState)
     case notRegistered
-    case registeredButUnavailable(RegisteredHelperState)
-    case staleRegistration(RegisteredHelperState)
+    case registeredButUnavailable(RegisteredBinaryState)
+    case staleRegistration(RegisteredBinaryState)
 
     var isVerifiedCurrentBuild: Bool {
         if case .currentBuild = self {
@@ -23,45 +23,76 @@ enum HelperVerification {
     }
 }
 
-func currentInstalledHelperVerification(
+struct InstallVerification {
+    let helper: BinaryVerification
+    let daemon: BinaryVerification
+
+    var isVerifiedCurrentBuild: Bool {
+        helper.isVerifiedCurrentBuild && daemon.isVerifiedCurrentBuild
+    }
+}
+
+func currentInstalledVerification(
     expectedHelperFingerprint: String,
-    previousProcessID: Int?
-) -> HelperVerification {
-    let installedAppPath = installedMacAppPath.standardizedFileURL
-    let installedHelperPath = installedAppPath.appendingPathComponent(
-        helperExecutableRelativePath
+    expectedDaemonFingerprint: String,
+    previousHelperProcessID: Int?,
+    previousDaemonProcessID: Int?
+) -> InstallVerification {
+    let helper = currentInstalledBinaryVerification(
+        relativePath: helperExecutableRelativePath,
+        expectedFingerprint: expectedHelperFingerprint,
+        serviceTarget: helperServiceTarget,
+        previousProcessID: previousHelperProcessID
     )
-    let installedHelperFingerprint: String
+    let daemon = currentInstalledBinaryVerification(
+        relativePath: daemonExecutableRelativePath,
+        expectedFingerprint: expectedDaemonFingerprint,
+        serviceTarget: daemonServiceTarget(),
+        previousProcessID: previousDaemonProcessID
+    )
+    return InstallVerification(helper: helper, daemon: daemon)
+}
+
+func currentInstalledBinaryVerification(
+    relativePath: String,
+    expectedFingerprint: String,
+    serviceTarget: String,
+    previousProcessID: Int?
+) -> BinaryVerification {
+    let installedAppPath = installedMacAppPath.standardizedFileURL
+    let installedBinaryPath = installedAppPath.appendingPathComponent(relativePath)
+    let installedFingerprint: String
     do {
-        installedHelperFingerprint = try helperFingerprint(at: installedHelperPath)
+        installedFingerprint = try helperFingerprint(at: installedBinaryPath)
     } catch {
         helperVerificationLogger.notice(
             """
-            helper verification found no installed helper \
-            path=\(installedHelperPath.path, privacy: .public) \
+            binary verification found no installed binary \
+            path=\(installedBinaryPath.path, privacy: .public) \
             error=\(error.localizedDescription, privacy: .public)
             """
         )
         return .notRegistered
     }
 
-    let installedState = RegisteredHelperState(
+    let installedState = RegisteredBinaryState(
         appPath: installedAppPath,
-        helperFingerprint: installedHelperFingerprint
+        binaryFingerprint: installedFingerprint
     )
-    guard let processID = currentHelperProcessID() else {
+    guard let processID = launchctlProcessID(target: serviceTarget) else {
         return .registeredButUnavailable(installedState)
     }
     if let previousProcessID, processID == previousProcessID {
         helperVerificationLogger.notice(
             """
-            helper verification rejected previous helper pid \
+            binary verification rejected previous pid \
+            target=\(serviceTarget, privacy: .public) \
             pid=\(processID, privacy: .public)
             """
         )
         return .registeredButUnavailable(installedState)
     }
-    guard installedHelperFingerprint == expectedHelperFingerprint else {
+    guard installedFingerprint == expectedFingerprint else {
         return .staleRegistration(installedState)
     }
     return .currentBuild(installedState)
@@ -69,10 +100,10 @@ func currentInstalledHelperVerification(
 
 func helperFingerprint(at url: URL) throws -> String {
     guard fileManager.fileExists(atPath: url.path) else {
-        throw ToolError.failure("helper binary not found: \(url.path)")
+        throw ToolError.failure("binary not found: \(url.path)")
     }
-    let helperData = try Data(contentsOf: url)
-    let digest = SHA256.hash(data: helperData)
+    let binaryData = try Data(contentsOf: url)
+    let digest = SHA256.hash(data: binaryData)
     let hexDigest = digest.map { String(format: "%02x", $0) }.joined()
     return String(hexDigest.prefix(12))
 }

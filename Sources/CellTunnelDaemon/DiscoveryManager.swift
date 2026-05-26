@@ -1,3 +1,4 @@
+import CellTunnelCore
 import CellTunnelLog
 import Foundation
 import Network
@@ -5,6 +6,7 @@ import Network
 private let logger = CellTunnelLog.logger(category: .daemon)
 
 let cellRelayBonjourServiceType = "_cellrelay._udp"
+let cellRelayResolveTimeout: TimeInterval = 5.0
 
 struct DiscoveredService: Codable, Hashable, Sendable {
     let identifier: String
@@ -12,15 +14,47 @@ struct DiscoveredService: Codable, Hashable, Sendable {
     let serviceType: String
     let domain: String
     let interfaceIndex: Int
+    var resolvedEndpoint: TunnelRelayEndpoint?
+}
+
+enum DiscoveryResolveError: LocalizedError, Sendable {
+    case unknownService(String)
+    case noBrowsedEndpoint(String)
+    case connectionFailed(String)
+    case timedOut
+    case cancelled
+    case malformedEndpoint(String)
+
+    var errorDescription: String? {
+        switch self {
+        case .unknownService(let id):
+            return "unknown discovered service id=\(id)"
+        case .noBrowsedEndpoint(let id):
+            return "no browsed NWEndpoint for service id=\(id)"
+        case .connectionFailed(let detail):
+            return "relay endpoint connection failed: \(detail)"
+        case .timedOut:
+            return "relay endpoint resolution timed out"
+        case .cancelled:
+            return "relay endpoint resolution cancelled"
+        case .malformedEndpoint(let detail):
+            return "resolved endpoint is malformed: \(detail)"
+        }
+    }
 }
 
 actor DiscoveryManager {
     private var browser: NWBrowser?
     private var services: Set<DiscoveredService> = []
     private var endpoints: [String: NWEndpoint] = [:]
-    var onServicesChanged: ((Set<DiscoveredService>) -> Void)?
+    private var onServicesChanged: (@Sendable (Set<DiscoveredService>) -> Void)?
+    private var resolveTask: Task<TunnelRelayEndpoint, Error>?
+    private var resolveTaskServiceID: String?
 
-    func start() {
+    func start(onChange: (@Sendable (Set<DiscoveredService>) -> Void)? = nil) {
+        if onChange != nil {
+            onServicesChanged = onChange
+        }
         guard browser == nil else {
             return
         }
@@ -49,13 +83,17 @@ actor DiscoveryManager {
     }
 
     func stop() {
+        cancelInFlightResolution(reason: "stop")
         guard let nwBrowser = browser else {
+            services.removeAll()
+            endpoints.removeAll()
             return
         }
         browser = nil
         nwBrowser.cancel()
         services.removeAll()
         endpoints.removeAll()
+        onServicesChanged = nil
         logger.notice("discovery browser stopped")
     }
 
@@ -67,6 +105,62 @@ actor DiscoveryManager {
         endpoints[identifier]
     }
 
+    func resolve(_ serviceID: String) async throws -> TunnelRelayEndpoint {
+        let existing = services.first { $0.identifier == serviceID }
+        if let resolved = existing?.resolvedEndpoint {
+            return resolved
+        }
+        cancelInFlightResolution(reason: "new-resolve")
+        guard let endpoint = endpoints[serviceID] else {
+            throw DiscoveryResolveError.noBrowsedEndpoint(serviceID)
+        }
+        let task = Task<TunnelRelayEndpoint, Error> {
+            try await Self.performResolve(endpoint: endpoint)
+        }
+        resolveTask = task
+        resolveTaskServiceID = serviceID
+        defer {
+            if resolveTaskServiceID == serviceID {
+                resolveTask = nil
+                resolveTaskServiceID = nil
+            }
+        }
+        let resolved: TunnelRelayEndpoint
+        do {
+            resolved = try await task.value
+        } catch is CancellationError {
+            throw DiscoveryResolveError.cancelled
+        }
+        storeResolved(resolved, for: serviceID)
+        return resolved
+    }
+
+    private func cancelInFlightResolution(reason: String) {
+        guard let task = resolveTask else {
+            return
+        }
+        let activeID = resolveTaskServiceID ?? ""
+        task.cancel()
+        resolveTask = nil
+        resolveTaskServiceID = nil
+        logger.notice(
+            """
+            discovery resolve cancelled reason=\(reason, privacy: .public) \
+            serviceID=\(activeID, privacy: .public)
+            """
+        )
+    }
+
+    private func storeResolved(_ resolved: TunnelRelayEndpoint, for serviceID: String) {
+        guard var entry = services.first(where: { $0.identifier == serviceID }) else {
+            return
+        }
+        services.remove(entry)
+        entry.resolvedEndpoint = resolved
+        services.insert(entry)
+        onServicesChanged?(services)
+    }
+
     private func applyResults(_ results: Set<NWBrowser.Result>) {
         var next: Set<DiscoveredService> = []
         var nextEndpoints: [String: NWEndpoint] = [:]
@@ -74,8 +168,12 @@ actor DiscoveryManager {
             guard let entry = service(from: result) else {
                 continue
             }
-            next.insert(entry.service)
-            nextEndpoints[entry.service.identifier] = entry.endpoint
+            var carried = entry.service
+            if let existing = services.first(where: { $0.identifier == carried.identifier }) {
+                carried.resolvedEndpoint = existing.resolvedEndpoint
+            }
+            next.insert(carried)
+            nextEndpoints[carried.identifier] = entry.endpoint
         }
         let added = next.subtracting(services)
         let removed = services.subtracting(next)
@@ -103,8 +201,158 @@ actor DiscoveryManager {
             serviceName: name,
             serviceType: type,
             domain: domain,
-            interfaceIndex: interfaceIndex
+            interfaceIndex: interfaceIndex,
+            resolvedEndpoint: nil
         )
         return (entry, result.endpoint)
+    }
+
+    private static func performResolve(
+        endpoint: NWEndpoint
+    ) async throws -> TunnelRelayEndpoint {
+        let parameters = NWParameters.udp
+        parameters.includePeerToPeer = true
+        let connection = NWConnection(to: endpoint, using: parameters)
+        let resolver = Resolver(connection: connection)
+        return try await resolver.run(timeout: cellRelayResolveTimeout)
+    }
+}
+
+private final class Resolver: @unchecked Sendable {
+    private let connection: NWConnection
+    private let lock = NSLock()
+    private var finished = false
+    private var continuation: CheckedContinuation<TunnelRelayEndpoint, Error>?
+    private var timeoutItem: DispatchWorkItem?
+
+    init(connection: NWConnection) {
+        self.connection = connection
+    }
+
+    func run(timeout: TimeInterval) async throws -> TunnelRelayEndpoint {
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<TunnelRelayEndpoint, Error>) in
+            lock.lock()
+            continuation = cont
+            lock.unlock()
+
+            connection.stateUpdateHandler = { [weak self] state in
+                self?.handle(state: state)
+            }
+            connection.pathUpdateHandler = { [weak self] path in
+                self?.tryFinish(usingPath: path)
+            }
+            let timeoutItem = DispatchWorkItem { [weak self] in
+                self?.finish(.failure(DiscoveryResolveError.timedOut))
+            }
+            self.timeoutItem = timeoutItem
+            DispatchQueue.global(qos: .userInitiated).asyncAfter(
+                deadline: .now() + timeout,
+                execute: timeoutItem
+            )
+            connection.start(queue: .global(qos: .userInitiated))
+        }
+    }
+
+    private func handle(state: NWConnection.State) {
+        switch state {
+        case .ready, .preparing:
+            tryFinish(usingPath: connection.currentPath)
+        case .failed(let error):
+            finish(.failure(DiscoveryResolveError.connectionFailed(String(describing: error))))
+        case .cancelled:
+            finish(.failure(DiscoveryResolveError.cancelled))
+        case .waiting(let error):
+            finish(.failure(DiscoveryResolveError.connectionFailed(String(describing: error))))
+        default:
+            break
+        }
+    }
+
+    private func tryFinish(usingPath path: NWPath?) {
+        guard let path else {
+            return
+        }
+        guard let remote = path.remoteEndpoint else {
+            return
+        }
+        guard let endpoint = Self.endpoint(from: remote) else {
+            return
+        }
+        finish(.success(endpoint))
+    }
+
+    private func finish(_ result: Result<TunnelRelayEndpoint, Error>) {
+        lock.lock()
+        if finished {
+            lock.unlock()
+            return
+        }
+        finished = true
+        let cont = continuation
+        continuation = nil
+        let timer = timeoutItem
+        timeoutItem = nil
+        lock.unlock()
+
+        timer?.cancel()
+        connection.stateUpdateHandler = nil
+        connection.pathUpdateHandler = nil
+        connection.cancel()
+        cont?.resume(with: result)
+    }
+
+    private static func endpoint(from endpoint: NWEndpoint) -> TunnelRelayEndpoint? {
+        switch endpoint {
+        case .hostPort(let host, let port):
+            return relayEndpoint(host: host, port: port)
+        default:
+            return nil
+        }
+    }
+
+    private static func relayEndpoint(
+        host: NWEndpoint.Host,
+        port: NWEndpoint.Port
+    ) -> TunnelRelayEndpoint? {
+        switch host {
+        case .ipv4(let address):
+            let literal = stringAddress(address)
+            return TunnelRelayEndpoint(
+                host: literal,
+                port: Int(port.rawValue),
+                addressFamily: .ipv4
+            )
+        case .ipv6(let address):
+            let literal = stringAddress(address)
+            return TunnelRelayEndpoint(
+                host: literal,
+                port: Int(port.rawValue),
+                addressFamily: .ipv6
+            )
+        case .name(let name, _):
+            return TunnelRelayEndpoint(
+                host: name,
+                port: Int(port.rawValue),
+                addressFamily: .unspecified
+            )
+        @unknown default:
+            return nil
+        }
+    }
+
+    private static func stringAddress(_ address: IPv4Address) -> String {
+        let raw = address.debugDescription
+        if let percentIndex = raw.firstIndex(of: "%") {
+            return String(raw[..<percentIndex])
+        }
+        return raw
+    }
+
+    private static func stringAddress(_ address: IPv6Address) -> String {
+        let raw = address.debugDescription
+        if let percentIndex = raw.firstIndex(of: "%") {
+            return String(raw[..<percentIndex])
+        }
+        return raw
     }
 }

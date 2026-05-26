@@ -25,36 +25,33 @@ enum MacHelperCommand {
     }
 
     private static func installHelperAndWait() throws {
-        helperCommandLogger.notice("headless helper install requested")
+        helperCommandLogger.notice("headless install requested")
         let helperService = TunnelHelperService()
-        switch helperService.status().state {
-        case .enabled:
-            helperCommandLogger.notice("headless helper install found enabled helper")
+        let initialStatus = helperService.status()
+        if initialStatus.state == .enabled {
+            helperCommandLogger.notice("headless install found both pieces enabled")
             return
-        case .requiresApproval:
-            helperService.openSystemSettings()
-        case .notFound, .notRegistered, .unknown:
-            do {
-                try helperService.register()
-            } catch {
-                let recoveryState = helperService.status().state
-                if recoveryState == .enabled {
-                    helperCommandLogger.notice(
-                        "headless helper install recovered after register error")
-                    return
-                }
-                guard recoveryState == .requiresApproval else {
-                    throw error
-                }
-                helperService.openSystemSettings()
+        }
+
+        do {
+            try helperService.register()
+        } catch {
+            let recoveryStatus = helperService.status()
+            if recoveryStatus.state == .enabled {
+                helperCommandLogger.notice("headless install recovered after register error")
+                return
             }
+            guard recoveryStatus.state == .requiresApproval else {
+                throw error
+            }
+            helperService.openSystemSettings()
         }
 
         let deadline = Date().addingTimeInterval(helperCommandTimeout)
         while Date() < deadline {
             let state = helperService.status().state
             if state == .enabled {
-                helperCommandLogger.notice("headless helper install enabled helper")
+                helperCommandLogger.notice("headless install enabled both pieces")
                 return
             }
             if state == .requiresApproval {

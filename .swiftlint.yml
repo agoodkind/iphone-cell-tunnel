@@ -47,6 +47,7 @@ disabled_rules:
   - multiline_parameters_brackets
   - no_grouping_extension
   - no_magic_numbers
+  - pattern_matching_keywords
   - one_declaration_per_file
   - prefer_self_in_static_references
   - prefer_nimble
