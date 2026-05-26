@@ -14,6 +14,8 @@ final class PhoneRelayController: @unchecked Sendable {
     private let monitorQueue = DispatchQueue(label: "CellTunnelPhone.CellularMonitor")
     private var cellularMonitor: NWPathMonitor?
     private var listener: NWListener?
+    private let controlListener = PhoneControlListener()
+    private var lastConfiguredEndpoint: RelayEndpoint?
     let wireGuardSession = WireGuardDatagramRelaySession()
     var throughputTask: Task<Void, Never>?
     var throughputBaseline = TunnelCounters()
@@ -24,6 +26,7 @@ final class PhoneRelayController: @unchecked Sendable {
     var connectedPeerName: String?
     var advertisedServiceName: String?
     var listenerPort: UInt16?
+    var controlListenerPort: UInt16?
     var cellularPath = CellularPathSnapshot()
     var counters = TunnelCounters()
     var lastError: String?
@@ -81,7 +84,7 @@ final class PhoneRelayController: @unchecked Sendable {
                 logger.error("relay wireguard session reported error=\(message, privacy: .public)")
             }
         }
-        startWireGuardSessionIfConfigured()
+        startControlListener()
         startListener()
         startThroughputLoop()
     }
@@ -93,8 +96,11 @@ final class PhoneRelayController: @unchecked Sendable {
         connectedPeerName = nil
         advertisedServiceName = nil
         listenerPort = nil
+        controlListenerPort = nil
+        lastConfiguredEndpoint = nil
         UIApplication.shared.isIdleTimerDisabled = false
         stopThroughputLoop()
+        controlListener.stop()
         wireGuardSession.stop()
         cellularMonitor?.cancel()
         cellularMonitor = nil
@@ -104,12 +110,43 @@ final class PhoneRelayController: @unchecked Sendable {
         currentMacConnection = nil
     }
 
-    private func startWireGuardSessionIfConfigured() {
-        guard let endpoint = resolvedWireGuardServerEndpoint() else {
-            logger.notice(
-                "wireguard server endpoint not configured; cellular relay will not start until configured"
-            )
+    private func startControlListener() {
+        let serviceName = UIDevice.current.name
+        logger.notice(
+            "phone control listener starting serviceName=\(serviceName, privacy: .public)"
+        )
+        controlListener.onSetServerEndpoint = { [weak self] endpoint in
+            self?.applyServerEndpoint(endpoint)
+        }
+        controlListener.statusProvider = { [weak self] in
+            self?.currentControlStatus() ?? RelayControlMessage.Status(hasCellularPath: false)
+        }
+        controlListener.start(preferredServiceName: serviceName)
+        controlListenerPort = controlListener.listenerPort
+    }
+
+    private func applyServerEndpoint(_ endpoint: RelayEndpoint) {
+        if let existing = lastConfiguredEndpoint, existing == endpoint {
+            logger.notice("control endpoint update ignored (unchanged)")
             return
+        }
+        lastConfiguredEndpoint = endpoint
+        if wireGuardSession.state != .stopped {
+            wireGuardSession.stop()
+            wireGuardSession.prepareForHandshake()
+            wireGuardSession.datagramHandler = { [weak self] datagram in
+                Task { @MainActor [weak self] in
+                    self?.sendDatagramToMac(datagram)
+                }
+            }
+            wireGuardSession.errorHandler = { [weak self] message in
+                Task { @MainActor [weak self] in
+                    self?.lastError = message
+                    logger.error(
+                        "relay wireguard session reported error=\(message, privacy: .public)"
+                    )
+                }
+            }
         }
         do {
             try wireGuardSession.start(endpoint: endpoint)
@@ -119,6 +156,14 @@ final class PhoneRelayController: @unchecked Sendable {
                 "wireguard session start failed error=\(error.localizedDescription, privacy: .public)"
             )
         }
+    }
+
+    private func currentControlStatus() -> RelayControlMessage.Status {
+        RelayControlMessage.Status(
+            hasCellularPath: cellularPath.isSatisfied,
+            cellularInterface: cellularPath.interfaceName,
+            lastError: lastError
+        )
     }
 }
 

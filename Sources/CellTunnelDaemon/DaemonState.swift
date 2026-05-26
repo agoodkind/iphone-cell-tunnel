@@ -42,6 +42,7 @@ struct TunnelComponents {
     let bindBridge: LoopbackBindBridge
     let runtime: WireGuardRuntime
     let routes: RouteManager
+    let controlChannel: ControlChannel
     let parsedConfig: WireGuardClientConfig
     let relayEndpoint: TunnelRelayEndpoint
     let plan: RoutePlan
@@ -56,6 +57,7 @@ actor DaemonState {
     var discoveryManager: DiscoveryManager?
     var utunDevice: UtunDevice?
     var routeManager: RouteManager?
+    var controlChannel: ControlChannel?
 
     func currentStatus() -> TunnelDaemonStatusSnapshot {
         var snapshot = status

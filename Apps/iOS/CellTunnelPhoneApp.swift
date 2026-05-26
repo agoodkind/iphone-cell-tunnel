@@ -15,6 +15,9 @@ struct CellTunnelPhoneApp: App {
         logger.notice("CellTunnelPhone app initializing")
         applyLaunchPortOverride()
         applyBenchModeIfRequested()
+        logger.notice(
+            "phone app server endpoint sourced from Mac control channel; no defaults override"
+        )
         _relayController = State(initialValue: PhoneRelayController())
     }
 

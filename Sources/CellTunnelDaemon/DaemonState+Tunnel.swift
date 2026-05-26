@@ -47,11 +47,15 @@ extension DaemonState {
         }
         relayTransport?.disconnect()
         utunDevice?.close()
+        if let channel = controlChannel {
+            await channel.stop()
+        }
         wireGuardRuntime = nil
         loopbackBridge = nil
         relayTransport = nil
         utunDevice = nil
         routeManager = nil
+        controlChannel = nil
         status.running = false
         status.routeState = .notInstalled
         status.peerState = .notSelected
@@ -110,28 +114,20 @@ extension DaemonState {
             }
         }
 
-        let bridge: LoopbackBindBridge
-        do {
-            bridge = try LoopbackBindBridge()
-        } catch {
-            throw daemonError(
-                code: .runtimeStartFailure,
-                message: "loopback bridge init failed: \(error.localizedDescription)"
-            )
-        }
+        let bridge = try await startLoopbackBridge(transport: transport)
         var bridgeCleanup = true
         defer {
             if bridgeCleanup {
                 Task { await bridge.stop() }
             }
         }
-        do {
-            try await bridge.start(relay: transport)
-        } catch {
-            throw daemonError(
-                code: .runtimeStartFailure,
-                message: "loopback bridge start failed: \(error.localizedDescription)"
-            )
+
+        let controlChannel = try await startControlChannel(parsedConfig: parsedConfig)
+        var controlCleanup = true
+        defer {
+            if controlCleanup {
+                Task { await controlChannel.stop() }
+            }
         }
 
         let loopbackEndpoint = WireGuardEndpoint(
@@ -158,15 +154,80 @@ extension DaemonState {
         transportCleanup = false
         bridgeCleanup = false
         runtimeCleanup = false
+        controlCleanup = false
         return TunnelComponents(
             device: device,
             transport: transport,
             bindBridge: bridge,
             runtime: runtime,
             routes: routes,
+            controlChannel: controlChannel,
             parsedConfig: parsedConfig,
             relayEndpoint: relayEndpoint,
             plan: plan
+        )
+    }
+
+    private func startLoopbackBridge(transport: RelayTransport) async throws -> LoopbackBindBridge {
+        let bridge: LoopbackBindBridge
+        do {
+            bridge = try LoopbackBindBridge()
+        } catch {
+            throw daemonError(
+                code: .runtimeStartFailure,
+                message: "loopback bridge init failed: \(error.localizedDescription)"
+            )
+        }
+        do {
+            try await bridge.start(relay: transport)
+        } catch {
+            await bridge.stop()
+            throw daemonError(
+                code: .runtimeStartFailure,
+                message: "loopback bridge start failed: \(error.localizedDescription)"
+            )
+        }
+        return bridge
+    }
+
+    private func startControlChannel(
+        parsedConfig: WireGuardClientConfig
+    ) async throws -> ControlChannel {
+        let endpoint = try wireGuardServerEndpoint(from: parsedConfig)
+        let channel = ControlChannel(serverEndpoint: endpoint)
+        do {
+            try await channel.start()
+        } catch {
+            await channel.stop()
+            throw daemonError(
+                code: .runtimeStartFailure,
+                message: "control channel start failed: \(error.localizedDescription)"
+            )
+        }
+        logger.notice(
+            """
+            control channel established host=\(endpoint.host, privacy: .public) \
+            port=\(endpoint.port, privacy: .public) \
+            family=\(endpoint.addressFamily.rawValue, privacy: .public)
+            """
+        )
+        return channel
+    }
+
+    private func wireGuardServerEndpoint(
+        from parsedConfig: WireGuardClientConfig
+    ) throws -> RelayEndpoint {
+        guard let endpoint = parsedConfig.peer.endpoint else {
+            throw daemonError(
+                code: .runtimeStartFailure,
+                message: "wireguard config missing peer endpoint"
+            )
+        }
+        let family: RelayAddressFamily = endpoint.isIPv6Literal ? .ipv6 : .ipv4
+        return RelayEndpoint(
+            addressFamily: family,
+            host: endpoint.host,
+            port: endpoint.port
         )
     }
 
@@ -220,6 +281,7 @@ extension DaemonState {
         loopbackBridge = components.bindBridge
         wireGuardRuntime = components.runtime
         routeManager = components.routes
+        controlChannel = components.controlChannel
     }
 
     private func applyRunningStatus(components: TunnelComponents) {
