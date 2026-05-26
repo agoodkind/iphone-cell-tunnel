@@ -59,6 +59,20 @@ Read these documents before editing this repository:
 - [MVP Device Check](docs/runbooks/mvp-device-check.md)
 - [MVP CLI Check](docs/runbooks/mvp-cli-check.md)
 
+## Agent entry points (use these first)
+
+Reach for these `make` targets before any direct `swift Tools/cell-tunnel-dev.swift <subcommand>` call. The make layer is the canonical surface.
+
+- `make build TARGET=daemon|mac|iphone-simulator|iphone-device|all`. The `TARGET=` argument is mandatory. Bare `make build` errors out by design so an agent cannot quietly build half the system.
+- `make install`. Builds the Mac app, installs to `/Applications/CellTunnelMac.app`, and registers the daemon via `SMAppService.daemon`. TouchID prompts once. Subsequent runs swap the bundled binary without re-prompting.
+- `make uninstall`. Unregisters the daemon and removes the installed Mac app.
+- `make daemon-reload`. After a `make build TARGET=daemon` swap, runs `sudo launchctl kickstart -k system/io.goodkind.celltunneld` so the daemon loads the new binary. Use this for fast dev iteration.
+- `make iphone-install`. Builds `iphone-device`, installs and launches `CellTunnelPhone` on the connected iPhone with the auto-start flag.
+- `make smoke`. Runs the post-install celltunnelctl sequence against the smoke config at `/Users/agoodkind/Desktop/wireguard-export/example.com only.conf`: status, start-discovery, discover, select first result, start, ping and curl both smoke targets.
+- `make logs`. Tails the Mac daemon OSLog and the iPhone syslog filtered to the relay.
+
+If a target above does not exist yet, the docs are ahead of the code. Add the missing target to the Makefile rather than working around it with raw `swift Tools/cell-tunnel-dev.swift` calls.
+
 General rules:
 
 - Use the committed `Makefile` and `bootstrap.mk` as the canonical `swift-makefile` consumer interface.

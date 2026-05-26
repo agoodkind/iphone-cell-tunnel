@@ -2,6 +2,14 @@
 
 This file is the single durable handoff for the Cell Tunnel project. An agent with zero prior context can pick up the work by reading it first.
 
+## Where we are right now (top of the file, read first)
+
+The project has been rewritten Swift-native. The Go daemon is gone. The Phase 1 Swift daemon is feature-complete on paper. The build is green for the daemon, the Mac app, and the iPhone app. The end-to-end tunnel does not yet work because the XPC handshake between `celltunnelctl` and `celltunneld` fails: `celltunnelctl status` returns `error_kind=daemon_unavailable`.
+
+The architectural decision to fix this was made at the end of the last session: **collapse the helper split back into a single `celltunneld` daemon registered via `SMAppService.daemon`.** The split was added to keep dev iteration fast (small privileged surface, big user-mode binary that restarts freely), but it required passing the utun file descriptor across processes. Modern Apple XPC APIs (`XPCSession`, `XPCListener`) do not expose fd passing through their Codable convenience surface, and Apple's `SMAppService.daemon` actually supports silent reinstalls when the Team ID is stable, so the dev-loop pain that motivated the split was overstated. Collapsing the split removes the fd-passing problem, lets the entire codebase use modern `XPCListener` / `XPCSession`, and trades one TouchID prompt at install time for a much simpler lifecycle.
+
+The user explicitly said "I want it all to be modern" and "Yes, collapse to one celltunneld as SMAppService.daemon." That is the next agent's job.
+
 ## What the project does in plain language
 
 The Mac wants to use the internet through the iPhone cellular signal instead of through wifi. Traffic on the Mac is encapsulated and forwarded over USB to the iPhone. The iPhone forwards each packet over its cellular interface to a hosted server we own. The hosted server unwraps and forwards each packet to the real internet.
@@ -27,13 +35,72 @@ Names for the pieces:
 - The USB Multiplex daemon Apple ships is `usbmuxd`. It listens on `/var/run/usbmuxd`.
 - The Go-side wrapper for usbmuxd lives at `Daemon/internal/usbmuxd/`. It uses the `github.com/danielpaulus/go-ios` library.
 
-## Current state, in one paragraph
+## Current state
 
-IPv4 traffic works end-to-end through the relay over USB and exits via the iPhone cellular signal. The tunnel survives stop and start cycles. Routes for `208.67.222.222/32` and the speedtest IPs (151.101.*, 104.17.*, 68.65.224.181) install through the `utun` interface. IPv6 still has a server-side issue. Phase 1 acceptance is met for IPv4 over the usbmuxd transport. Current measured throughput through the tunnel: about 19 Mbps down, 4 Mbps up. The cellular link itself does 200 to 300 Mbps down, 80 Mbps up under Apple's Personal Hotspot, and direct WireGuard from iPhone gets 300 down 90 up. The hosted server has 2 Gbps symmetric fiber, 1 mile away. Inferred from those three measurements: the cap sits somewhere in the Mac-to-iPhone relay pipeline, since the cellular link and the server both have headroom. The exact location inside that pipeline is not isolated. The next step is the three-experiment sequence at the end of this doc, which isolates whether the cap is in `usbmuxd`, in our framing code, in WireGuard, or in the iPhone receive code.
+Build is green for every target. `swift Tools/cell-tunnel-dev.swift build daemon`, `... build mac`, and `... build iphone-device` all exit 0. The iPhone app installs and runs. The Mac app installs via `... install-helper` and TouchID has been approved once. `launchctl print system/io.goodkind.celltunneldhelperd` shows the privileged helper registered. `launchctl print gui/501/io.goodkind.celltunneld` shows the user-mode daemon registered.
+
+The user-mode daemon launches on demand and reaches `dispatchMain`. The `/tmp/celltunneld.stdout.log` file confirms every step from `step=boot` through `step=ready entering dispatchMain` fires cleanly.
+
+The end-to-end tunnel does not yet work because of an XPC API mismatch. The client `celltunnelctl` uses modern `XPCSession`. The daemon `ControlServer` was switched to `NSXPCListener` during the helper-split work to keep the helper-side `NSXPCConnection` fd-passing path consistent. The two APIs are not interoperable. `Products/celltunnelctl status` returns `error_kind=daemon_unavailable socket_path=io.goodkind.celltunneld.xpc`.
+
+The bench result we still trust is 925 Mbps Mac to iPhone over CDC-NCM UDP via `NWConnection` (commit `7055f81`). The throughput goal is to approach cellular's roughly 300 Mbps end to end through the tunnel once the daemon actually moves bytes.
 
 ## Goal, in one line
 
-Fast, durable, reliable, latest technology. The relay measures about 24 Mbps end-to-end today. The cap location inside the pipeline is not isolated yet. Goal is to match or approach the 300 Mbps the cellular link is capable of.
+Fast, durable, reliable, latest technology. Match or approach the roughly 300 Mbps the cellular link is capable of, end to end through the tunnel.
+
+## Next agent: collapse the helper split
+
+This is the actionable handoff. The architecture decision was made; the work was not yet executed.
+
+Target architecture after this work:
+
+- `celltunneld` is the single Mac daemon. Privileged. Runs as root. Registered via `SMAppService.daemon` with a one-time TouchID prompt.
+- `celltunneld` opens utun directly, runs WireGuard via WireGuardKit and the existing `LoopbackBindBridge`, manages routes via the existing `RouteManager`, runs the existing `ControlServer` for `celltunnelctl`, runs the existing `ControlChannel` to the iPhone.
+- `ControlServer` uses modern `XPCListener`. `TunnelControlClient` uses modern `XPCSession`. Codable wire format end to end. No `NSXPCListener` or `NSXPCConnection` anywhere in the project.
+- `celltunneldhelperd` is deleted. `Sources/CellTunnelDaemonHelper/` is deleted. `Sources/CellTunnelDaemon/HelperClient.swift` is deleted. `Sources/CellTunnelCore/HelperXPCContract.swift` is deleted.
+- `Apps/macOS/LaunchAgents/io.goodkind.celltunneld.plist` is deleted. `Apps/macOS/LaunchDaemons/io.goodkind.celltunneldhelperd.plist` is replaced by a new `Apps/macOS/LaunchDaemons/io.goodkind.celltunneld.plist` that points at the embedded daemon binary and declares the `io.goodkind.celltunneld.xpc` Mach service.
+
+Sources to keep and move back into `Sources/CellTunnelDaemon/`:
+
+- `Sources/CellTunnelDaemonHelper/UtunDevice.swift` becomes `Sources/CellTunnelDaemon/UtunDevice.swift` again. The local `ctlInfoIoctl` constant in that file should go back to importing `CTLIOCGINFO` from `WireGuardKitC` since the daemon now links WireGuardKit.
+- `Sources/CellTunnelDaemonHelper/RouteManager.swift` becomes `Sources/CellTunnelDaemon/RouteManager.swift` again.
+
+Sources to rewrite back to modern XPC:
+
+- `Sources/CellTunnelDaemon/ControlServer.swift` was rewritten by Subagent F to use `NSXPCListener` plus an `@objc CellTunnelDaemonControlProtocol`. Restore the pre-Subagent-F version that used `XPCListener(service:targetQueue:incomingSessionHandler:)`. Reference: `git -C /Users/agoodkind/Sites/iphone-cell-tunnel show 27e3c35:Sources/CellTunnelDaemon/ControlServer.swift` is the original modern-XPC version, before the helper split landed.
+- `Sources/CellTunnelCore/TunnelControlClient.swift` was rewritten this session to use `NSXPCConnection`. Restore the prior `XPCSession`-based version. Reference: `git -C /Users/agoodkind/Sites/iphone-cell-tunnel show 8985796:Sources/CellTunnelCore/TunnelControlClient.swift` was the modern-XPC client.
+- `Sources/CellTunnelDaemon/DaemonState.swift` and `Sources/CellTunnelDaemon/DaemonState+Tunnel.swift` reference `HelperClient` for utun open and route install. Replace those calls with direct `UtunDevice()` and `RouteManager` usage. Delete the `HelperClient` field on `DaemonState`.
+- `Sources/CellTunnelDaemon/main.swift` still has the print-debug instrumentation added this session (`emitDiagnostic` function plus the `step=` lines). Strip it once the daemon is verified to work.
+
+Tuist and build system changes:
+
+- Delete the `celltunneldhelperd` target and scheme from `Project.swift`.
+- Delete the helper signing entries in `Tools/CellTunnelDev/Signing.swift`. The bundle no longer copies the helper binary, the helper plist, or the user agent plist into the app bundle. `packageMacBundle` should put a single launchd plist at `Contents/Library/LaunchDaemons/io.goodkind.celltunneld.plist` and a single binary at `Contents/Library/LaunchServices/celltunneld`.
+- Update `Apps/macOS/Services/TunnelHelperService.swift` and `Apps/macOS/Services/MacHelperCommand.swift` to register only the one daemon via `SMAppService.daemon(plistName:)`. Drop the `SMAppService.agent(...)` call.
+- Update `Tools/CellTunnelDev/HelperVerification.swift` to verify only one binary and one launchctl target.
+- Update `Tools/CellTunnelDev/ActivationActions.swift` to bootout only `system/io.goodkind.celltunneld` on uninstall, and remove only the one app.
+- Update the install verification: do not poll for a running PID. Load-on-demand XPC daemons stay `state = not running` until a client connects. The correct verification is an actual `XPCSession`-based ping to `daemonControlMachServiceName` that asserts the daemon answers a `status` RPC.
+
+Makefile and AGENTS.md update:
+
+- Add `make daemon-reload` that runs `sudo launchctl kickstart -k system/io.goodkind.celltunneld`. Document it.
+- Add `make install` that wraps `swift Tools/cell-tunnel-dev.swift install-helper`. Document it.
+- Add `make uninstall` that wraps `swift Tools/cell-tunnel-dev.swift uninstall-helper`. Document it.
+- Add `make iphone-install` that wraps `swift Tools/cell-tunnel-dev.swift activate iphone`. Document it.
+- Add `make smoke` that runs the post-install celltunnelctl sequence against the smoke config at `/Users/agoodkind/Desktop/wireguard-export/example.com only.conf`. Document it.
+- Add `make logs` that tails both daemon OSLog and the iPhone syslog. Document it.
+- Update `AGENTS.md` "General rules" so agents reach for the `make` targets above as canonical entry points, with the existing `swift Tools/cell-tunnel-dev.swift <subcommand>` calls as the underlying implementation. The `make build TARGET=<x>` guardrail stays.
+
+Acceptance for this work:
+
+1. `make build TARGET=mac` exits 0.
+2. `make install` succeeds. The TouchID prompt fires only on the first run; subsequent runs do not re-prompt.
+3. `Products/celltunnelctl status` returns a Codable response, not `daemon_unavailable`.
+4. `make daemon-reload` rebuilds, swaps the bundled binary, and kickstarts the daemon. Subsequent `celltunnelctl status` calls work immediately.
+5. Code is free of `NSXPCConnection` and `NSXPCListener`. The repo grep confirms.
+
+After this lands, the next step is the actual Phase 1 smoke (task #25): `make iphone-install`, `make install`, `make smoke`, verify ping and curl through the tunnel, verify iPhone log shows `pdp_ip0`, record speedtest result.
 
 ## Architecture pivot: Swift-native rewrite
 
