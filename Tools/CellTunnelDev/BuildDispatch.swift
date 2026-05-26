@@ -71,8 +71,15 @@ private func buildDaemon(configuration: String) throws {
         destination: "platform=macOS",
         platformName: macOSPlatformName
     )
+    try buildScheme(
+        scheme: "celltunneldhelperd",
+        configuration: configuration,
+        destination: "platform=macOS",
+        platformName: macOSPlatformName
+    )
     try fileManager.createDirectory(at: productsDirectory, withIntermediateDirectories: true)
     try installBuiltDaemon(configuration: configuration)
+    try installBuiltHelper(configuration: configuration)
 }
 
 private func buildMacBundle(configuration: String, signing: SigningConfig) throws {
@@ -99,11 +106,13 @@ private func buildIPhoneSimulator(configuration: String) throws {
 private func printBuildArtifactFingerprints(target: BuildTarget, configuration: String) throws {
     let ctlPath = productsDirectory.appendingPathComponent("celltunnelctl").path
     let daemonPath = productsDirectory.appendingPathComponent("celltunneld").path
+    let helperPath = productsDirectory.appendingPathComponent(helperDaemonProductName).path
     print("")
     print("build artifacts (target=\(target.rawValue) configuration=\(configuration)):")
-    try printArtifactFingerprint(label: "celltunnelctl ", path: ctlPath)
+    try printArtifactFingerprint(label: "celltunnelctl     ", path: ctlPath)
     if target == .daemon || target == .mac || target == .all {
-        try printArtifactFingerprint(label: "celltunneld   ", path: daemonPath)
+        try printArtifactFingerprint(label: "celltunneld       ", path: daemonPath)
+        try printArtifactFingerprint(label: "celltunneldhelperd", path: helperPath)
     }
 }
 

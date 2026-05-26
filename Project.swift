@@ -129,6 +129,27 @@ let project = Project(
                 ]
             )
         ),
+        .target(
+            name: "celltunneldhelperd",
+            destinations: [.mac],
+            product: .commandLineTool,
+            bundleId: "io.goodkind.celltunneldhelperd",
+            deploymentTargets: macOSDeploymentTarget,
+            sources: [
+                "Sources/CellTunnelDaemonHelper/**"
+            ],
+            dependencies: [
+                .target(name: "CellTunnelCore"),
+                .target(name: "CellTunnelLog"),
+            ],
+            settings: .settings(
+                base: [
+                    "PRODUCT_NAME": "celltunneldhelperd",
+                    "CODE_SIGN_ENTITLEMENTS":
+                        "Apps/macOS/Entitlements/celltunneldhelperd.entitlements",
+                ]
+            )
+        ),
     ],
     schemes: [
         .scheme(
@@ -153,6 +174,15 @@ let project = Project(
             name: "celltunneld",
             shared: true,
             buildAction: .buildAction(targets: [.target("celltunneld")]),
+            runAction: .runAction(configuration: "Debug"),
+            archiveAction: .archiveAction(configuration: "Release"),
+            profileAction: .profileAction(configuration: "Release"),
+            analyzeAction: .analyzeAction(configuration: "Debug")
+        ),
+        .scheme(
+            name: "celltunneldhelperd",
+            shared: true,
+            buildAction: .buildAction(targets: [.target("celltunneldhelperd")]),
             runAction: .runAction(configuration: "Debug"),
             archiveAction: .archiveAction(configuration: "Release"),
             profileAction: .profileAction(configuration: "Release"),

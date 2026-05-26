@@ -1,11 +1,15 @@
 import CellTunnelLog
 import Darwin
 import Foundation
-import WireGuardKitC
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 
 private let utunControlName = "com.apple.net.utun_control"
+
+// CTLIOCGINFO from <sys/kern_control.h>. The system header defines this via
+// the _IOWR macro which the Swift importer cannot translate; redeclared as a
+// plain constant so the value reaches Swift call sites unchanged.
+private let ctlInfoIoctl: UInt = 0xc064_4e03
 
 enum UtunDeviceError: LocalizedError {
     case socketFailed(errno: Int32)
@@ -47,7 +51,7 @@ final class UtunDevice {
                 _ = strcpy(rebound, utunControlName)
             }
         }
-        if ioctl(socketDescriptor, CTLIOCGINFO, &controlInfo) != 0 {
+        if ioctl(socketDescriptor, ctlInfoIoctl, &controlInfo) != 0 {
             let code = errno
             Darwin.close(socketDescriptor)
             throw UtunDeviceError.ctlInfoFailed(errno: code)

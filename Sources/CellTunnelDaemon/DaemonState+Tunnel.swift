@@ -1,5 +1,6 @@
 import CellTunnelCore
 import CellTunnelLog
+import Darwin
 import Foundation
 import Network
 
@@ -30,14 +31,15 @@ extension DaemonState {
     }
 
     func stopTunnel() async -> TunnelDaemonStatusSnapshot {
-        if let manager = routeManager {
+        if routesInstalled {
             do {
-                try manager.removeAll()
+                try await helperClient.removeRoutes()
             } catch {
                 logger.error(
                     "route remove failed error=\(String(describing: error), privacy: .public)"
                 )
             }
+            routesInstalled = false
         }
         if let runtime = wireGuardRuntime {
             await runtime.stop()
@@ -46,7 +48,9 @@ extension DaemonState {
             await bridge.stop()
         }
         relayTransport?.disconnect()
-        utunDevice?.close()
+        if let device = utunDevice {
+            Darwin.close(device.fileDescriptor)
+        }
         if let channel = controlChannel {
             await channel.stop()
         }
@@ -54,7 +58,6 @@ extension DaemonState {
         loopbackBridge = nil
         relayTransport = nil
         utunDevice = nil
-        routeManager = nil
         controlChannel = nil
         status.running = false
         status.routeState = .notInstalled
@@ -98,11 +101,11 @@ extension DaemonState {
         relayEndpoint: TunnelRelayEndpoint,
         nwRelayEndpoint: NWEndpoint
     ) async throws -> TunnelComponents {
-        let device = try openUtun()
+        let device = try await openUtun()
         var deviceCleanup = true
         defer {
             if deviceCleanup {
-                device.close()
+                Darwin.close(device.fileDescriptor)
             }
         }
 
@@ -148,7 +151,7 @@ extension DaemonState {
         }
 
         let plan = RoutePlanBuilder.build(from: parsedConfig, interfaceName: device.interfaceName)
-        let routes = try installRoutes(plan: plan)
+        try await installRoutes(plan: plan)
 
         deviceCleanup = false
         transportCleanup = false
@@ -160,7 +163,6 @@ extension DaemonState {
             transport: transport,
             bindBridge: bridge,
             runtime: runtime,
-            routes: routes,
             controlChannel: controlChannel,
             parsedConfig: parsedConfig,
             relayEndpoint: relayEndpoint,
@@ -262,17 +264,17 @@ extension DaemonState {
         return runtime
     }
 
-    private func installRoutes(plan: RoutePlan) throws -> RouteManager {
-        let manager = RouteManager()
+    private func installRoutes(plan: RoutePlan) async throws {
+        let prefixes = plan.prefixes.map(\.helperPrefix)
         do {
-            try manager.install(prefixes: plan.prefixes, onInterface: plan.interfaceName)
+            try await helperClient.installRoutes(prefixes, onInterface: plan.interfaceName)
         } catch {
             throw daemonError(
                 code: .runtimeStartFailure,
                 message: "route install failed: \(error.localizedDescription)"
             )
         }
-        return manager
+        routesInstalled = true
     }
 
     private func commit(components: TunnelComponents) {
@@ -280,7 +282,6 @@ extension DaemonState {
         relayTransport = components.transport
         loopbackBridge = components.bindBridge
         wireGuardRuntime = components.runtime
-        routeManager = components.routes
         controlChannel = components.controlChannel
     }
 
@@ -296,9 +297,13 @@ extension DaemonState {
         status.lastError = nil
     }
 
-    private func openUtun() throws -> UtunDevice {
+    private func openUtun() async throws -> OpenedUtun {
         do {
-            return try UtunDevice()
+            let result = try await helperClient.openUtunDevice()
+            return OpenedUtun(
+                fileDescriptor: result.fileDescriptor,
+                interfaceName: result.interfaceName
+            )
         } catch {
             throw daemonError(
                 code: .runtimeStartFailure,

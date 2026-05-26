@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.goodkind.celltunneld</string>
+    <key>BundleProgram</key>
+    <string>Contents/Library/LaunchServices/celltunneld</string>
+    <key>MachServices</key>
+    <dict>
+        <key>io.goodkind.celltunneld.xpc</key>
+        <true/>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/tmp/celltunneld.stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/celltunneld.stderr.log</string>
+</dict>
+</plist>

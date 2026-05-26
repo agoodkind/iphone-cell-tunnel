@@ -36,12 +36,16 @@ struct DaemonControlResponseFailure: Codable, Sendable {
     var message: String
 }
 
+struct OpenedUtun {
+    let fileDescriptor: Int32
+    let interfaceName: String
+}
+
 struct TunnelComponents {
-    let device: UtunDevice
+    let device: OpenedUtun
     let transport: RelayTransport
     let bindBridge: LoopbackBindBridge
     let runtime: WireGuardRuntime
-    let routes: RouteManager
     let controlChannel: ControlChannel
     let parsedConfig: WireGuardClientConfig
     let relayEndpoint: TunnelRelayEndpoint
@@ -55,9 +59,10 @@ actor DaemonState {
     var relayTransport: RelayTransport?
     var loopbackBridge: LoopbackBindBridge?
     var discoveryManager: DiscoveryManager?
-    var utunDevice: UtunDevice?
-    var routeManager: RouteManager?
+    var utunDevice: OpenedUtun?
+    var routesInstalled = false
     var controlChannel: ControlChannel?
+    let helperClient = HelperClient()
 
     func currentStatus() -> TunnelDaemonStatusSnapshot {
         var snapshot = status
@@ -69,7 +74,7 @@ actor DaemonState {
         let pairs: [(String, String)] = [
             ("daemon_version", "phase1"),
             ("wireguard_runtime_active", "\(wireGuardRuntime != nil)"),
-            ("utun_open", "\(utunDevice?.interfaceName ?? "")"),
+            ("utun_open", utunDevice?.interfaceName ?? ""),
         ]
         let payload: [[String: String]] = pairs.map { ["name": $0.0, "value": $0.1] }
         let report: TunnelEnvironmentReport

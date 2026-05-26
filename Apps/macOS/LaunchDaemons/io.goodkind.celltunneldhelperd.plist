@@ -3,19 +3,17 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>io.goodkind.celltunneld</string>
+    <string>io.goodkind.celltunneldhelperd</string>
     <key>BundleProgram</key>
-    <string>Contents/Library/LaunchServices/celltunneld</string>
-    <key>RunAtLoad</key>
-    <true/>
+    <string>Contents/Library/LaunchServices/celltunneldhelperd</string>
     <key>MachServices</key>
     <dict>
-        <key>io.goodkind.celltunneld</key>
+        <key>io.goodkind.celltunneldhelperd.xpc</key>
         <true/>
     </dict>
     <key>StandardOutPath</key>
-    <string>/var/log/celltunneld.stdout.log</string>
+    <string>/var/log/celltunneldhelperd.stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>/var/log/celltunneld.stderr.log</string>
+    <string>/var/log/celltunneldhelperd.stderr.log</string>
 </dict>
 </plist>

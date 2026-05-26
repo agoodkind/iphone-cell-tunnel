@@ -251,6 +251,20 @@ func installBuiltDaemon(configuration: String) throws {
         [.posixPermissions: 0o755], ofItemAtPath: destination.path)
 }
 
+func installBuiltHelper(configuration: String) throws {
+    let source = xcodeConfigurationBuildDirectory(
+        configuration: configuration,
+        platformName: macOSPlatformName
+    ).appendingPathComponent(helperDaemonProductName)
+    let destination = productsDirectory.appendingPathComponent(helperDaemonProductName)
+    guard fileManager.fileExists(atPath: source.path) else {
+        throw ToolError.failure("built celltunneldhelperd not found: \(source.path)")
+    }
+    try copyReplacingItem(at: source, to: destination)
+    try fileManager.setAttributes(
+        [.posixPermissions: 0o755], ofItemAtPath: destination.path)
+}
+
 struct XcodeDevice: Decodable {
     let simulator: Bool
     let available: Bool

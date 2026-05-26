@@ -15,8 +15,19 @@ struct SigningConfig {
         repoRoot.appendingPathComponent("Apps/macOS/Entitlements/celltunneld.entitlements")
     }
 
+    var helperDaemonEntitlements: URL {
+        repoRoot.appendingPathComponent(
+            "Apps/macOS/Entitlements/celltunneldhelperd.entitlements")
+    }
+
     var launchDaemonPlist: URL {
-        repoRoot.appendingPathComponent("Apps/macOS/LaunchDaemons/\(daemonLaunchDaemonPlistName)")
+        repoRoot.appendingPathComponent(
+            "Apps/macOS/LaunchDaemons/\(helperLaunchDaemonPlistName)")
+    }
+
+    var launchAgentPlist: URL {
+        repoRoot.appendingPathComponent(
+            "Apps/macOS/LaunchAgents/\(daemonLaunchDaemonPlistName)")
     }
 
     var notaryKeyPath: URL {
@@ -145,20 +156,42 @@ func packageMacBundle(configuration: String, signing: SigningConfig) throws {
         throw ToolError.failure("built daemon not found: \(daemonSource.path)")
     }
 
+    let helperSource = productsDirectory.appendingPathComponent(helperDaemonProductName)
+    guard fileManager.fileExists(atPath: helperSource.path) else {
+        throw ToolError.failure("built helper not found: \(helperSource.path)")
+    }
+
     guard fileManager.fileExists(atPath: signing.launchDaemonPlist.path) else {
-        throw ToolError.failure("launch daemon plist not found: \(signing.launchDaemonPlist.path)")
+        throw ToolError.failure(
+            "launch daemon plist not found: \(signing.launchDaemonPlist.path)")
+    }
+
+    guard fileManager.fileExists(atPath: signing.launchAgentPlist.path) else {
+        throw ToolError.failure(
+            "launch agent plist not found: \(signing.launchAgentPlist.path)")
     }
 
     let launchServices = appPath.appendingPathComponent("Contents/Library/LaunchServices")
     let launchDaemons = appPath.appendingPathComponent("Contents/Library/LaunchDaemons")
+    let launchAgents = appPath.appendingPathComponent("Contents/Library/LaunchAgents")
     try fileManager.createDirectory(at: launchServices, withIntermediateDirectories: true)
     try fileManager.createDirectory(at: launchDaemons, withIntermediateDirectories: true)
+    try fileManager.createDirectory(at: launchAgents, withIntermediateDirectories: true)
 
     let daemonDestination = launchServices.appendingPathComponent("celltunneld")
-    let plistDestination = launchDaemons.appendingPathComponent(daemonLaunchDaemonPlistName)
+    let helperDestination = launchServices.appendingPathComponent(helperDaemonProductName)
+    let helperPlistDestination = launchDaemons.appendingPathComponent(
+        helperLaunchDaemonPlistName)
+    let daemonPlistDestination = launchAgents.appendingPathComponent(daemonLaunchDaemonPlistName)
+
     try copyReplacingItem(at: daemonSource, to: daemonDestination)
-    try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: daemonDestination.path)
-    try copyReplacingItem(at: signing.launchDaemonPlist, to: plistDestination)
+    try fileManager.setAttributes(
+        [.posixPermissions: 0o755], ofItemAtPath: daemonDestination.path)
+    try copyReplacingItem(at: helperSource, to: helperDestination)
+    try fileManager.setAttributes(
+        [.posixPermissions: 0o755], ofItemAtPath: helperDestination.path)
+    try copyReplacingItem(at: signing.launchDaemonPlist, to: helperPlistDestination)
+    try copyReplacingItem(at: signing.launchAgentPlist, to: daemonPlistDestination)
 }
 
 func signMacProducts(configuration: String, signing: SigningConfig) throws {
@@ -166,8 +199,11 @@ func signMacProducts(configuration: String, signing: SigningConfig) throws {
     let identity = try resolvedSigningIdentity(signing)
     let appPath = macAppPath(configuration: configuration)
     let daemonInProducts = productsDirectory.appendingPathComponent("celltunneld")
+    let helperInProducts = productsDirectory.appendingPathComponent(helperDaemonProductName)
     let daemonInBundle = appPath.appendingPathComponent(
         "Contents/Library/LaunchServices/celltunneld")
+    let helperInBundle = appPath.appendingPathComponent(
+        "Contents/Library/LaunchServices/\(helperDaemonProductName)")
 
     try signPath(
         daemonInProducts,
@@ -175,12 +211,24 @@ func signMacProducts(configuration: String, signing: SigningConfig) throws {
         identifier: "\(signing.bundleIdentifierPrefix).celltunneld",
         entitlements: signing.daemonEntitlements
     )
+    try signPath(
+        helperInProducts,
+        identity: identity.hash,
+        identifier: "\(signing.bundleIdentifierPrefix).\(helperDaemonProductName)",
+        entitlements: signing.helperDaemonEntitlements
+    )
     try signNestedCode(in: appPath, signing: signing, identity: identity.hash)
     try signPath(
         daemonInBundle,
         identity: identity.hash,
         identifier: "\(signing.bundleIdentifierPrefix).celltunneld",
         entitlements: signing.daemonEntitlements
+    )
+    try signPath(
+        helperInBundle,
+        identity: identity.hash,
+        identifier: "\(signing.bundleIdentifierPrefix).\(helperDaemonProductName)",
+        entitlements: signing.helperDaemonEntitlements
     )
     try signPath(
         appPath,
