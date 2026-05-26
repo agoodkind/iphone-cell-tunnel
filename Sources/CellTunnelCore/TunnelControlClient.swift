@@ -1,10 +1,6 @@
 import CellTunnelLog
 import Foundation
 
-#if os(macOS)
-    import XPC
-#endif
-
 private let logger = CellTunnelLog.logger(category: .daemon)
 
 public let daemonControlMachServiceName = "io.goodkind.celltunneld.xpc"
@@ -102,14 +98,13 @@ public protocol TunnelControlClientProtocol: Sendable {
 #if os(macOS)
     public actor TunnelControlClient: TunnelControlClientProtocol {
         private let machServiceName: String
-        private let socketPath: String
-        private var session: XPCSession?
+        private var connection: NSXPCConnection?
 
         public init(
             socketPath: String = resolvedTunnelControlSocketPath(),
             machServiceName: String = daemonControlMachServiceName
         ) {
-            self.socketPath = socketPath
+            _ = socketPath
             self.machServiceName = machServiceName
         }
 
@@ -117,7 +112,7 @@ public protocol TunnelControlClientProtocol: Sendable {
             logger.notice(
                 "tunnel control client shutdown requested service=\(self.machServiceName, privacy: .public)"
             )
-            tearDownSession(reason: "shutdown")
+            tearDownConnection(reason: "shutdown")
         }
 
         public func status() async throws -> TunnelDaemonStatusSnapshot {
@@ -208,54 +203,30 @@ public protocol TunnelControlClientProtocol: Sendable {
             request: DaemonControlRequest,
             operationName: String
         ) async throws -> DaemonControlResponse {
-            let activeSession = try activeSession()
+            let conn = activeConnection()
+            let requestData: Data
+            do {
+                requestData = try JSONEncoder().encode(request)
+            } catch {
+                throw TunnelDaemonError.transportFailure(
+                    "failed to encode \(operationName) request: \(error.localizedDescription)"
+                )
+            }
+
+            let responseData = try await performXPCCall(
+                conn,
+                requestData: requestData,
+                operationName: operationName
+            )
+
             let response: DaemonControlResponse
             do {
-                response = try await withCheckedThrowingContinuation { continuation in
-                    do {
-                        try activeSession.send(request) { (result: Result<DaemonControlResponse, any Error>) in
-                            continuation.resume(with: result)
-                        }
-                    } catch {
-                        logger.error(
-                            """
-                            \(operationName) xpc send dispatch failed \
-                            service=\(self.machServiceName, privacy: .public) \
-                            details=\(String(describing: error), privacy: .public)
-                            """
-                        )
-                        continuation.resume(throwing: error)
-                    }
-                }
-            } catch let error as TunnelDaemonError {
-                logger.error(
-                    """
-                    \(operationName) xpc rethrowing tunnel daemon error \
-                    service=\(self.machServiceName, privacy: .public) \
-                    details=\(String(describing: error), privacy: .public)
-                    """
-                )
-                throw error
-            } catch let error as XPCRichError {
-                tearDownSession(reason: "\(operationName)-xpc-error")
-                logger.error(
-                    """
-                    \(operationName) xpc failed \
-                    service=\(self.machServiceName, privacy: .public) \
-                    details=\(String(describing: error), privacy: .public)
-                    """
-                )
-                throw TunnelDaemonError.daemonUnavailable(self.machServiceName)
+                response = try JSONDecoder().decode(
+                    DaemonControlResponse.self, from: responseData)
             } catch {
-                tearDownSession(reason: "\(operationName)-error")
-                logger.error(
-                    """
-                    \(operationName) xpc failed \
-                    service=\(self.machServiceName, privacy: .public) \
-                    details=\(String(describing: error), privacy: .public)
-                    """
+                throw TunnelDaemonError.transportFailure(
+                    "failed to decode \(operationName) response: \(error.localizedDescription)"
                 )
-                throw TunnelDaemonError.transportFailure(String(describing: error))
             }
 
             try validate(responseVersion: response.version, operationName: operationName)
@@ -269,38 +240,88 @@ public protocol TunnelControlClientProtocol: Sendable {
             return response
         }
 
-        private func activeSession() throws -> XPCSession {
-            if let session {
-                return session
-            }
-            do {
-                let created = try XPCSession(machService: machServiceName)
-                session = created
-                logger.notice(
-                    "tunnel control xpc session opened service=\(self.machServiceName, privacy: .public)"
-                )
-                return created
-            } catch {
-                logger.error(
-                    """
-                    tunnel control xpc session open failed \
-                    service=\(self.machServiceName, privacy: .public) \
-                    details=\(String(describing: error), privacy: .public)
-                    """
-                )
-                throw TunnelDaemonError.daemonUnavailable(machServiceName)
+        private func performXPCCall(
+            _ conn: NSXPCConnection,
+            requestData: Data,
+            operationName: String
+        ) async throws -> Data {
+            let serviceName = machServiceName
+            return try await withCheckedThrowingContinuation { continuation in
+                let resumeOnce = ContinuationGuard(continuation)
+                let errorHandler: @Sendable (Error) -> Void = { error in
+                    logger.error(
+                        """
+                        \(operationName) xpc proxy error \
+                        service=\(serviceName, privacy: .public) \
+                        details=\(String(describing: error), privacy: .public)
+                        """
+                    )
+                    resumeOnce.fail(TunnelDaemonError.daemonUnavailable(serviceName))
+                }
+                let proxy = conn.remoteObjectProxyWithErrorHandler(errorHandler)
+                guard let typedProxy = proxy as? CellTunnelDaemonControlProtocol else {
+                    resumeOnce.fail(
+                        TunnelDaemonError.transportFailure("unexpected remote proxy type"))
+                    return
+                }
+                typedProxy.handleControlRequest(requestData: requestData) { data, nsError in
+                    if let nsError {
+                        resumeOnce.fail(
+                            TunnelDaemonError.transportFailure(nsError.localizedDescription))
+                        return
+                    }
+                    guard let data else {
+                        resumeOnce.fail(
+                            TunnelDaemonError.transportFailure(
+                                "\(operationName) returned empty response"))
+                        return
+                    }
+                    resumeOnce.succeed(data)
+                }
             }
         }
 
-        private func tearDownSession(reason: String) {
-            guard let active = session else {
+        private func activeConnection() -> NSXPCConnection {
+            if let connection {
+                return connection
+            }
+            let conn = NSXPCConnection(machServiceName: machServiceName)
+            conn.remoteObjectInterface = NSXPCInterface(
+                with: CellTunnelDaemonControlProtocol.self)
+            let serviceName = machServiceName
+            conn.invalidationHandler = {
+                logger.notice(
+                    """
+                    tunnel control xpc connection invalidated \
+                    service=\(serviceName, privacy: .public)
+                    """
+                )
+            }
+            conn.interruptionHandler = {
+                logger.notice(
+                    """
+                    tunnel control xpc connection interrupted \
+                    service=\(serviceName, privacy: .public)
+                    """
+                )
+            }
+            conn.resume()
+            connection = conn
+            logger.notice(
+                "tunnel control xpc connection opened service=\(self.machServiceName, privacy: .public)"
+            )
+            return conn
+        }
+
+        private func tearDownConnection(reason: String) {
+            guard let active = connection else {
                 return
             }
-            active.cancel(reason: reason)
-            session = nil
+            active.invalidate()
+            connection = nil
             logger.notice(
                 """
-                tunnel control xpc session torn down \
+                tunnel control xpc connection torn down \
                 reason=\(reason, privacy: .public) \
                 service=\(self.machServiceName, privacy: .public)
                 """
@@ -352,6 +373,38 @@ public protocol TunnelControlClientProtocol: Sendable {
             TunnelDaemonError.controlFailure(
                 TunnelControlFailure(errorCode: failure.errorCode, message: failure.message)
             )
+        }
+    }
+
+    private final class ContinuationGuard: @unchecked Sendable {
+        private let continuation: CheckedContinuation<Data, Error>
+        private let lock = NSLock()
+        private var resolved = false
+
+        init(_ continuation: CheckedContinuation<Data, Error>) {
+            self.continuation = continuation
+        }
+
+        func succeed(_ value: Data) {
+            lock.lock()
+            if resolved {
+                lock.unlock()
+                return
+            }
+            resolved = true
+            lock.unlock()
+            continuation.resume(returning: value)
+        }
+
+        func fail(_ error: Error) {
+            lock.lock()
+            if resolved {
+                lock.unlock()
+                return
+            }
+            resolved = true
+            lock.unlock()
+            continuation.resume(throwing: error)
         }
     }
 #endif

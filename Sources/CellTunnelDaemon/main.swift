@@ -4,20 +4,23 @@ import Foundation
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 
+private func emitDiagnostic(_ message: String) {
+    FileHandle.standardOutput.write(Data((message + "\n").utf8))
+}
+
 CellTunnelLog.bootstrap()
 logger.notice("celltunneld booting")
+emitDiagnostic("celltunneld step=boot")
 
 let daemonState = DaemonState()
+
+emitDiagnostic("celltunneld step=state-init-done")
+
 let controlServer = ControlServer(state: daemonState)
 
-do {
-    try controlServer.start()
-} catch {
-    logger.error(
-        "celltunneld control server start failed error=\(String(describing: error), privacy: .public)"
-    )
-    exit(EXIT_FAILURE)
-}
+emitDiagnostic("celltunneld step=control-server-init-done")
+controlServer.start()
+emitDiagnostic("celltunneld step=control-server-start-ok")
 
 let signalQueue = DispatchQueue(label: "io.goodkind.celltunneld.signals")
 var signalSources: [DispatchSourceSignal] = []
@@ -42,4 +45,5 @@ signalSources.append(installSignalHandler(SIGINT))
 signalSources.append(installSignalHandler(SIGTERM))
 
 logger.notice("celltunneld ready")
+emitDiagnostic("celltunneld step=ready entering dispatchMain")
 dispatchMain()

@@ -1,89 +1,150 @@
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
-import XPC
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 
-let daemonControlMachServiceName = "io.goodkind.celltunneld.xpc"
 let daemonControlRequestVersion = 1
 
-final class ControlServer: @unchecked Sendable {
+final class ControlServer: NSObject, NSXPCListenerDelegate, @unchecked Sendable {
     private let state: DaemonState
-    private var listener: XPCListener?
+    private let listener: NSXPCListener
 
     init(state: DaemonState) {
         self.state = state
+        self.listener = NSXPCListener(machServiceName: daemonControlMachServiceName)
+        super.init()
     }
 
-    func start() throws {
-        let activeState = state
-        let nwListener = try XPCListener(
-            service: daemonControlMachServiceName,
-            targetQueue: .global(qos: .userInitiated)
-        ) { request in
-            request.accept { (message: DaemonControlRequest) -> (any Encodable)? in
-                ControlServer.handle(message: message, state: activeState)
-            }
-        }
-        try nwListener.activate()
-        listener = nwListener
+    func start() {
+        listener.delegate = self
+        listener.resume()
         logger.notice(
             "control server started service=\(daemonControlMachServiceName, privacy: .public)"
         )
     }
 
     func stop() {
-        listener?.cancel()
-        listener = nil
+        listener.suspend()
         logger.notice("control server stopped")
     }
 
-    private static func handle(
-        message: DaemonControlRequest,
-        state: DaemonState
-    ) -> DaemonControlResponse {
-        guard message.version == daemonControlRequestVersion else {
+    func listener(
+        _: NSXPCListener,
+        shouldAcceptNewConnection newConnection: NSXPCConnection
+    ) -> Bool {
+        let interface = NSXPCInterface(with: CellTunnelDaemonControlProtocol.self)
+        newConnection.exportedInterface = interface
+        let exportedObject = DaemonRPCExport(state: state)
+        newConnection.exportedObject = exportedObject
+        newConnection.invalidationHandler = {
+            logger.notice("control server xpc connection invalidated")
+        }
+        newConnection.interruptionHandler = {
+            logger.notice("control server xpc connection interrupted")
+        }
+        newConnection.resume()
+        logger.notice(
+            "control server xpc connection accepted pid=\(newConnection.processIdentifier, privacy: .public)"
+        )
+        return true
+    }
+}
+
+private final class DaemonRPCExport: NSObject, CellTunnelDaemonControlProtocol {
+    private let state: DaemonState
+
+    init(state: DaemonState) {
+        self.state = state
+        super.init()
+    }
+
+    func handleControlRequest(
+        requestData: Data,
+        reply: @escaping (Data?, NSError?) -> Void
+    ) {
+        let request: DaemonControlRequest
+        do {
+            request = try JSONDecoder().decode(DaemonControlRequest.self, from: requestData)
+        } catch {
+            logger.error(
+                "control server decode failed details=\(String(describing: error), privacy: .public)"
+            )
+            let nsError = NSError(
+                domain: daemonControlErrorDomain,
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "failed to decode request: \(error.localizedDescription)"
+                ]
+            )
+            reply(nil, nsError)
+            return
+        }
+
+        guard request.version == daemonControlRequestVersion else {
             logger.error(
                 """
                 control server rejected unknown request version \
-                version=\(message.version, privacy: .public) rpc=\(message.rpc.rawValue, privacy: .public)
+                version=\(request.version, privacy: .public) rpc=\(request.rpc.rawValue, privacy: .public)
                 """
             )
-            return DaemonControlResponse(
+            let response = DaemonControlResponse(
                 failure: DaemonControlResponseFailure(
                     errorCode: .internal,
-                    message: "unknown request version \(message.version)"
+                    message: "unknown request version \(request.version)"
                 )
             )
+            replyEncoded(response, reply: reply)
+            return
         }
 
-        let semaphore = DispatchSemaphore(value: 0)
-        let holder = ResponseHolder()
+        let capturedState = state
+        let replyHolder = ReplyHolder(reply)
         Task {
-            let value = await dispatch(rpc: message.rpc, request: message, state: state)
-            holder.store(value)
-            semaphore.signal()
+            let response = await DaemonRPCExport.dispatch(
+                rpc: request.rpc,
+                request: request,
+                state: capturedState
+            )
+            DaemonRPCExport.replyEncoded(response, reply: replyHolder.reply)
         }
-        semaphore.wait()
-        return holder.value
     }
 
-    private final class ResponseHolder: @unchecked Sendable {
-        private let lock = NSLock()
-        private var stored = DaemonControlResponse()
+    private final class ReplyHolder: @unchecked Sendable {
+        let reply: (Data?, NSError?) -> Void
 
-        func store(_ value: DaemonControlResponse) {
-            lock.lock()
-            stored = value
-            lock.unlock()
+        init(_ reply: @escaping (Data?, NSError?) -> Void) {
+            self.reply = reply
         }
+    }
 
-        var value: DaemonControlResponse {
-            lock.lock()
-            defer { lock.unlock() }
-            return stored
+    private static func replyEncoded(
+        _ response: DaemonControlResponse,
+        reply: (Data?, NSError?) -> Void
+    ) {
+        do {
+            let data = try JSONEncoder().encode(response)
+            reply(data, nil)
+        } catch {
+            logger.error(
+                "control server encode failed details=\(String(describing: error), privacy: .public)"
+            )
+            let nsError = NSError(
+                domain: daemonControlErrorDomain,
+                code: 2,
+                userInfo: [
+                    NSLocalizedDescriptionKey: "failed to encode response: \(error.localizedDescription)"
+                ]
+            )
+            reply(nil, nsError)
         }
+    }
+
+    private func replyEncoded(
+        _ response: DaemonControlResponse,
+        reply: @escaping (Data?, NSError?) -> Void
+    ) {
+        DaemonRPCExport.replyEncoded(response, reply: reply)
     }
 
     private static func dispatch(
