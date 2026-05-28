@@ -43,7 +43,7 @@ enum ControlChannelError: LocalizedError {
 
 actor ControlChannel {
     private let serverEndpoint: RelayEndpoint
-    private let connectionQueue = DispatchQueue(label: "io.goodkind.celltunneld.controlChannel")
+    private let connectionQueue = DispatchQueue(label: "io.goodkind.celltunnel.controlChannel")
     private var browser: NWBrowser?
     private var connection: NWConnection?
     private var statusContinuation: AsyncStream<RelayControlMessage.Status>.Continuation?

@@ -22,7 +22,7 @@ enum RelayTransportError: LocalizedError {
 }
 
 final class RelayTransport: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "io.goodkind.celltunneld.relay")
+    private let queue = DispatchQueue(label: "io.goodkind.celltunnel.relay")
     private var connection: NWConnection?
     var onReceive: ((Data) -> Void)?
 

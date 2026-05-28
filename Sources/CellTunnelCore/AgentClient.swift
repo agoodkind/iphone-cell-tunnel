@@ -10,14 +10,17 @@ import Foundation
     public actor AgentClient: TunnelControlClientProtocol {
         private let endpointPath: String
         private let binaryName: String
+        private let environmentOverride: [String: String]
         private var connection: NSXPCConnection?
 
         public init(
             endpointPath: String = agentControlEndpointPath,
-            binaryName: String = agentBinaryName
+            binaryName: String = agentBinaryName,
+            environment: [String: String] = [:]
         ) {
             self.endpointPath = endpointPath
             self.binaryName = binaryName
+            self.environmentOverride = environment
         }
 
         public func shutdown() {
@@ -272,6 +275,10 @@ import Foundation
             let process = Process()
             process.executableURL = executableURL
             process.arguments = []
+            if !environmentOverride.isEmpty {
+                process.environment = ProcessInfo.processInfo.environment
+                    .merging(environmentOverride) { _, override in override }
+            }
             do {
                 try process.run()
             } catch {
@@ -291,27 +298,57 @@ import Foundation
 
         private func resolveAgentBinaryURL() throws -> URL {
             let environment = ProcessInfo.processInfo.environment
+                .merging(environmentOverride) { _, override in override }
             let override = environment[agentBinaryEnvironmentVariable]?
                 .trimmingCharacters(in: .whitespaces)
             if let override, !override.isEmpty {
                 return URL(fileURLWithPath: override)
             }
             let executablePath = CommandLine.arguments.first ?? binaryName
-            let sibling = URL(fileURLWithPath: executablePath)
+            let cliDirectory = URL(fileURLWithPath: executablePath)
                 .deletingLastPathComponent()
-                .appendingPathComponent(binaryName)
-            if FileManager.default.isExecutableFile(atPath: sibling.path) {
-                return sibling
+            let candidates = agentBinaryCandidates(relativeTo: cliDirectory)
+            for candidate in candidates
+            where FileManager.default.isExecutableFile(
+                atPath: candidate.path
+            ) {
+                return candidate
             }
+            let renderedCandidates = candidates.map(\.path).joined(separator: ", ")
             logger.error(
                 """
-                agent binary not found beside CLI path=\(sibling.path, privacy: .public) \
+                agent binary not found near CLI candidates=\(renderedCandidates, privacy: .public) \
                 recovery=throw-transport-failure
                 """
             )
             throw TunnelDaemonError.transportFailure(
-                "agent binary not found beside CLI and \(agentBinaryEnvironmentVariable) is unset"
+                """
+                agent binary not found near CLI and \
+                \(agentBinaryEnvironmentVariable) is unset; tried: \(renderedCandidates)
+                """
             )
+        }
+
+        private func agentBinaryCandidates(relativeTo cliDirectory: URL) -> [URL] {
+            let macOSSubpath = "Contents/MacOS/\(binaryName)"
+            let bundledNeighbor =
+                cliDirectory
+                .appendingPathComponent(agentAppBundleName)
+                .appendingPathComponent(macOSSubpath)
+            let installedSibling =
+                cliDirectory
+                .deletingLastPathComponent()
+                .appendingPathComponent("Applications", isDirectory: true)
+                .appendingPathComponent("CellTunnel", isDirectory: true)
+                .appendingPathComponent(agentAppBundleName)
+                .appendingPathComponent(macOSSubpath)
+            let installedSystem = URL(
+                fileURLWithPath: "/Applications/CellTunnel", isDirectory: true
+            )
+            .appendingPathComponent(agentAppBundleName)
+            .appendingPathComponent(macOSSubpath)
+            let legacySibling = cliDirectory.appendingPathComponent(binaryName)
+            return [bundledNeighbor, installedSibling, installedSystem, legacySibling]
         }
 
         private func handleInvalidation() {

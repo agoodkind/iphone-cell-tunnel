@@ -5,7 +5,7 @@ import Foundation
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 
-private let providerBundleIdentifier = "io.goodkind.CellTunnelAgent.TunnelProvider"
+private let providerBundleIdentifier = tunnelProviderBundleIdentifier
 private let providerConfigWireGuardKey = "wireguardConfig"
 private let tunnelLocalizedDescription = "Cell Tunnel"
 private let tunnelServerAddressPlaceholder = "iPhone Cellular Relay"

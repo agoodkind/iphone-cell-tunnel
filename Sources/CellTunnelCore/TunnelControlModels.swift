@@ -348,8 +348,8 @@ public enum TunnelDaemonError: LocalizedError, Sendable {
         switch self {
         case .controlFailure(let failure):
             return failure.message
-        case .daemonUnavailable(let socketPath):
-            return "celltunneld is not running at \(socketPath)"
+        case .daemonUnavailable(let endpoint):
+            return "CellTunnelAgent is not running at \(endpoint)"
         case .rpcFailure(let failure):
             if let cause = failure.cause {
                 if !cause.isEmpty {

@@ -2,6 +2,17 @@ import Foundation
 
 public let agentControlWireVersion = 1
 
+public protocol TunnelControlClientProtocol: Sendable {
+    func status() async throws -> TunnelDaemonStatusSnapshot
+    func check() async throws -> TunnelEnvironmentReport
+    func startTunnel(settings: TunnelStartSettings) async throws -> TunnelDaemonStatusSnapshot
+    func stopTunnel() async throws -> TunnelDaemonStatusSnapshot
+    func startRelayDiscovery() async throws -> TunnelDiscoverySnapshot
+    func stopRelayDiscovery() async throws -> TunnelDiscoverySnapshot
+    func listRelayServices() async throws -> TunnelDiscoverySnapshot
+    func selectRelayService(serviceID: String) async throws -> TunnelDiscoverySnapshot
+}
+
 public enum AgentControlRequest: Codable, Sendable {
     case check
     case listRelayServices

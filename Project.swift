@@ -127,15 +127,15 @@ let project = Project(
         .target(
             name: "CellTunnelAgent",
             destinations: [.mac],
-            product: .commandLineTool,
-            bundleId: "io.goodkind.CellTunnelAgent",
+            product: .app,
+            bundleId: "io.goodkind.CellTunnel.Agent",
             deploymentTargets: macOSDeploymentTarget,
-            infoPlist: .default,
+            infoPlist: .file(path: "Apps/macOS/Agent/Info.plist"),
             sources: [
                 "Apps/macOS/Agent/**"
             ],
             entitlements: .file(path: "Apps/macOS/Entitlements/Agent.entitlements"),
-            dependencies: appDependencies,
+            dependencies: appDependencies + [.target(name: "CellTunnelTunnelProvider")],
             settings: .settings(
                 base:
                     cellTunnelMacAutomaticSigningSettings
@@ -146,7 +146,7 @@ let project = Project(
             name: "CellTunnelTunnelProvider",
             destinations: [.mac],
             product: .appExtension,
-            bundleId: "io.goodkind.CellTunnelAgent.TunnelProvider",
+            bundleId: "io.goodkind.CellTunnel.Agent.TunnelProvider",
             deploymentTargets: macOSDeploymentTarget,
             infoPlist: .file(path: "Apps/macOS/TunnelProvider/Info.plist"),
             sources: [
