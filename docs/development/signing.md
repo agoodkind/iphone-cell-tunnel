@@ -1,44 +1,26 @@
 # Signing
 
-Mac signing is mandatory for build and run targets.
+The Mac build signs two products: the `CellTunnelAgent` command-line tool and the `CellTunnelTunnelProvider` Network Extension app extension. `make build TARGET=mac` signs both through Xcode automatic signing.
 
 ## Identity
 
-The default signing identity is:
+Signing uses an `Apple Development` certificate for the configured team under automatic signing (`CODE_SIGN_STYLE = Automatic`). The team comes from `TUIST_DEVELOPMENT_TEAM` or `DEVELOPMENT_TEAM`, with the default in `Tools/CellTunnelDev/Support.swift`. `config/signing.env` supplies overrides and is ignored by Git. Provisioning profiles auto-create with `-allowProvisioningUpdates`.
 
-```text
-Developer ID Application: Alex Goodkind (H3BMXM4W7H)
-```
+On an `Apple Development` certificate the value in the CN parentheses is a Team Member ID, not the Team ID; the real Team ID is the certificate `OU` field and matches the `TeamIdentifier` recorded on the signed product.
 
-`config/signing.env` may override signing values. `config/signing.env` is ignored by Git.
+## Entitlements
 
-The Swift driver resolves duplicate Developer ID common names to a concrete keychain identity hash before invoking
-`codesign`.
+Both Mac products carry `com.apple.developer.networking.networkextension = [packet-tunnel-provider]` and `com.apple.security.application-groups = [group.io.goodkind.CellTunnel]`, declared in `Apps/macOS/Entitlements/Agent.entitlements` and `Apps/macOS/Entitlements/TunnelProvider.entitlements`.
 
-## Bundle Signing
+## Verification
 
-- The Go daemon is signed as `io.goodkind.celltunneld`.
-- The daemon copy inside `CellTunnelMac.app` is signed as `io.goodkind.celltunneld`.
-- Nested frameworks and dylibs are signed before the app bundle.
-- `CellTunnelMac.app` is signed as `io.goodkind.CellTunnelMac`.
-- Hardened runtime and secure timestamps are required.
-- Every signed path is verified with `codesign --verify --strict`.
+Signed paths are verified with `codesign --verify --strict`. Nested frameworks and dylibs are signed before any bundle that contains them.
 
 ## Secrets
 
-- P12 passwords, `.p8` contents, API key IDs, API issuer IDs, WireGuard private keys, and certificate private keys stay
-  outside committed files.
-- Tool output and chat output must refer to secret-bearing material by path or environment variable name only.
+- P12 passwords, `.p8` contents, API key IDs, API issuer IDs, WireGuard private keys, and certificate private keys stay outside committed files.
+- Tool output and chat output refer to secret-bearing material by path or environment variable name only.
 
-## Distribution Targets
+## Distribution
 
-The Swift driver owns these distribution targets:
-
-```sh
-make notary-setup
-make notarize-check
-make notarize
-```
-
-`make notarize` builds through the gated path, archives the signed macOS app, submits with `notarytool --wait`, staples
-the accepted ticket, validates the staple, and runs Gatekeeper assessment with `spctl`.
+`make notary-setup`, `make notarize-check`, and `make notarize` drive notarization through `Tools/CellTunnelDev/Signing.swift`. That path signs and notarizes a Mac `.app` bundle and predates the agent-plus-extension layout, so it requires rework before the current products can be notarized and distributed.

@@ -1,13 +1,13 @@
 {
-  "originHash" : "6216d585cb4086d26d55383ed2afccb3c665057e991d711b6fe1dec073a5090c",
+  "originHash" : "e9baaae2cfd7e960f73f7470e8370e6ed660ccde98ebccb5f230f0ec65af0f90",
   "pins" : [
     {
       "identity" : "wireguard-apple",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/agoodkind/wireguard-apple.git",
       "state" : {
-        "branch" : "097baca",
-        "revision" : "097baca9aeec90f2648bf2b1cda7209caa748180"
+        "branch" : "master",
+        "revision" : "fba9bd09017ceb723b03ba63bc340091d4dadb47"
       }
     }
   ],

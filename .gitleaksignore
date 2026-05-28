@@ -1,0 +1,5 @@
+# False positives: `privateKey` is a Swift constant bound to a PrivateKey value
+# constructed from a hex string parsed at runtime from the WireGuard config file,
+# not a literal secret in source.
+Apps/macOS/TunnelProvider/Runtime/WireGuardTunnelConfigBuilder.swift:dotfiles-generic-secret-assignment:46
+Apps/macOS/TunnelProvider/Runtime/WireGuardTunnelConfigBuilder.swift:dotfiles-generic-secret-assignment:50

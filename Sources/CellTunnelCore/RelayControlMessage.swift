@@ -5,10 +5,10 @@ public let relayControlListenerDefaultPort: UInt16 = 51_823
 public let relayControlWireVersion: Int = 1
 
 public enum RelayControlMessage: Codable, Sendable, Equatable {
-    case setServerEndpoint(SetServerEndpoint)
     case acknowledge(Acknowledge)
-    case status(Status)
     case error(Failure)
+    case setServerEndpoint(SetServerEndpoint)
+    case status(Status)
 
     public struct SetServerEndpoint: Codable, Sendable, Equatable {
         public var version: Int
@@ -95,9 +95,9 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
 }
 
 public enum RelayControlCodecError: Error, Equatable {
-    case unsupportedVersion(Int)
     case payloadTooLarge(Int)
     case truncatedFrame
+    case unsupportedVersion(Int)
 }
 
 public enum RelayControlMessageCodec {

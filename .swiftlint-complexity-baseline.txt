@@ -1,2 +1,1 @@
-# swiftlint-complexity: generated_at=2026-05-24T07:28:37Z
-Apps/macOS/Services/MacTunnelStore.swift:91:7: error: Type Body Length Violation: Class body should span 300 lines or less excluding comments and whitespace: currently spans 303 lines (type_body_length)	# swiftlint-complexity:first_added=2026-05-24T07:28:37Z last_seen=2026-05-24T07:28:37Z
+# swiftlint-complexity: generated_at=2026-05-28T00:05:26Z

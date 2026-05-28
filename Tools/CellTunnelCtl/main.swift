@@ -6,7 +6,7 @@ import Foundation
 enum CellTunnelCtl {
     static func main() async {
         CellTunnelLog.bootstrap()
-        let client = TunnelControlClient()
+        let client = AgentClient()
 
         do {
             let action = try TunnelControlCLIAction.parse(

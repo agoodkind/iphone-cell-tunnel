@@ -32,6 +32,7 @@ disabled_rules:
   - attributes
   - conditional_returns_on_newline
   - contrasted_opening_brace
+  - discouraged_optional_collection
   - explicit_acl
   - explicit_enum_raw_value
   - explicit_self
@@ -41,6 +42,7 @@ disabled_rules:
   - file_name
   - file_types_order
   - indentation_width
+  - legacy_objc_type
   - missing_docs
   - multiline_arguments_brackets
   - multiline_literal_brackets

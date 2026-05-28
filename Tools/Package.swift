@@ -17,7 +17,10 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "CellTunnelDev",
-            dependencies: [.product(name: "CellTunnelLog", package: "iphone-cell-tunnel")],
+            dependencies: [
+                .product(name: "CellTunnelCore", package: "iphone-cell-tunnel"),
+                .product(name: "CellTunnelLog", package: "iphone-cell-tunnel"),
+            ],
             path: "CellTunnelDev"
         ),
         .executableTarget(

@@ -34,9 +34,7 @@ let defaultDevelopmentTeam = "H3BMXM4W7H"
 let defaultBundleIdentifierPrefix = "io.goodkind"
 let defaultNotaryProfile = "cell-tunnel-notary"
 let daemonProductName = "celltunneld"
-let helperDaemonProductName = "celltunneldhelperd"
-let daemonLaunchAgentPlistName = "io.goodkind.celltunneld.plist"
-let helperLaunchDaemonPlistName = "io.goodkind.celltunneldhelperd.plist"
+let daemonLaunchDaemonPlistName = "io.goodkind.celltunneld.plist"
 let macOSPlatformName = "macosx"
 let iOSDevicePlatformName = "iphoneos"
 let iOSSimulatorPlatformName = "iphonesimulator"
@@ -47,18 +45,12 @@ let macHelperInstallArgument = "--cell-tunnel-install-helper"
 let phoneActivationArgument = "--cell-tunnel-start-relay"
 let phoneListenerPortArgument = "--cell-tunnel-port"
 let autoCreatedSimulatorNamePrefix = "CellTunnelPhone Auto"
-let helperServiceLabel = "io.goodkind.celltunneldhelperd"
-let helperServiceTarget = "system/\(helperServiceLabel)"
 let daemonServiceLabel = "io.goodkind.celltunneld"
-let helperExecutableRelativePath = "Contents/Library/LaunchServices/\(helperDaemonProductName)"
+let daemonServiceTarget = "system/\(daemonServiceLabel)"
 let daemonExecutableRelativePath = "Contents/Library/LaunchServices/\(daemonProductName)"
-let helperRefreshPollingInterval = Duration.milliseconds(500)
-let helperRefreshTimeout = Duration.seconds(15)
+let daemonInstallVerifyPollInterval = Duration.milliseconds(500)
+let daemonInstallVerifyTimeout = Duration.seconds(15)
 let installedMacAppPath = URL(fileURLWithPath: "/Applications/CellTunnelMac.app")
-
-func daemonServiceTarget(uid: uid_t = getuid()) -> String {
-    "gui/\(uid)/\(daemonServiceLabel)"
-}
 
 enum ActivationTarget: String, CaseIterable {
     case mac

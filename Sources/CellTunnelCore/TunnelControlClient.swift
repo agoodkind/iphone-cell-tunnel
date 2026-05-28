@@ -23,14 +23,14 @@ public func resolvedTunnelControlSocketPath(
 }
 
 public enum DaemonControlRPC: String, Codable, Sendable {
-    case status
     case check
-    case startTunnel = "start-tunnel"
-    case stopTunnel = "stop-tunnel"
-    case startRelayDiscovery = "start-relay-discovery"
-    case stopRelayDiscovery = "stop-relay-discovery"
     case listRelayServices = "list-relay-services"
     case selectRelayService = "select-relay-service"
+    case startRelayDiscovery = "start-relay-discovery"
+    case startTunnel = "start-tunnel"
+    case status
+    case stopRelayDiscovery = "stop-relay-discovery"
+    case stopTunnel = "stop-tunnel"
 }
 
 public struct DaemonControlRequest: Codable, Sendable {
@@ -203,32 +203,28 @@ public protocol TunnelControlClientProtocol: Sendable {
             request: DaemonControlRequest,
             operationName: String
         ) async throws -> DaemonControlResponse {
-            let conn = activeConnection()
-            let requestData: Data
+            let payload: Data
             do {
-                requestData = try JSONEncoder().encode(request)
+                payload = try JSONEncoder().encode(request)
             } catch {
+                logger.error(
+                    """
+                    \(operationName) xpc request encode failed \
+                    service=\(self.machServiceName, privacy: .public) \
+                    details=\(String(describing: error), privacy: .public) \
+                    recovery=throw-transport-failure
+                    """
+                )
                 throw TunnelDaemonError.transportFailure(
-                    "failed to encode \(operationName) request: \(error.localizedDescription)"
+                    "encode \(operationName) request failed: \(error.localizedDescription)"
                 )
             }
-
-            let responseData = try await performXPCCall(
-                conn,
-                requestData: requestData,
+            let conn = activeConnection()
+            let response = try await sendOverConnection(
+                payload: payload,
+                connection: conn,
                 operationName: operationName
             )
-
-            let response: DaemonControlResponse
-            do {
-                response = try JSONDecoder().decode(
-                    DaemonControlResponse.self, from: responseData)
-            } catch {
-                throw TunnelDaemonError.transportFailure(
-                    "failed to decode \(operationName) response: \(error.localizedDescription)"
-                )
-            }
-
             try validate(responseVersion: response.version, operationName: operationName)
             logger.notice(
                 """
@@ -240,77 +236,57 @@ public protocol TunnelControlClientProtocol: Sendable {
             return response
         }
 
-        private func performXPCCall(
-            _ conn: NSXPCConnection,
-            requestData: Data,
+        // Step 7 will rewrite this against AgentClient.
+        // DaemonControlXPCProtocol was deleted as part of step 1 of the migration to
+        // the CLI plus on-demand agent plus NEPacketTunnelProvider extension architecture.
+        // The XPC transport here is a temporary stub that always fails so the macOS
+        // build of CellTunnelCore still compiles for the tools package.
+        private func sendOverConnection(
+            payload: Data,
+            connection: NSXPCConnection,
             operationName: String
-        ) async throws -> Data {
-            let serviceName = machServiceName
-            return try await withCheckedThrowingContinuation { continuation in
-                let resumeOnce = ContinuationGuard(continuation)
-                let errorHandler: @Sendable (Error) -> Void = { error in
-                    logger.error(
-                        """
-                        \(operationName) xpc proxy error \
-                        service=\(serviceName, privacy: .public) \
-                        details=\(String(describing: error), privacy: .public)
-                        """
-                    )
-                    resumeOnce.fail(TunnelDaemonError.daemonUnavailable(serviceName))
-                }
-                let proxy = conn.remoteObjectProxyWithErrorHandler(errorHandler)
-                guard let typedProxy = proxy as? CellTunnelDaemonControlProtocol else {
-                    resumeOnce.fail(
-                        TunnelDaemonError.transportFailure("unexpected remote proxy type"))
-                    return
-                }
-                typedProxy.handleControlRequest(requestData: requestData) { data, nsError in
-                    if let nsError {
-                        resumeOnce.fail(
-                            TunnelDaemonError.transportFailure(nsError.localizedDescription))
-                        return
-                    }
-                    guard let data else {
-                        resumeOnce.fail(
-                            TunnelDaemonError.transportFailure(
-                                "\(operationName) returned empty response"))
-                        return
-                    }
-                    resumeOnce.succeed(data)
-                }
-            }
+        ) async throws -> DaemonControlResponse {
+            _ = payload
+            _ = connection
+            await Task.yield()
+            tearDownConnection(reason: "\(operationName)-stubbed")
+            logger.error(
+                """
+                \(operationName) xpc stubbed during migration \
+                service=\(self.machServiceName, privacy: .public)
+                """
+            )
+            throw TunnelDaemonError.daemonUnavailable(self.machServiceName)
         }
 
         private func activeConnection() -> NSXPCConnection {
             if let connection {
                 return connection
             }
-            let conn = NSXPCConnection(machServiceName: machServiceName)
-            conn.remoteObjectInterface = NSXPCInterface(
-                with: CellTunnelDaemonControlProtocol.self)
-            let serviceName = machServiceName
-            conn.invalidationHandler = {
+            let created = NSXPCConnection(
+                machServiceName: machServiceName,
+                options: .privileged
+            )
+            // Step 7 will rewire this to the AgentClient interface.
+            created.invalidationHandler = { [weak self] in
                 logger.notice(
-                    """
-                    tunnel control xpc connection invalidated \
-                    service=\(serviceName, privacy: .public)
-                    """
+                    "tunnel control xpc connection invalidated"
                 )
+                Task { await self?.handleInvalidation() }
             }
-            conn.interruptionHandler = {
-                logger.notice(
-                    """
-                    tunnel control xpc connection interrupted \
-                    service=\(serviceName, privacy: .public)
-                    """
-                )
+            created.interruptionHandler = {
+                logger.notice("tunnel control xpc connection interrupted")
             }
-            conn.resume()
-            connection = conn
+            created.resume()
+            connection = created
             logger.notice(
                 "tunnel control xpc connection opened service=\(self.machServiceName, privacy: .public)"
             )
-            return conn
+            return created
+        }
+
+        private func handleInvalidation() {
+            connection = nil
         }
 
         private func tearDownConnection(reason: String) {
@@ -364,7 +340,9 @@ public protocol TunnelControlClientProtocol: Sendable {
                 throw mapFailure(failure)
             }
             guard let discovery = response.discovery else {
-                throw TunnelDaemonError.transportFailure("missing \(operationName) discovery payload")
+                throw TunnelDaemonError.transportFailure(
+                    "missing \(operationName) discovery payload"
+                )
             }
             return discovery
         }
@@ -373,38 +351,6 @@ public protocol TunnelControlClientProtocol: Sendable {
             TunnelDaemonError.controlFailure(
                 TunnelControlFailure(errorCode: failure.errorCode, message: failure.message)
             )
-        }
-    }
-
-    private final class ContinuationGuard: @unchecked Sendable {
-        private let continuation: CheckedContinuation<Data, Error>
-        private let lock = NSLock()
-        private var resolved = false
-
-        init(_ continuation: CheckedContinuation<Data, Error>) {
-            self.continuation = continuation
-        }
-
-        func succeed(_ value: Data) {
-            lock.lock()
-            if resolved {
-                lock.unlock()
-                return
-            }
-            resolved = true
-            lock.unlock()
-            continuation.resume(returning: value)
-        }
-
-        func fail(_ error: Error) {
-            lock.lock()
-            if resolved {
-                lock.unlock()
-                return
-            }
-            resolved = true
-            lock.unlock()
-            continuation.resume(throwing: error)
         }
     }
 #endif

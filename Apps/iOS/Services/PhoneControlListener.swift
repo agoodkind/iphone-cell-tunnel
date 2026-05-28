@@ -286,7 +286,14 @@ final class PhoneControlListener {
         )
         statusTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: statusPushIntervalSeconds * 1_000_000_000)
+                do {
+                    try await Task.sleep(nanoseconds: statusPushIntervalSeconds * 1_000_000_000)
+                } catch {
+                    logger.notice(
+                        "control status loop sleep interrupted recovery=exit-loop"
+                    )
+                    return
+                }
                 guard !Task.isCancelled else { return }
                 guard let self, let connection = currentConnection else {
                     continue

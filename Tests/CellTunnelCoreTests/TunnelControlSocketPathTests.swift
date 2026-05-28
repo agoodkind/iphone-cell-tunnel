@@ -70,7 +70,8 @@ final class TunnelControlSocketPathTests: XCTestCase {
     }
 
     private func extractGoStringConstant(named name: String, from source: String) throws -> String {
-        let pattern = "(?m)^\\s*\(NSRegularExpression.escapedPattern(for: name))\\s*=\\s*\"([^\"]+)\""
+        let escapedName = NSRegularExpression.escapedPattern(for: name)
+        let pattern = "(?m)^\\s*\(escapedName)\\s*=\\s*\"([^\"]+)\""
         let regex = try NSRegularExpression(pattern: pattern)
         let range = NSRange(source.startIndex..<source.endIndex, in: source)
         guard

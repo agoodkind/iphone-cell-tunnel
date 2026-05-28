@@ -1,3 +1,4 @@
+import CellTunnelCore
 import CellTunnelLog
 import Foundation
 
@@ -39,64 +40,100 @@ func installMacHelper(configuration: String) throws {
     guard fileManager.fileExists(atPath: expectedAppPath.path) else {
         throw ToolError.failure("built app not found: \(expectedAppPath.path)")
     }
-    let expectedHelperPath = expectedAppPath.appendingPathComponent(helperExecutableRelativePath)
     let expectedDaemonPath = expectedAppPath.appendingPathComponent(daemonExecutableRelativePath)
-    let expectedHelperFingerprint = try helperFingerprint(at: expectedHelperPath)
     let expectedDaemonFingerprint = try helperFingerprint(at: expectedDaemonPath)
-    let previousHelperProcessID = launchctlProcessID(target: helperServiceTarget)
-    let previousDaemonProcessID = launchctlProcessID(target: daemonServiceTarget())
 
     uninstallMacHelper()
     try installMacAppBundle(from: expectedAppPath)
     try registerInstalledMacHelper()
 
-    let deadline = ContinuousClock.now + helperRefreshTimeout
+    let bundleVerification = currentInstalledDaemonVerification(
+        expectedDaemonFingerprint: expectedDaemonFingerprint
+    )
+    try throwIfVerificationIsStale(
+        bundleVerification,
+        expectedFingerprint: expectedDaemonFingerprint,
+        serviceTarget: daemonServiceTarget
+    )
+
+    try waitForDaemonXPCReady(
+        expectedDaemonFingerprint: expectedDaemonFingerprint,
+        expectedBundlePath: expectedAppPath
+    )
+}
+
+private func waitForDaemonXPCReady(
+    expectedDaemonFingerprint: String,
+    expectedBundlePath: URL
+) throws {
+    let deadline = ContinuousClock.now + daemonInstallVerifyTimeout
+    var lastError: Error?
     while ContinuousClock.now < deadline {
-        let verification = currentInstalledVerification(
-            expectedHelperFingerprint: expectedHelperFingerprint,
-            expectedDaemonFingerprint: expectedDaemonFingerprint,
-            previousHelperProcessID: previousHelperProcessID,
-            previousDaemonProcessID: previousDaemonProcessID
-        )
-        if verification.isVerifiedCurrentBuild {
+        let pingResult = pingDaemonSynchronously()
+        if pingResult == nil {
             return
         }
-        try throwIfVerificationIsStale(
-            verification.helper,
-            expectedFingerprint: expectedHelperFingerprint,
-            serviceTarget: helperServiceTarget
-        )
-        try throwIfVerificationIsStale(
-            verification.daemon,
-            expectedFingerprint: expectedDaemonFingerprint,
-            serviceTarget: daemonServiceTarget()
-        )
-        waitForHelperVerificationPollInterval()
+        lastError = pingResult
+        waitForDaemonInstallVerifyPollInterval()
     }
-
     throw ToolError.failure(
         """
-        install verification timed out helper_target=\(helperServiceTarget) \
-        daemon_target=\(daemonServiceTarget()) \
-        expected_bundle=\(expectedAppPath.path) \
-        expected_helper_fingerprint=\(expectedHelperFingerprint) \
-        expected_daemon_fingerprint=\(expectedDaemonFingerprint)
+        daemon xpc verification timed out service=\(daemonControlMachServiceName) \
+        target=\(daemonServiceTarget) \
+        expected_bundle=\(expectedBundlePath.path) \
+        expected_daemon_fingerprint=\(expectedDaemonFingerprint) \
+        last_error=\(lastError.map { String(describing: $0) } ?? "<none>")
         """
     )
 }
 
+private func pingDaemonSynchronously() -> Error? {
+    let semaphore = DispatchSemaphore(value: 0)
+    let holder = PingResultHolder()
+    Task {
+        do {
+            try await pingDaemonOverXPC()
+            holder.store(nil)
+        } catch {
+            activationLogger.notice(
+                "daemon xpc ping failed error=\(String(describing: error), privacy: .public)"
+            )
+            holder.store(error)
+        }
+        semaphore.signal()
+    }
+    semaphore.wait()
+    return holder.value
+}
+
+private final class PingResultHolder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Error?
+
+    func store(_ value: Error?) {
+        lock.lock()
+        stored = value
+        lock.unlock()
+    }
+
+    var value: Error? {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+}
+
 func uninstallMacHelper() {
-    activationLogger.notice("helper uninstall removing registered launchd and app artifacts")
+    activationLogger.notice("daemon uninstall removing registered launchd and app artifacts")
     _ = runBestEffort("pkill", ["-x", "CellTunnelMac"])
-    _ = runBestEffort("launchctl", ["bootout", daemonServiceTarget()])
-    _ = runBestEffort("sudo", ["launchctl", "bootout", helperServiceTarget])
+    _ = runBestEffort("sudo", ["launchctl", "bootout", daemonServiceTarget])
+    // Kill any orphan daemon process whose binary survived an earlier overwrite.
+    // bootout leaves them alive when their SMAppService registration is already gone.
+    _ = runBestEffort("sudo", ["pkill", "-x", "celltunneld"])
     _ = runBestEffort("sudo", ["sfltool", "resetbtm"])
     _ = runBestEffort(
         "sudo",
-        ["rm", "-f", "/Library/LaunchDaemons/\(helperLaunchDaemonPlistName)"])
-    _ = runBestEffort(
-        "sudo",
-        ["rm", "-f", "/Library/PrivilegedHelperTools/\(helperServiceLabel)"])
+        ["rm", "-f", "/Library/LaunchDaemons/\(daemonLaunchDaemonPlistName)"])
     _ = runBestEffort("sudo", ["rm", "-rf", installedMacAppPath.path])
 }
 
@@ -400,39 +437,13 @@ func compareVersionComponents(lhs: [Int], rhs: [Int]) -> Int {
     return 0
 }
 
-func launchctlProcessID(target: String) -> Int? {
-    activationLogger.notice(
-        "launchctl querying target=\(target, privacy: .public)")
-    let result: CommandResult
-    do {
-        result = try capture("launchctl", ["print", target], echoOutput: false)
-    } catch {
-        activationLogger.error(
-            "launchctl query failed error=\(error.localizedDescription, privacy: .public)"
-        )
-        return nil
-    }
-    guard result.status == 0 else {
-        return nil
-    }
-    guard let processIDRange = result.output.range(of: "pid = ") else {
-        return nil
-    }
-    let pidSuffix = result.output[processIDRange.upperBound...]
-    let processIDText = pidSuffix.prefix(while: \.isNumber)
-    guard let processID = Int(processIDText) else {
-        return nil
-    }
-    return processID
-}
-
-func waitForHelperVerificationPollInterval() {
+func waitForDaemonInstallVerifyPollInterval() {
     activationLogger.debug("install verification waiting for next poll interval")
     RunLoop.current.run(until: Date().addingTimeInterval(0.5))
 }
 
 func throwIfVerificationIsStale(
-    _ verification: BinaryVerification,
+    _ verification: InstalledDaemonVerification,
     expectedFingerprint: String,
     serviceTarget: String
 ) throws {
@@ -459,10 +470,10 @@ func throwIfVerificationIsStale(
             \(serviceTarget) is registered from \(registeredState.appPath.path) \
             fingerprint=\(registeredState.binaryFingerprint) \
             expected_fingerprint=\(expectedFingerprint); \
-            run make install-helper to reinstall from the current build
+            run make install to reinstall from the current build
             """
         )
-    case .currentBuild, .notRegistered, .registeredButUnavailable:
+    case .currentBuild, .notRegistered:
         return
     }
 }

@@ -61,11 +61,10 @@ The canonical CLI path passes the usbmuxd endpoint explicitly on `start`:
 ```sh
 Products/celltunnelctl start \
     --config "/Users/agoodkind/Desktop/wireguard-export/example.com only.conf" \
-    --relay "usbmuxd:00008150-000249060A00401C:<port>"
+    --relay "usbmuxd:<UDID>:<port>"
 ```
 
-Replace the UDID with the value from `ideviceinfo`. Replace `<port>` with the port from
-`discover`.
+Get the UDID from `ideviceinfo` or `xcrun xcdevice list`. Get the port from `discover`.
 
 An alternate two-step path stores a discovered service in the daemon's selection slot and starts
 without `--relay`:

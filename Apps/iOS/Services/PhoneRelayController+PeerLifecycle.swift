@@ -30,7 +30,9 @@ extension PhoneRelayController {
 
     func handleMacReceiveError(_ error: NWError, connection: NWConnection) {
         lastError = error.localizedDescription
-        logger.error("relay mac connection failed error=\(error.localizedDescription, privacy: .public)")
+        logger.error(
+            "relay mac connection failed error=\(error.localizedDescription, privacy: .public)"
+        )
         connection.cancel()
         if currentMacConnection === connection {
             currentMacConnection = nil

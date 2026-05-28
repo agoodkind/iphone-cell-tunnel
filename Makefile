@@ -35,7 +35,9 @@ include bootstrap.mk
 
 .DEFAULT_GOAL := check
 
-.PHONY: format sign signing-check notary-setup notarize-check notarize helper-refresh install-helper uninstall-helper
+.PHONY: format sign signing-check notary-setup notarize-check notarize \
+	helper-refresh install-helper uninstall-helper \
+	daemon-reload iphone-install smoke logs
 
 format:
 	@$(CELL_TUNNEL_DEV) format
@@ -43,11 +45,40 @@ format:
 helper-refresh:
 	@$(CELL_TUNNEL_DEV) refresh-helper $(CONFIG)
 
+# Canonical install/uninstall entry points. `make install` is reserved by
+# swift-build.mk for `deploy` (build+activate) and cannot be cleanly overridden.
 install-helper:
 	@$(CELL_TUNNEL_DEV) install-helper $(CONFIG)
 
 uninstall-helper:
 	@$(CELL_TUNNEL_DEV) uninstall-helper
+
+daemon-reload:
+	@$(CELL_TUNNEL_DEV) build daemon $(CONFIG)
+	@sudo cp Products/celltunneld /Applications/CellTunnelMac.app/Contents/Library/LaunchServices/celltunneld
+	@sudo launchctl kickstart -k system/io.goodkind.celltunneld
+
+iphone-install:
+	@$(CELL_TUNNEL_DEV) activate iphone $(CONFIG)
+
+smoke:
+	@printf 'make smoke: run these in order against the smoke config\n'
+	@printf '  Products/celltunnelctl status\n'
+	@printf '  Products/celltunnelctl start-discovery\n'
+	@printf '  Products/celltunnelctl discover\n'
+	@printf '  Products/celltunnelctl select <service-id-from-discover>\n'
+	@printf '  Products/celltunnelctl start --config "%s"\n' "/Users/agoodkind/Desktop/wireguard-export/example.com only.conf"
+	@printf '  ping -c 5 208.67.222.222\n'
+	@printf '  ping6 -c 5 2620:119:35::35\n'
+	@printf '  curl -v https://208.67.222.222/\n'
+	@printf "  curl -v -g 'https://[2620:119:35::35]/'\n"
+	@printf 'TODO: graduate this sequence into a celltunnelctl smoke subcommand\n'
+
+logs:
+	@printf 'make logs: open two terminals\n'
+	@printf '  terminal 1 (mac daemon):  log stream --predicate %s\n' "'subsystem == \"io.goodkind.celltunnel\"'"
+	@printf '  terminal 2 (iphone):       $(CELL_TUNNEL_DEV) iphone-logs --app\n'
+	@printf 'TODO: graduate this into a cell-tunnel-dev logs subcommand that streams both\n'
 
 sign:
 	@$(CELL_TUNNEL_DEV) sign $(CONFIG)

@@ -1,26 +1,21 @@
-# swiftcheck-extra: generated_at=2026-05-24T07:29:38Z
-Apps/iOS/Services/PhoneRelayController.swift:398:9: sensitive_log_field: remove sensitive fields from logs	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Apps/iOS/Services/WireGuardDatagramRelaySession.swift:98:13: sensitive_log_field: remove sensitive fields from logs	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Apps/macOS/Services/MacTunnelStore.swift:407:9: sensitive_log_field: remove sensitive fields from logs	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Apps/macOS/Views/MacContentView.swift:98:21: sensitive_log_field: remove sensitive fields from logs	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Sources/CellTunnelCore/TunnelControlCLI.swift:127:23: sleep_in_production: keep sleep calls out of production code	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Sources/CellTunnelCore/TunnelControlClient.swift:182:31: sleep_in_production: keep sleep calls out of production code	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tests/CellTunnelCoreTests/TunnelControlClientIntegrationTests.swift:72:5: missing_boundary_log: runtime boundary functions must emit a structured log	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tests/CellTunnelCoreTests/TunnelControlClientIntegrationTests.swift:78:9: ignored_cleanup_error: cleanup paths must not discard errors silently	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tests/CellTunnelCoreTests/TunnelControlClientIntegrationTests.swift:78:9: silent_try: handle throwing calls explicitly instead of try?	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tests/CellTunnelCoreTests/TunnelControlModelsTests.swift:52:5: missing_boundary_log: runtime boundary functions must emit a structured log	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tools/CellTunnelCtl/main.swift:16:17: banned_direct_output: use the project logging boundary instead of direct output	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tools/CellTunnelCtl/main.swift:7:5: missing_boundary_log: runtime boundary functions must emit a structured log	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tools/CellTunnelDev/BuildActions.swift:416:1: missing_boundary_log: runtime boundary functions must emit a structured log	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tools/CellTunnelDev/BuildActions.swift:45:9: ignored_cleanup_error: cleanup paths must not discard errors silently	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tools/CellTunnelDev/BuildActions.swift:464:9: silent_try: handle throwing calls explicitly instead of try?	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tools/CellTunnelDev/Signing.swift:335:18: silent_try: handle throwing calls explicitly instead of try?	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tools/CellTunnelDev/Signing.swift:290:1: missing_boundary_log: runtime boundary functions must emit a structured log	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tools/CellTunnelDev/Support.swift:107:9: ignored_cleanup_error: cleanup paths must not discard errors silently	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tools/CellTunnelDev/Support.swift:107:9: silent_try: handle throwing calls explicitly instead of try?	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tools/CellTunnelDev/Support.swift:98:1: missing_boundary_log: runtime boundary functions must emit a structured log	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tools/CellTunnelDev/Support.swift:92:9: banned_direct_output: use the project logging boundary instead of direct output	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tools/CellTunnelDev/main.swift:4:5: banned_direct_output: use the project logging boundary instead of direct output	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tools/LoggingAudit/main.swift:303:26: silent_try: handle throwing calls explicitly instead of try?	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tools/cell-tunnel-dev.swift:77:5: fatal_exit: avoid fatal exit calls outside CLI entrypoints	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
-Tools/cell-tunnel-dev.swift:8:1: missing_boundary_log: runtime boundary functions must emit a structured log	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-24T07:29:38Z
+# swiftcheck-extra: generated_at=2026-05-28T00:05:38Z
+Apps/iOS/Services/PhoneControlListener.swift:290:31: sleep_in_production: keep sleep calls out of production code	# swiftcheck-extra:first_added=2026-05-26T00:00:00Z last_seen=2026-05-28T00:05:38Z
+Apps/iOS/Services/PhoneRelayController+Throughput.swift:16:31: sleep_in_production: keep sleep calls out of production code	# swiftcheck-extra:first_added=2026-05-26T00:00:00Z last_seen=2026-05-28T00:05:38Z
+Apps/iOS/Services/PhoneRelayController.swift:84:17: sensitive_log_field: remove sensitive fields from logs	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Apps/iOS/Services/WireGuardDatagramRelaySession.swift:98:13: sensitive_log_field: remove sensitive fields from logs	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Sources/CellTunnelCore/TunnelControlCLI.swift:144:23: sleep_in_production: keep sleep calls out of production code	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Tests/CellTunnelCoreTests/TunnelControlModelsTests.swift:78:5: missing_boundary_log: runtime boundary functions must emit a structured log	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Tools/CellTunnelCtl/main.swift:17:17: banned_direct_output: use the project logging boundary instead of direct output	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Tools/CellTunnelCtl/main.swift:7:5: missing_boundary_log: runtime boundary functions must emit a structured log	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Tools/CellTunnelDev/BuildActions.swift:91:1: missing_boundary_log: runtime boundary functions must emit a structured log	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Tools/CellTunnelDev/BuildActions.swift:447:9: silent_try: handle throwing calls explicitly instead of try?	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Tools/CellTunnelDev/Signing.swift:309:1: missing_boundary_log: runtime boundary functions must emit a structured log	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Tools/CellTunnelDev/Signing.swift:357:18: silent_try: handle throwing calls explicitly instead of try?	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Tools/CellTunnelDev/Support.swift:96:1: missing_boundary_log: runtime boundary functions must emit a structured log	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Tools/CellTunnelDev/Support.swift:165:9: banned_direct_output: use the project logging boundary instead of direct output	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Tools/CellTunnelDev/Support.swift:180:9: ignored_cleanup_error: cleanup paths must not discard errors silently	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Tools/CellTunnelDev/Support.swift:180:9: silent_try: handle throwing calls explicitly instead of try?	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Tools/CellTunnelDev/main.swift:4:5: banned_direct_output: use the project logging boundary instead of direct output	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Tools/LoggingAudit/main.swift:307:26: silent_try: handle throwing calls explicitly instead of try?	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Tools/cell-tunnel-dev.swift:20:1: missing_boundary_log: runtime boundary functions must emit a structured log	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z
+Tools/cell-tunnel-dev.swift:87:5: fatal_exit: avoid fatal exit calls outside CLI entrypoints	# swiftcheck-extra:first_added=2026-05-24T07:29:38Z last_seen=2026-05-28T00:05:38Z

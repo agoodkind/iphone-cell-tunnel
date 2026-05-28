@@ -1,11 +1,16 @@
+import CellTunnelLog
 import Foundation
 
+enum BuildDispatch {}
+
+private let buildDispatchLogger = CellTunnelLog.logger(category: .build)
+
 enum BuildTarget: String, CaseIterable {
-    case daemon
-    case mac
-    case iphoneSimulator = "iphone-simulator"
-    case iphoneDevice = "iphone-device"
     case all
+    case daemon
+    case iphoneDevice = "iphone-device"
+    case iphoneSimulator = "iphone-simulator"
+    case mac
 }
 
 let buildTargetUsage = BuildTarget.allCases.map(\.rawValue).joined(separator: "|")
@@ -16,11 +21,10 @@ func buildProject(target: BuildTarget, configuration: String) throws {
 
     switch target {
     case .daemon:
-        try buildDaemon(configuration: configuration)
+        try buildMacAgent(configuration: configuration)
     case .mac:
-        let signing = try requireSigningConfig()
-        try buildDaemon(configuration: configuration)
-        try buildMacBundle(configuration: configuration, signing: signing)
+        try buildMacAgent(configuration: configuration)
+        try buildMacTunnelProvider(configuration: configuration)
     case .iphoneSimulator:
         try buildIPhoneSimulator(configuration: configuration)
     case .iphoneDevice:
@@ -32,8 +36,8 @@ func buildProject(target: BuildTarget, configuration: String) throws {
         )
     case .all:
         let signing = try requireSigningConfig()
-        try buildDaemon(configuration: configuration)
-        try buildMacBundle(configuration: configuration, signing: signing)
+        try buildMacAgent(configuration: configuration)
+        try buildMacTunnelProvider(configuration: configuration)
         try buildIPhoneSimulator(configuration: configuration)
         try buildPhoneDevice(
             configuration: configuration,
@@ -63,34 +67,32 @@ private func buildCLI() throws {
     try installSwiftExecutable(productName: "celltunnelctl", outputName: "celltunnelctl")
 }
 
-private func buildDaemon(configuration: String) throws {
+private func buildMacAgent(configuration: String) throws {
+    buildDispatchLogger.notice(
+        "building CellTunnelAgent scheme configuration=\(configuration, privacy: .public)"
+    )
     try buildWireGuardGoBridge()
     try buildScheme(
-        scheme: "celltunneld",
+        scheme: "CellTunnelAgent",
         configuration: configuration,
         destination: "platform=macOS",
-        platformName: macOSPlatformName
+        platformName: macOSPlatformName,
+        xcodebuildOptions: ["-allowProvisioningUpdates"]
     )
-    try buildScheme(
-        scheme: "celltunneldhelperd",
-        configuration: configuration,
-        destination: "platform=macOS",
-        platformName: macOSPlatformName
-    )
-    try fileManager.createDirectory(at: productsDirectory, withIntermediateDirectories: true)
-    try installBuiltDaemon(configuration: configuration)
-    try installBuiltHelper(configuration: configuration)
 }
 
-private func buildMacBundle(configuration: String, signing: SigningConfig) throws {
+private func buildMacTunnelProvider(configuration: String) throws {
+    buildDispatchLogger.notice(
+        "building CellTunnelTunnelProvider scheme configuration=\(configuration, privacy: .public)"
+    )
+    try buildWireGuardGoBridge()
     try buildScheme(
-        scheme: "CellTunnelMac",
+        scheme: "CellTunnelTunnelProvider",
         configuration: configuration,
         destination: "platform=macOS",
-        platformName: macOSPlatformName
+        platformName: macOSPlatformName,
+        xcodebuildOptions: ["-allowProvisioningUpdates"]
     )
-    try packageMacBundle(configuration: configuration, signing: signing)
-    try signMacProducts(configuration: configuration, signing: signing)
 }
 
 private func buildIPhoneSimulator(configuration: String) throws {
@@ -105,27 +107,54 @@ private func buildIPhoneSimulator(configuration: String) throws {
 
 private func printBuildArtifactFingerprints(target: BuildTarget, configuration: String) throws {
     let ctlPath = productsDirectory.appendingPathComponent("celltunnelctl").path
-    let daemonPath = productsDirectory.appendingPathComponent("celltunneld").path
-    let helperPath = productsDirectory.appendingPathComponent(helperDaemonProductName).path
-    print("")
-    print("build artifacts (target=\(target.rawValue) configuration=\(configuration)):")
-    try printArtifactFingerprint(label: "celltunnelctl     ", path: ctlPath)
+    let macBuildDir = xcodeConfigurationBuildDirectory(
+        configuration: configuration,
+        platformName: macOSPlatformName
+    )
+    let agentPath = macBuildDir.appendingPathComponent("CellTunnelAgent").path
+    let extensionPath = macBuildDir.appendingPathComponent("CellTunnelTunnelProvider.appex").path
+    buildDispatchLogger.notice(
+        """
+        build artifacts target=\(target.rawValue, privacy: .public) \
+        configuration=\(configuration, privacy: .public)
+        """
+    )
+    try printArtifactFingerprint(label: "celltunnelctl", path: ctlPath)
     if target == .daemon || target == .mac || target == .all {
-        try printArtifactFingerprint(label: "celltunneld       ", path: daemonPath)
-        try printArtifactFingerprint(label: "celltunneldhelperd", path: helperPath)
+        try printArtifactFingerprint(label: "CellTunnelAgent", path: agentPath)
+    }
+    if target == .mac || target == .all {
+        if fileManager.fileExists(atPath: extensionPath) {
+            buildDispatchLogger.notice(
+                "build artifact present label=CellTunnelTunnelProvider path=\(extensionPath, privacy: .public)"
+            )
+        } else {
+            buildDispatchLogger.notice(
+                "build artifact missing label=CellTunnelTunnelProvider path=\(extensionPath, privacy: .public)"
+            )
+        }
     }
 }
 
 private func printArtifactFingerprint(label: String, path: String) throws {
     if !fileManager.fileExists(atPath: path) {
-        print("  \(label): missing at \(path)")
+        buildDispatchLogger.notice(
+            "build artifact missing label=\(label, privacy: .public) path=\(path, privacy: .public)"
+        )
         return
     }
     let result = try capture("shasum", ["-a", "256", path], echoOutput: false)
     if result.status == 0 {
         let line = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-        print("  \(label): \(line)")
+        buildDispatchLogger.notice(
+            "build artifact fingerprint label=\(label, privacy: .public) line=\(line, privacy: .public)"
+        )
     } else {
-        print("  \(label): shasum failed status=\(result.status)")
+        buildDispatchLogger.error(
+            """
+            build artifact shasum failed label=\(label, privacy: .public) \
+            status=\(result.status, privacy: .public)
+            """
+        )
     }
 }

@@ -19,20 +19,55 @@ let projectSettings = Settings.settings(
         "OBJROOT": "$(SRCROOT)/build/Intermediates.noindex",
         "MARKETING_VERSION": "0.1.0",
         "CURRENT_PROJECT_VERSION": "1",
+        "STRING_CATALOG_GENERATE_SYMBOLS": "YES",
     ],
     configurations: [debug, release],
     defaultSettings: .recommended
 )
+
+// Xcode "Update to recommended settings" pairs the module verifier toggle with
+// these supported-language settings; making them explicit clears the warning on
+// the C/Objective-C-capable framework targets.
+let moduleVerifierSettings: SettingsDictionary = [
+    "ENABLE_MODULE_VERIFIER": "YES",
+    "MODULE_VERIFIER_SUPPORTED_LANGUAGES": "objective-c objective-c++",
+    "MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS": "gnu11 gnu++14",
+]
+
+// Recommended hardening settings Xcode flags on the macOS executable and
+// app-extension targets.
+let macHardenedRuntimeSettings: SettingsDictionary = [
+    "ENABLE_HARDENED_RUNTIME": "YES",
+    "REGISTER_APP_GROUPS": "YES",
+]
 
 let appDependencies: [TargetDependency] = [
     .target(name: "CellTunnelCore"),
     .target(name: "CellTunnelLog"),
 ]
 
+let tunnelProviderDependencies: [TargetDependency] =
+    appDependencies + [.external(name: "WireGuardKit")]
+
 let cellTunnelPhoneBaseSettings: SettingsDictionary = {
     var settings: SettingsDictionary = [
         "PRODUCT_NAME": "CellTunnelPhone",
         "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "",
+    ]
+    let environment = ProcessInfo.processInfo.environment
+    let team =
+        (environment["TUIST_DEVELOPMENT_TEAM"] ?? environment["DEVELOPMENT_TEAM"] ?? "")
+        .trimmingCharacters(in: .whitespaces)
+    if !team.isEmpty {
+        settings["DEVELOPMENT_TEAM"] = SettingValue(stringLiteral: team)
+        settings["CODE_SIGN_STYLE"] = "Automatic"
+    }
+    return settings
+}()
+
+let cellTunnelMacAutomaticSigningSettings: SettingsDictionary = {
+    var settings: SettingsDictionary = [
+        "CODE_SIGN_IDENTITY": "Apple Development"
     ]
     let environment = ProcessInfo.processInfo.environment
     let team =
@@ -54,23 +89,25 @@ let project = Project(
         .target(
             name: "CellTunnelCore",
             destinations: [.iPhone, .mac],
-            product: .staticFramework,
+            product: .framework,
             bundleId: "io.goodkind.CellTunnelCore",
             infoPlist: .default,
             sources: [
                 "Sources/CellTunnelCore/**"
             ],
-            dependencies: [.target(name: "CellTunnelLog")]
+            dependencies: [.target(name: "CellTunnelLog")],
+            settings: .settings(base: moduleVerifierSettings)
         ),
         .target(
             name: "CellTunnelLog",
             destinations: [.iPhone, .mac],
-            product: .staticFramework,
+            product: .framework,
             bundleId: "io.goodkind.CellTunnelLog",
             infoPlist: .default,
             sources: [
                 "Sources/CellTunnelLog/**"
-            ]
+            ],
+            settings: .settings(base: moduleVerifierSettings)
         ),
         .target(
             name: "CellTunnelPhone",
@@ -88,66 +125,39 @@ let project = Project(
             )
         ),
         .target(
-            name: "CellTunnelMac",
+            name: "CellTunnelAgent",
             destinations: [.mac],
-            product: .app,
-            bundleId: "io.goodkind.CellTunnelMac",
+            product: .commandLineTool,
+            bundleId: "io.goodkind.CellTunnelAgent",
             deploymentTargets: macOSDeploymentTarget,
-            infoPlist: .file(path: "Apps/macOS/Info.plist"),
+            infoPlist: .default,
             sources: [
-                "Apps/macOS/**"
+                "Apps/macOS/Agent/**"
             ],
+            entitlements: .file(path: "Apps/macOS/Entitlements/Agent.entitlements"),
             dependencies: appDependencies,
             settings: .settings(
-                base: [
-                    "PRODUCT_NAME": "CellTunnelMac",
-                    "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "",
-                    "CODE_SIGN_ENTITLEMENTS": "Apps/macOS/Entitlements/CellTunnelMac.entitlements",
-                ]
+                base:
+                    cellTunnelMacAutomaticSigningSettings
+                    .merging(macHardenedRuntimeSettings) { _, hardened in hardened }
             )
         ),
         .target(
-            name: "celltunneld",
+            name: "CellTunnelTunnelProvider",
             destinations: [.mac],
-            product: .commandLineTool,
-            bundleId: "io.goodkind.celltunneld",
+            product: .appExtension,
+            bundleId: "io.goodkind.CellTunnelAgent.TunnelProvider",
             deploymentTargets: macOSDeploymentTarget,
+            infoPlist: .file(path: "Apps/macOS/TunnelProvider/Info.plist"),
             sources: [
-                "Sources/CellTunnelDaemon/**"
+                "Apps/macOS/TunnelProvider/**"
             ],
-            dependencies: [
-                .target(name: "CellTunnelCore"),
-                .target(name: "CellTunnelLog"),
-                .external(name: "WireGuardKit"),
-            ],
+            entitlements: .file(path: "Apps/macOS/Entitlements/TunnelProvider.entitlements"),
+            dependencies: tunnelProviderDependencies,
             settings: .settings(
-                base: [
-                    "PRODUCT_NAME": "celltunneld",
-                    "CODE_SIGN_ENTITLEMENTS": "Apps/macOS/Entitlements/celltunneld.entitlements",
-                    "LIBRARY_SEARCH_PATHS": "$(SRCROOT)/.build/vendor",
-                    "OTHER_LDFLAGS": "-lwg-go",
-                ]
-            )
-        ),
-        .target(
-            name: "celltunneldhelperd",
-            destinations: [.mac],
-            product: .commandLineTool,
-            bundleId: "io.goodkind.celltunneldhelperd",
-            deploymentTargets: macOSDeploymentTarget,
-            sources: [
-                "Sources/CellTunnelDaemonHelper/**"
-            ],
-            dependencies: [
-                .target(name: "CellTunnelCore"),
-                .target(name: "CellTunnelLog"),
-            ],
-            settings: .settings(
-                base: [
-                    "PRODUCT_NAME": "celltunneldhelperd",
-                    "CODE_SIGN_ENTITLEMENTS":
-                        "Apps/macOS/Entitlements/celltunneldhelperd.entitlements",
-                ]
+                base:
+                    cellTunnelMacAutomaticSigningSettings
+                    .merging(macHardenedRuntimeSettings) { _, hardened in hardened }
             )
         ),
     ],
@@ -162,27 +172,18 @@ let project = Project(
             analyzeAction: .analyzeAction(configuration: "Debug")
         ),
         .scheme(
-            name: "CellTunnelMac",
+            name: "CellTunnelAgent",
             shared: true,
-            buildAction: .buildAction(targets: [.target("CellTunnelMac")]),
+            buildAction: .buildAction(targets: [.target("CellTunnelAgent")]),
             runAction: .runAction(configuration: "Debug"),
             archiveAction: .archiveAction(configuration: "Release"),
             profileAction: .profileAction(configuration: "Release"),
             analyzeAction: .analyzeAction(configuration: "Debug")
         ),
         .scheme(
-            name: "celltunneld",
+            name: "CellTunnelTunnelProvider",
             shared: true,
-            buildAction: .buildAction(targets: [.target("celltunneld")]),
-            runAction: .runAction(configuration: "Debug"),
-            archiveAction: .archiveAction(configuration: "Release"),
-            profileAction: .profileAction(configuration: "Release"),
-            analyzeAction: .analyzeAction(configuration: "Debug")
-        ),
-        .scheme(
-            name: "celltunneldhelperd",
-            shared: true,
-            buildAction: .buildAction(targets: [.target("celltunneldhelperd")]),
+            buildAction: .buildAction(targets: [.target("CellTunnelTunnelProvider")]),
             runAction: .runAction(configuration: "Debug"),
             archiveAction: .archiveAction(configuration: "Release"),
             profileAction: .profileAction(configuration: "Release"),
