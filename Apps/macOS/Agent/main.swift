@@ -38,14 +38,26 @@ final class AgentRuntime: @unchecked Sendable {
     private func registerLaunchAgentIfNeeded() {
         if #available(macOS 13.0, *) {
             let service = SMAppService.agent(plistName: agentLaunchAgentPlistName)
+            logger.notice(
+                """
+                agent SMAppService status pre \
+                raw=\(service.status.rawValue, privacy: .public) \
+                desc=\(String(describing: service.status), privacy: .public)
+                """
+            )
             switch service.status {
-            case .notRegistered:
+            case .notRegistered, .notFound:
+                // Apple docs say .notRegistered is the fresh-install case, but the
+                // framework empirically returns .notFound (rawValue 3) for a freshly
+                // installed app whose plist is present and sealed. Attempt register
+                // in either case and log the resulting status.
                 do {
                     try service.register()
                     logger.notice(
                         """
-                        agent SMAppService registered \
-                        status=\(String(describing: service.status), privacy: .public)
+                        agent SMAppService register ok post \
+                        raw=\(service.status.rawValue, privacy: .public) \
+                        desc=\(String(describing: service.status), privacy: .public)
                         """
                     )
                 } catch {
@@ -61,10 +73,8 @@ final class AgentRuntime: @unchecked Sendable {
                 logger.notice("agent SMAppService already enabled")
             case .requiresApproval:
                 logger.notice(
-                    "agent SMAppService requiresApproval; user must enable in Login Items"
+                    "agent SMAppService requiresApproval; enable in System Settings, General, Login Items"
                 )
-            case .notFound:
-                logger.error("agent SMAppService notFound; plist missing from bundle")
             @unknown default:
                 logger.error(
                     """

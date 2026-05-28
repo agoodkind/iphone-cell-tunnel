@@ -1,17 +1,13 @@
 import Foundation
+import SwiftMkCore
 
 func generateProject() throws {
     try requireTool("tuist")
     if try projectGenerationIsCurrent() {
         return
     }
-    let team = try developmentTeamFromEnvironment()
-    let environment = [
-        "DEVELOPMENT_TEAM": team,
-        "TUIST_DEVELOPMENT_TEAM": team,
-    ]
-    try run("tuist", ["install"], environment: environment)
-    try run("tuist", ["generate", "--no-open"], environment: environment)
+    try run("tuist", ["install"])
+    try run("make", ["xcconfig-generate-project"])
     try recordProjectGenerationFingerprint()
 }
 
@@ -277,66 +273,21 @@ func testProject() throws {
     try run("swift", swiftTestArguments())
 }
 
-func lintProject() throws {
-    try lintSwiftProject()
-}
+// Lint and format are delegated to SwiftMkCore, which is the library that
+// backs the `swift-mk lint` and `swift-mk fmt` CLI subcommands. SwiftMkCore
+// owns the tool-resolution, config-resolution, file-list, and exclude-path
+// policy. The PathContext is read from the current working directory.
 
-func lintSwiftProject() throws {
-    try requireTool("swift-format")
-    try requireTool("swiftlint")
-    try run(
-        "swift-format",
-        [
-            "lint",
-            "--configuration",
-            ".swift-format",
-            "--recursive",
-            "--strict",
-            "Apps",
-            "Sources",
-            "Tests",
-            "Tools/CellTunnelCtl",
-            "Tools/CellTunnelDev",
-            "Tools/LoggingAudit",
-            "Tools/cell-tunnel-dev.swift",
-            "Tools/Package.swift",
-            "Package.swift",
-            "Project.swift",
-            "Tuist.swift",
-            "Tuist/Package.swift",
-        ]
-    )
-    try run("swiftlint", ["lint", "--strict"])
+func lintProject() throws {
+    if !Lint.runLint(context: PathContext.current()) {
+        throw ToolError.failure("lint failed")
+    }
 }
 
 func formatProject() throws {
-    try formatSwiftProject()
-}
-
-func formatSwiftProject() throws {
-    try requireTool("swift-format")
-    try run(
-        "swift-format",
-        [
-            "format",
-            "--configuration",
-            ".swift-format",
-            "--recursive",
-            "--in-place",
-            "Apps",
-            "Sources",
-            "Tests",
-            "Tools/CellTunnelCtl",
-            "Tools/CellTunnelDev",
-            "Tools/LoggingAudit",
-            "Tools/cell-tunnel-dev.swift",
-            "Tools/Package.swift",
-            "Package.swift",
-            "Project.swift",
-            "Tuist.swift",
-            "Tuist/Package.swift",
-        ]
-    )
+    if !Lint.runFmt(context: PathContext.current()) {
+        throw ToolError.failure("fmt failed")
+    }
 }
 
 func auditLogging() throws {

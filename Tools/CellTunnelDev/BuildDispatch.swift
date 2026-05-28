@@ -51,7 +51,6 @@ func buildProject(target: BuildTarget, configuration: String) throws {
 
 private func runBuildPrologue() throws {
     try generateProject()
-    try lintSwiftProject()
     try auditLogging()
 }
 

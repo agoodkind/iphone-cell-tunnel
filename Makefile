@@ -1,35 +1,60 @@
 # `make help` is the canonical source of truth for shared Swift targets.
 # Project-specific commands stay in `Tools/cell-tunnel-dev.swift`.
 
+# Source of truth for bundle identifiers and signing. The constants xcconfig is
+# committed; the local xcconfig is gitignored (copy local.xcconfig.example to
+# local.xcconfig and fill in DEVELOPMENT_TEAM).
+-include Config/Constants.xcconfig
+-include Config/local.xcconfig
+
 CONFIG ?= Debug
 CELL_TUNNEL_DEV := swift Tools/cell-tunnel-dev.swift
 ACTIVATION_TARGET_USAGE := mac|iphone|iphone-simulator
 BUILD_TARGET_USAGE := daemon|mac|iphone-simulator|iphone-device|all
 
-SWIFT_MK_MODULES := swift-build.mk
+SWIFT_MK_MODULES := swift-build.mk xcconfig.mk
+
+# xcconfig.mk consumes these. Each plan renders every *.template under the
+# named templates dir into the named output dir before tuist generate runs,
+# with the Make-visible xcconfig variables exported as [[KEY]] substitutions.
+# Plan format: templates_dir:output_dir[:target_name]
+XCCONFIG_RENDER_PLANS := \
+	Templates/Swift:Sources/CellTunnelCore/Generated:CellTunnelCore \
+	Templates/Plists:Derived/Generated/CellTunnelAgent:CellTunnelAgent
+XCCONFIG_EXPORTED_VARS := \
+	BUNDLE_ID_PREFIX \
+	APP_GROUP_ID \
+	AGENT_BUNDLE_ID \
+	PROVIDER_BUNDLE_ID \
+	PHONE_BUNDLE_ID \
+	AGENT_MACH_SERVICE_NAME \
+	AGENT_LAUNCH_AGENT_PLIST_NAME \
+	AGENT_EXECUTABLE_NAME \
+	AGENT_APP_BUNDLE_NAME \
+	DEVELOPMENT_TEAM \
+	CODE_SIGN_IDENTITY
 
 SWIFT_BUILD_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) build $(TARGET) $(CONFIG),printf 'build: TARGET=$(BUILD_TARGET_USAGE) is required\n'; exit 1)
 SWIFT_TEST_CMD ?= $(CELL_TUNNEL_DEV) test
 SWIFT_RUN_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) activate $(TARGET) $(CONFIG),printf 'run: TARGET=$(ACTIVATION_TARGET_USAGE) is required\n'; exit 1)
-SWIFT_GENERATE_CMD ?= $(CELL_TUNNEL_DEV) generate
+SWIFT_GENERATE_CMD ?= $(MAKE) xcconfig-generate-project
 SWIFT_CLEAN_CMD ?= $(CELL_TUNNEL_DEV) clean
 SWIFT_DEPLOY_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) activate $(TARGET) $(CONFIG),printf 'deploy: TARGET=$(ACTIVATION_TARGET_USAGE) is required\n'; exit 1)
 SWIFT_ANALYZE_CMD ?= $(CELL_TUNNEL_DEV) analyze
 SWIFT_LOG_AUDIT_CMD ?= $(CELL_TUNNEL_DEV) log-audit
 
 SWIFT_SOURCE_ROOTS := Apps Sources Tests Tools/CellTunnelCtl Tools/CellTunnelDev Tools/LoggingAudit
-SWIFT_GENERATED_SOURCE_ROOTS := Sources/CellTunnelCore/Generated
-SWIFT_OWNED_SWIFT_FILES := $(shell find $(SWIFT_SOURCE_ROOTS) -path '*/.build/*' -prune -o -path '$(SWIFT_GENERATED_SOURCE_ROOTS)' -prune -o -name '*.swift' -print)
+SWIFT_OWNED_SWIFT_FILES := $(shell find $(SWIFT_SOURCE_ROOTS) -path '*/.build/*' -prune -o -name '*.swift' -print)
 SWIFT_PACKAGE_MANIFESTS := Package.swift Project.swift Tuist.swift Tuist/Package.swift Tools/Package.swift Tools/cell-tunnel-dev.swift
-SWIFT_MK_EXCLUDE_PATHS := ^Sources/CellTunnelCore/Generated/,^Tools/.build/
+SWIFT_MK_EXCLUDE_PATHS := ^Derived/Generated/,^Tools/.build/
 
 SWIFT_FORMAT_TARGETS ?= $(SWIFT_OWNED_SWIFT_FILES) $(SWIFT_PACKAGE_MANIFESTS)
 SWIFTLINT_TARGETS ?= $(SWIFT_FORMAT_TARGETS)
 SWIFTLINT_EXCLUDE_PATHS ?= $(SWIFT_MK_EXCLUDE_PATHS)
 SWIFTCHECK_EXTRA_TARGETS ?= $(SWIFT_FORMAT_TARGETS)
 SWIFTCHECK_EXTRA_EXCLUDE_PATHS ?= $(SWIFT_MK_EXCLUDE_PATHS)
-PERIPHERY_EXCLUDE_PATHS ?= ^Sources/CellTunnelCore/Generated/
-PERIPHERY_ARGS ?= scan --config $(SWIFT_MK_PERIPHERY_CONFIG) --strict --report-exclude Sources/CellTunnelCore/Generated/**
+PERIPHERY_EXCLUDE_PATHS ?= ^Derived/Generated/
+PERIPHERY_ARGS ?= scan --config $(SWIFT_MK_PERIPHERY_CONFIG) --strict --report-exclude Derived/Generated/**
 
 include bootstrap.mk
 

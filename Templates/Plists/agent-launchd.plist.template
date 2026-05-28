@@ -3,17 +3,17 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>@@AGENT_MACH_SERVICE_NAME@@</string>
+    <string>[[AGENT_MACH_SERVICE_NAME]]</string>
     <key>BundleProgram</key>
-    <string>Contents/MacOS/@@AGENT_EXECUTABLE_NAME@@</string>
+    <string>Contents/MacOS/[[AGENT_EXECUTABLE_NAME]]</string>
     <key>MachServices</key>
     <dict>
-        <key>@@AGENT_MACH_SERVICE_NAME@@</key>
+        <key>[[AGENT_MACH_SERVICE_NAME]]</key>
         <true/>
     </dict>
     <key>AssociatedBundleIdentifiers</key>
     <array>
-        <string>@@AGENT_BUNDLE_ID@@</string>
+        <string>[[AGENT_BUNDLE_ID]]</string>
     </array>
     <key>ProcessType</key>
     <string>Background</string>

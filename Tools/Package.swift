@@ -12,6 +12,7 @@ let package = Package(
     ],
     dependencies: [
         .package(path: ".."),
+        .package(path: "../../swift-makefile"),
         .package(url: "https://github.com/swiftlang/swift-syntax.git", exact: "603.0.0"),
     ],
     targets: [
@@ -20,6 +21,7 @@ let package = Package(
             dependencies: [
                 .product(name: "CellTunnelCore", package: "iphone-cell-tunnel"),
                 .product(name: "CellTunnelLog", package: "iphone-cell-tunnel"),
+                .product(name: "SwiftMkCore", package: "swift-makefile"),
             ],
             path: "CellTunnelDev"
         ),

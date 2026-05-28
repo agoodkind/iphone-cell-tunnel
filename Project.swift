@@ -6,8 +6,12 @@ let organizationName = "goodkind.io"
 let iOSDeploymentTarget = DeploymentTargets.iOS("18.0")
 let macOSDeploymentTarget = DeploymentTargets.macOS("15.0")
 
-let debug = Configuration.debug(name: "Debug")
-let release = Configuration.release(name: "Release")
+// Build configurations are driven by xcconfig files. Config/Constants.xcconfig
+// holds bundle identifiers, mach service name, executable name, and app group.
+// Config/local.xcconfig (gitignored) holds DEVELOPMENT_TEAM, CODE_SIGN_IDENTITY,
+// and CODE_SIGN_STYLE. debug.xcconfig and release.xcconfig pull both in.
+let debug = Configuration.debug(name: "Debug", xcconfig: "Config/debug.xcconfig")
+let release = Configuration.release(name: "Release", xcconfig: "Config/release.xcconfig")
 
 let projectSettings = Settings.settings(
     base: [
@@ -34,11 +38,20 @@ let moduleVerifierSettings: SettingsDictionary = [
     "MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS": "gnu11 gnu++14",
 ]
 
-// Recommended hardening settings Xcode flags on the macOS executable and
-// app-extension targets.
+// Tuist writes CODE_SIGN_IDENTITY = "-" (ad-hoc) at target level by default,
+// which would override the xcconfig values. Forwarding $(KEY) references at
+// the target level lets the xcconfig values come through unchanged.
 let macHardenedRuntimeSettings: SettingsDictionary = [
     "ENABLE_HARDENED_RUNTIME": "YES",
     "REGISTER_APP_GROUPS": "YES",
+    "CODE_SIGN_IDENTITY": "$(CODE_SIGN_IDENTITY)",
+    "CODE_SIGN_STYLE": "$(CODE_SIGN_STYLE)",
+    "DEVELOPMENT_TEAM": "$(DEVELOPMENT_TEAM)",
+]
+
+let cellTunnelPhoneBaseSettings: SettingsDictionary = [
+    "PRODUCT_NAME": "CellTunnelPhone",
+    "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "",
 ]
 
 let appDependencies: [TargetDependency] = [
@@ -49,52 +62,48 @@ let appDependencies: [TargetDependency] = [
 let tunnelProviderDependencies: [TargetDependency] =
     appDependencies + [.external(name: "WireGuardKit")]
 
-let cellTunnelPhoneBaseSettings: SettingsDictionary = {
-    var settings: SettingsDictionary = [
-        "PRODUCT_NAME": "CellTunnelPhone",
-        "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "",
-    ]
-    let environment = ProcessInfo.processInfo.environment
-    let team =
-        (environment["TUIST_DEVELOPMENT_TEAM"] ?? environment["DEVELOPMENT_TEAM"] ?? "")
-        .trimmingCharacters(in: .whitespaces)
-    if !team.isEmpty {
-        settings["DEVELOPMENT_TEAM"] = SettingValue(stringLiteral: team)
-        settings["CODE_SIGN_STYLE"] = "Automatic"
-    }
-    return settings
-}()
+// Pre-build scripts re-render the xcconfig-driven templates each build, so
+// the rendered files survive a `tuist generate` (which clears
+// Derived/Generated/). xcodebuild exports xcconfig values as env, so the
+// same [[KEY]] substitutions used by `make xcconfig-generate-config` apply
+// here too.
+let xcconfigEnvKeys =
+    "AGENT_BUNDLE_ID PROVIDER_BUNDLE_ID PHONE_BUNDLE_ID "
+    + "AGENT_MACH_SERVICE_NAME AGENT_LAUNCH_AGENT_PLIST_NAME "
+    + "AGENT_EXECUTABLE_NAME AGENT_APP_BUNDLE_NAME "
+    + "APP_GROUP_ID BUNDLE_ID_PREFIX"
 
-let agentLaunchAgentPlistGeneratorScript = TargetScript.pre(
+let renderConfigGeneratedScript = TargetScript.pre(
     script: #"""
-        swift "${SRCROOT}/Scripts/GenerateAgentLaunchAgentPlist.swift" \
-            "${SRCROOT}/Templates/Plists/agent-launchd.plist.template" \
-            "${SRCROOT}/Derived/Generated/${TARGET_NAME}/io.goodkind.celltunnel-agent.plist"
+        "$SRCROOT/.make/swift-mk" render-batch \
+            --templates-dir "$SRCROOT/Templates/Swift" \
+            --output-dir "$SRCROOT/Sources/CellTunnelCore/Generated" \
+            --env TARGET_NAME \#(xcconfigEnvKeys)
         """#,
-    name: "Generate Agent LaunchAgent Plist",
+    name: "Render CellTunnelCore Config.generated.swift",
     inputPaths: [
-        "$(SRCROOT)/Templates/Plists/agent-launchd.plist.template",
-        "$(SRCROOT)/Scripts/GenerateAgentLaunchAgentPlist.swift",
+        "$(SRCROOT)/Templates/Swift/Config.generated.swift.template"
     ],
     outputPaths: [
-        "$(SRCROOT)/Derived/Generated/$(TARGET_NAME)/io.goodkind.celltunnel-agent.plist"
+        "$(SRCROOT)/Sources/CellTunnelCore/Generated/Config.generated.swift"
     ]
 )
 
-let cellTunnelMacAutomaticSigningSettings: SettingsDictionary = {
-    var settings: SettingsDictionary = [
-        "CODE_SIGN_IDENTITY": "Apple Development"
+let renderAgentLaunchdScript = TargetScript.pre(
+    script: #"""
+        "$SRCROOT/.make/swift-mk" render-batch \
+            --templates-dir "$SRCROOT/Templates/Plists" \
+            --output-dir "$SRCROOT/Derived/Generated/CellTunnelAgent" \
+            --env TARGET_NAME \#(xcconfigEnvKeys)
+        """#,
+    name: "Render CellTunnelAgent agent-launchd.plist",
+    inputPaths: [
+        "$(SRCROOT)/Templates/Plists/agent-launchd.plist.template"
+    ],
+    outputPaths: [
+        "$(SRCROOT)/Derived/Generated/CellTunnelAgent/agent-launchd.plist"
     ]
-    let environment = ProcessInfo.processInfo.environment
-    let team =
-        (environment["TUIST_DEVELOPMENT_TEAM"] ?? environment["DEVELOPMENT_TEAM"] ?? "")
-        .trimmingCharacters(in: .whitespaces)
-    if !team.isEmpty {
-        settings["DEVELOPMENT_TEAM"] = SettingValue(stringLiteral: team)
-        settings["CODE_SIGN_STYLE"] = "Automatic"
-    }
-    return settings
-}()
+)
 
 let project = Project(
     name: projectName,
@@ -106,11 +115,12 @@ let project = Project(
             name: "CellTunnelCore",
             destinations: [.iPhone, .mac],
             product: .framework,
-            bundleId: "io.goodkind.CellTunnelCore",
+            bundleId: "$(BUNDLE_ID_PREFIX).CellTunnelCore",
             infoPlist: .default,
             sources: [
                 "Sources/CellTunnelCore/**"
             ],
+            scripts: [renderConfigGeneratedScript],
             dependencies: [.target(name: "CellTunnelLog")],
             settings: .settings(base: moduleVerifierSettings)
         ),
@@ -118,7 +128,7 @@ let project = Project(
             name: "CellTunnelLog",
             destinations: [.iPhone, .mac],
             product: .framework,
-            bundleId: "io.goodkind.CellTunnelLog",
+            bundleId: "$(BUNDLE_ID_PREFIX).CellTunnelLog",
             infoPlist: .default,
             sources: [
                 "Sources/CellTunnelLog/**"
@@ -129,22 +139,20 @@ let project = Project(
             name: "CellTunnelPhone",
             destinations: [.iPhone],
             product: .app,
-            bundleId: "io.goodkind.CellTunnelPhone",
+            bundleId: "$(PHONE_BUNDLE_ID)",
             deploymentTargets: iOSDeploymentTarget,
             infoPlist: .file(path: "Apps/iOS/Info.plist"),
             sources: [
                 "Apps/iOS/**"
             ],
             dependencies: appDependencies,
-            settings: .settings(
-                base: cellTunnelPhoneBaseSettings
-            )
+            settings: .settings(base: cellTunnelPhoneBaseSettings)
         ),
         .target(
             name: "CellTunnelAgent",
             destinations: [.mac],
             product: .app,
-            bundleId: "io.goodkind.CellTunnel.Agent",
+            bundleId: "$(AGENT_BUNDLE_ID)",
             deploymentTargets: macOSDeploymentTarget,
             infoPlist: .file(path: "Apps/macOS/Agent/Info.plist"),
             sources: [
@@ -157,27 +165,21 @@ let project = Project(
                     files: [
                         .glob(
                             pattern:
-                                "Derived/Generated/CellTunnelAgent/io.goodkind.celltunnel-agent.plist"
+                                "Derived/Generated/CellTunnelAgent/agent-launchd.plist"
                         )
                     ]
                 )
             ],
             entitlements: .file(path: "Apps/macOS/Entitlements/Agent.entitlements"),
-            scripts: [
-                agentLaunchAgentPlistGeneratorScript
-            ],
+            scripts: [renderAgentLaunchdScript],
             dependencies: appDependencies + [.target(name: "CellTunnelTunnelProvider")],
-            settings: .settings(
-                base:
-                    cellTunnelMacAutomaticSigningSettings
-                    .merging(macHardenedRuntimeSettings) { _, hardened in hardened }
-            )
+            settings: .settings(base: macHardenedRuntimeSettings)
         ),
         .target(
             name: "CellTunnelTunnelProvider",
             destinations: [.mac],
             product: .appExtension,
-            bundleId: "io.goodkind.CellTunnel.Agent.TunnelProvider",
+            bundleId: "$(PROVIDER_BUNDLE_ID)",
             deploymentTargets: macOSDeploymentTarget,
             infoPlist: .file(path: "Apps/macOS/TunnelProvider/Info.plist"),
             sources: [
@@ -185,11 +187,7 @@ let project = Project(
             ],
             entitlements: .file(path: "Apps/macOS/Entitlements/TunnelProvider.entitlements"),
             dependencies: tunnelProviderDependencies,
-            settings: .settings(
-                base:
-                    cellTunnelMacAutomaticSigningSettings
-                    .merging(macHardenedRuntimeSettings) { _, hardened in hardened }
-            )
+            settings: .settings(base: macHardenedRuntimeSettings)
         ),
     ],
     schemes: [

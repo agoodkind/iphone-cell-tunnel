@@ -1,13 +1,9 @@
 import Foundation
 
-// Keep in sync with Templates/Plists/agent-launchd.plist.template generator constants
-// in Scripts/GenerateAgentLaunchAgentPlist.swift.
-public let agentMachServiceName = "io.goodkind.celltunnel-agent"
-public let agentLaunchAgentPlistName = "io.goodkind.celltunnel-agent.plist"
-public let agentBinaryName = "CellTunnelAgent"
-public let agentAppBundleName = "CellTunnelAgent.app"
-public let agentBundleIdentifier = "io.goodkind.CellTunnel.Agent"
-public let tunnelProviderBundleIdentifier = "io.goodkind.CellTunnel.Agent.TunnelProvider"
+// The string constants used by the XPC layer (mach service name, agent
+// bundle id, tunnel provider bundle id, launchd plist name, etc.) are
+// generated into Config.generated.swift by `swift-mk render-batch` from
+// Config/Constants.xcconfig. See xcconfig.mk + Makefile for the pipeline.
 
 @objc(CellTunnelAgentControlXPC)
 public protocol AgentControlXPC {

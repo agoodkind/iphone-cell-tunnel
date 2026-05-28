@@ -76,7 +76,8 @@ func xcodeBuildCacheArguments(_ mode: XcodeBuildCacheMode) -> [String] {
     }
 }
 
-private let developmentTeamConfigPath = repoRoot.appendingPathComponent("config/signing.env")
+private let developmentTeamLocalConfigPath = repoRoot.appendingPathComponent(
+    "Config/local.xcconfig")
 
 func developmentTeamFromEnvironment() throws -> String {
     let environment = ProcessInfo.processInfo.environment
@@ -85,26 +86,29 @@ func developmentTeamFromEnvironment() throws -> String {
             return value
         }
     }
-    if let teamFromFile = try developmentTeamFromConfigFile() {
+    if let teamFromFile = try developmentTeamFromLocalXcconfig() {
         return teamFromFile
     }
     throw ToolError.failure(
         """
         DEVELOPMENT_TEAM (or TUIST_DEVELOPMENT_TEAM) must be set in the environment, \
-        or DEVELOPMENT_TEAM defined in \(developmentTeamConfigPath.path)
+        or DEVELOPMENT_TEAM defined in \(developmentTeamLocalConfigPath.path)
         """
     )
 }
 
-private func developmentTeamFromConfigFile() throws -> String? {
-    guard fileManager.fileExists(atPath: developmentTeamConfigPath.path) else {
+private func developmentTeamFromLocalXcconfig() throws -> String? {
+    guard fileManager.fileExists(atPath: developmentTeamLocalConfigPath.path) else {
         return nil
     }
-    let contents = try String(contentsOf: developmentTeamConfigPath, encoding: .utf8)
+    let contents = try String(contentsOf: developmentTeamLocalConfigPath, encoding: .utf8)
     for rawLine in contents.components(separatedBy: .newlines) {
-        let line = rawLine.trimmingCharacters(in: .whitespaces)
-        if line.isEmpty || line.hasPrefix("#") {
+        var line = rawLine.trimmingCharacters(in: .whitespaces)
+        if line.isEmpty || line.hasPrefix("//") || line.hasPrefix("#") {
             continue
+        }
+        if let semicolon = line.firstIndex(of: ";") {
+            line = String(line[..<semicolon]).trimmingCharacters(in: .whitespaces)
         }
         let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
         guard parts.count == 2 else {

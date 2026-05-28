@@ -1,0 +1,12 @@
+// Generated from Config/Constants.xcconfig by swift-mk render-batch.
+// Do not edit by hand. See Makefile + xcconfig.mk for the render pipeline.
+
+import Foundation
+
+public let agentMachServiceName = "[[AGENT_MACH_SERVICE_NAME]]"
+public let agentLaunchAgentPlistName = "[[AGENT_LAUNCH_AGENT_PLIST_NAME]]"
+public let agentBinaryName = "[[AGENT_EXECUTABLE_NAME]]"
+public let agentAppBundleName = "[[AGENT_APP_BUNDLE_NAME]]"
+public let agentBundleIdentifier = "[[AGENT_BUNDLE_ID]]"
+public let tunnelProviderBundleIdentifier = "[[PROVIDER_BUNDLE_ID]]"
+public let cellTunnelAppGroupIdentifier = "[[APP_GROUP_ID]]"
