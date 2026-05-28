@@ -111,19 +111,21 @@ The signing team comes from `TUIST_DEVELOPMENT_TEAM` or `DEVELOPMENT_TEAM`, with
 
 | Command | Result |
 |---|---|
-| `make build TARGET=daemon CONFIG=Debug` | builds `celltunnelctl` only |
-| `make build TARGET=mac CONFIG=Debug` | builds `CellTunnelAgent` + `CellTunnelTunnelProvider.appex` + runs full lint pipeline |
+| `make build TARGET=daemon CONFIG=Debug` | builds `celltunnelctl` |
+| `make build TARGET=mac CONFIG=Debug` | builds `CellTunnelAgent` + `CellTunnelTunnelProvider.appex` and runs the full lint pipeline |
 | `make build TARGET=iphone-device CONFIG=Debug` | builds and signs the iPhone app |
 | `make build TARGET=iphone-simulator CONFIG=Debug` | builds the iPhone app for the simulator |
 | `make iphone-install CONFIG=Debug` | installs the iPhone app on the connected device |
-| `make install-helper CONFIG=Debug` | installs the agent and extension to `/Applications/CellTunnel/` |
-| `make daemon-reload` | rebuilds + swaps binary + kickstarts |
-| `make smoke` | prints the post-install celltunnelctl sequence (graduate to a subcommand later) |
-| `make logs` | prints the log-tail hints (graduate to a subcommand later) |
+| `make smoke` | prints the post-install celltunnelctl sequence |
+| `make logs` | prints the log-tail hints |
 
 `make build TARGET=<x>` runs lint and audit before compile. Gates: `swiftlint`, `swift-format`, `lint-complexity` (SwiftLint metrics), `lint-deadcode` (Periphery), `swiftcheck-extra` (custom SwiftSyntax analyzers), `log-audit` (boundary and catch logging rules). Bare `make build` errors; the TARGET argument is required.
 
-`SWIFT_MK_SKIP_FETCH=1` env var skips re-fetching the WireGuard fork on incremental builds.
+`SWIFT_MK_SKIP_FETCH=1` skips re-fetching the WireGuard fork on incremental builds.
+
+## Toolchain
+
+Tuist is managed by `mise`, pinned per-project by `mise.toml` (`[tools] tuist = "4.195.9"`) and globally by `~/.config/mise/config.toml`. The mise shims directory (`$HOME/.local/share/mise/shims`) is on `PATH` via `~/.zshenv`, so bare `tuist` resolves to the mise-managed version. To change the version, edit `mise.toml` and run `mise install`.
 
 ## Module layout
 
@@ -156,19 +158,9 @@ The signing team comes from `TUIST_DEVELOPMENT_TEAM` or `DEVELOPMENT_TEAM`, with
 
 - `RelayControlMessage.swift` and `RelayControlFramer.swift`: wire format shared with the iPhone control channel.
 
-## Step 5 in-progress state (resume here)
+## Concurrency shape
 
-`PacketTunnelProvider.swift` has `startTunnel`/`stopTunnel`/`runStartTunnel` written. The full start sequence is wired: parse config, `setTunnelNetworkSettings`, discover iPhone, connect `RelayTransport`, start `ControlChannel`, build `WireGuardRelayBind`, call `WireGuardRuntime.start`. Supporting files exist: `WireGuardRelayBind.swift`, `WireGuardTunnelConfigBuilder.swift`, `DiscoveryServiceWaiter.swift`.
-
-The last edit made to resolve Swift 6 strict-concurrency errors, not yet build-verified:
-- `PacketTunnelProvider` marked `@MainActor`.
-- `startTunnel` uses the completion-handler override form (not the `async throws` form) because the `async` form trips a non-Sendable-parameter diagnostic on `[String: NSObject]?`.
-- The completion handler is wrapped in a `private struct UncheckedSendableBox<Value>: @unchecked Sendable` so the `Task { @MainActor in ... }` can call it.
-- `WireGuardRuntime.start(...)` takes `provider: sending NEPacketTunnelProvider`.
-
-Run `SWIFT_MK_SKIP_FETCH=1 make build TARGET=mac CONFIG=Debug` to verify. If concurrency errors remain, the likely fix is making `WireGuardRuntime` accept the provider on the main actor or restructuring so the provider reference never crosses into the actor.
-
-Lint config decision already made and committed across all three SwiftLint configs (`.make/swiftlint.yml`, `.make/.swiftlint.yml`, and repo-root `.swiftlint.yml`, plus the shared `~/Sites/swift-makefile/.make/` copies): `discouraged_optional_collection` and `legacy_objc_type` are disabled. Reason: Apple's `NEPacketTunnelProvider.startTunnel(options:)` forces a `[String: NSObject]?` parameter and `NEIPv6Settings`/`mtu` force `NSNumber`, neither of which can be expressed in Swift value types. Both rules are AST-level with no per-declaration exemption. There are THREE SwiftLint invocation paths and all three must agree: the swift-makefile gate (`--config .make/.swiftlint.yml`), the build-phase `swiftLintAnalyze` (`--config .swiftlint.yml`), and the bare `swiftlint lint --strict` in `BuildActions.swift:319` (no `--config`, uses repo-root `.swiftlint.yml` by default).
+`PacketTunnelProvider` is `final class ... : NEPacketTunnelProvider, @unchecked Sendable`, not `@MainActor`. `NEPacketTunnelProvider` serializes its lifecycle callbacks, so the stored state mutated across `startTunnel`/`stopTunnel` is safe under that assertion. `startTunnel` uses the completion-handler override form because the `async throws` form trips a non-Sendable-parameter diagnostic on `[String: NSObject]?`. The completion handler is wrapped in a `private struct UncheckedSendableBox<Value>: @unchecked Sendable` so the inner `Task { ... }` can call it across the concurrency boundary. `WireGuardRuntime.start` takes a plain `NEPacketTunnelProvider` parameter.
 
 ## Smoke test target
 
@@ -184,19 +176,13 @@ The WireGuard config used for smoke tests lives at `/Users/agoodkind/Desktop/wir
 - Do not propose Personal Hotspot or any tethering equivalent.
 - Default to no code comments. Add one only when WHY is non-obvious.
 
-## Remaining tasks
+## Remaining work
 
-| # | Task | What it produces |
-|---|---|---|
-| 5 | Finish `PacketTunnelProvider.startTunnel` / `stopTunnel` overrides (IN PROGRESS, see below) | extension that parses the WG config from `protocolConfiguration.providerConfiguration["wireguardConfig"]`, applies `setTunnelNetworkSettings`, brings up Discovery + RelayTransport + ControlChannel + WireGuardRelayBind + WireGuardRuntime |
-| 6 | Implement `CellTunnelAgent` XPC plumbing | `AgentControlMessage` Codable enum; `AgentTunnelController` owning `NETunnelProviderManager` and the `NEVPNStatusDidChange` observer; `AgentXPCServer` decoding requests; agent advertises endpoint at `/tmp/io.goodkind.celltunnel-agent.sock` and idle-times-out after 60s |
-| 7 | Implement CLI side | `Sources/CellTunnelCore/AgentClient.swift` (spawns agent if absent, opens XPC, sends Codable messages); `Tools/CellTunnelCtl/main.swift` consumes `AgentClient` and maps each subcommand to an `AgentControlMessage` case |
-| 8 | Implement `handleAppMessage` in the extension | `ProviderControlMessage` Codable envelope; the agent forwards a subset of agent messages down to the extension via `NETunnelProviderSession.sendProviderMessage` |
-| 9 | End-to-end smoke through the tunnel | `make install-helper`, approve VPN config sheet, `celltunnelctl start`, `ping -c 5 208.67.222.222`, `curl https://api.ipify.org` returns cellular carrier egress IP, iPhone log shows `pdp_ip0`, speedtest recorded |
+End-to-end smoke through the tunnel: install the agent and extension, approve the VPN configuration sheet with TouchID, start the tunnel from `celltunnelctl`, confirm `ping` flows through, confirm `curl https://api.ipify.org` returns the cellular carrier egress IP, confirm the iPhone log shows `pdp_ip0` traffic, and record a speedtest.
 
-Two design points to know:
+## Two design points
 
-1. The `startTunnel(options:completionHandler:)` override on `NEPacketTunnelProvider` takes Apple's `[String: NSObject]?` signature, which trips `discouraged_optional_collection`, and the `NSNumber` network-settings values trip `legacy_objc_type`. Both rules are disabled in the shared SwiftLint config (the `swift-makefile` repo root `.swiftlint.yml`, which the build fetches into `.make/swiftlint.yml`) for these unavoidable Apple-API spellings. The provider uses the framework types directly, with no inline disables and no type-hiding shims.
+1. The `startTunnel(options:completionHandler:)` override on `NEPacketTunnelProvider` takes Apple's `[String: NSObject]?` signature, which trips `discouraged_optional_collection`, and the `NSNumber` network-settings values trip `legacy_objc_type`. Both rules are disabled in the shared SwiftLint config (the `swift-makefile` repo root `.swiftlint.yml`, fetched into `.make/swiftlint.yml`) for these unavoidable Apple-API spellings. The provider uses the framework types directly, with no inline disables and no type-hiding shims.
 2. The agent and CLI talk over XPC. The CLI (`Tools/CellTunnelCtl/main.swift` via `AgentClient`) spawns the agent on demand with `Process`. The agent hosts an `NSXPCListener.anonymous()` and archives its `endpoint` with `NSKeyedArchiver` to `/tmp/io.goodkind.celltunnel-agent.sock`; the CLI reads that endpoint back with `NSKeyedUnarchiver` and dials it via `NSXPCConnection(listenerEndpoint:)`. This avoids a fixed Mach service registration. The agent self-terminates after a 60-second idle timeout and on SIGINT/SIGTERM. The agent binary path is overridable via an environment variable, otherwise resolved as a sibling of the CLI executable.
 
 ## Future-work follow-ups
