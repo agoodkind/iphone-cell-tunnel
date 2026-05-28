@@ -65,6 +65,22 @@ let cellTunnelPhoneBaseSettings: SettingsDictionary = {
     return settings
 }()
 
+let agentLaunchAgentPlistGeneratorScript = TargetScript.pre(
+    script: #"""
+        swift "${SRCROOT}/Scripts/GenerateAgentLaunchAgentPlist.swift" \
+            "${SRCROOT}/Templates/Plists/agent-launchd.plist.template" \
+            "${SRCROOT}/Derived/Generated/${TARGET_NAME}/io.goodkind.celltunnel-agent.plist"
+        """#,
+    name: "Generate Agent LaunchAgent Plist",
+    inputPaths: [
+        "$(SRCROOT)/Templates/Plists/agent-launchd.plist.template",
+        "$(SRCROOT)/Scripts/GenerateAgentLaunchAgentPlist.swift",
+    ],
+    outputPaths: [
+        "$(SRCROOT)/Derived/Generated/$(TARGET_NAME)/io.goodkind.celltunnel-agent.plist"
+    ]
+)
+
 let cellTunnelMacAutomaticSigningSettings: SettingsDictionary = {
     var settings: SettingsDictionary = [
         "CODE_SIGN_IDENTITY": "Apple Development"
@@ -139,11 +155,17 @@ let project = Project(
                     name: "LaunchAgents",
                     subpath: "Contents/Library/LaunchAgents",
                     files: [
-                        "Apps/macOS/Agent/LaunchAgents/io.goodkind.celltunnel-agent.plist"
+                        .glob(
+                            pattern:
+                                "Derived/Generated/CellTunnelAgent/io.goodkind.celltunnel-agent.plist"
+                        )
                     ]
                 )
             ],
             entitlements: .file(path: "Apps/macOS/Entitlements/Agent.entitlements"),
+            scripts: [
+                agentLaunchAgentPlistGeneratorScript
+            ],
             dependencies: appDependencies + [.target(name: "CellTunnelTunnelProvider")],
             settings: .settings(
                 base:

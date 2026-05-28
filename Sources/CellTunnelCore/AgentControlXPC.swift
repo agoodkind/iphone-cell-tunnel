@@ -1,5 +1,7 @@
 import Foundation
 
+// Keep in sync with Templates/Plists/agent-launchd.plist.template generator constants
+// in Scripts/GenerateAgentLaunchAgentPlist.swift.
 public let agentMachServiceName = "io.goodkind.celltunnel-agent"
 public let agentLaunchAgentPlistName = "io.goodkind.celltunnel-agent.plist"
 public let agentBinaryName = "CellTunnelAgent"
