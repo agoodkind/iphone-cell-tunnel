@@ -13,6 +13,9 @@ func printHelp() {
                       Bare `build` with no target prints this and exits non-zero.
           activate    Install, register, and launch the requested target from built products.
                       Pass --port <listener-port> to override the iPhone relay listener port at launch.
+          install-mac Copy the built CellTunnelAgent.app into /Applications/CellTunnel and launch it
+                      so its first run registers the LaunchAgent.
+                      Options: --config Debug|Release, --app <path>, --destination <dir>.
           test        Run SwiftPM tests.
           lint        Run Swift lint gates.
           format      Format Swift sources.
@@ -148,6 +151,10 @@ func runCoreCommand(_ command: String) throws -> Bool {
             configuration: options.configuration,
             listenerPort: options.listenerPort
         )
+        return true
+    case "install-mac":
+        let options = try parseInstallMacOptions()
+        try runInstallMac(options: options)
         return true
     case "test":
         try testProject()

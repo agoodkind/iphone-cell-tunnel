@@ -35,13 +35,16 @@ include bootstrap.mk
 
 .DEFAULT_GOAL := check
 
-.PHONY: format iphone-install smoke logs
+.PHONY: format iphone-install install-mac smoke logs
 
 format:
 	@$(CELL_TUNNEL_DEV) format
 
 iphone-install:
 	@$(CELL_TUNNEL_DEV) activate iphone $(CONFIG)
+
+install-mac:
+	@$(CELL_TUNNEL_DEV) install-mac --config $(CONFIG)
 
 smoke:
 	@printf 'make smoke: run these in order against the smoke config\n'
