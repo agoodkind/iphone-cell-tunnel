@@ -3,59 +3,76 @@ import CellTunnelLog
 import Darwin
 import Dispatch
 import Foundation
+import ServiceManagement
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 
 private let agentIdleTimeoutSeconds: Double = 60
 
 final class AgentRuntime: @unchecked Sendable {
-    private let listener = NSXPCListener.anonymous()
+    private let listener = NSXPCListener(machServiceName: agentMachServiceName)
     private let controller = AgentTunnelController()
     private let idleQueue = DispatchQueue(label: "io.goodkind.celltunnel.agent.idle")
     private var idleTimer: DispatchSourceTimer?
     private var server: AgentXPCServer?
 
-    func start() throws {
+    func start() {
+        registerLaunchAgentIfNeeded()
         let server = AgentXPCServer(controller: controller) { [weak self] in
             self?.resetIdleTimer()
         }
         self.server = server
         listener.delegate = server
         listener.resume()
-        try publishEndpoint()
         resetIdleTimer()
-        logger.notice("agent listener resumed path=\(agentControlEndpointPath, privacy: .public)")
+        logger.notice(
+            "agent listener resumed machService=\(agentMachServiceName, privacy: .public)"
+        )
     }
 
     func shutdown(reason: String) {
         logger.notice("agent shutting down reason=\(reason, privacy: .public)")
-        removeEndpointFile()
         listener.invalidate()
     }
 
-    private func publishEndpoint() throws {
-        let endpoint = listener.endpoint
-        let data = try NSKeyedArchiver.archivedData(
-            withRootObject: endpoint,
-            requiringSecureCoding: true
-        )
-        try data.write(to: URL(fileURLWithPath: agentControlEndpointPath), options: .atomic)
-        logger.notice("agent endpoint published path=\(agentControlEndpointPath, privacy: .public)")
-    }
-
-    private func removeEndpointFile() {
-        do {
-            try FileManager.default.removeItem(atPath: agentControlEndpointPath)
-            logger.notice("agent endpoint file removed")
-        } catch {
-            logger.notice(
-                """
-                agent endpoint file remove skipped \
-                path=\(agentControlEndpointPath, privacy: .public) \
-                details=\(String(describing: error), privacy: .public) \
-                recovery=ignore-missing-file
-                """
-            )
+    private func registerLaunchAgentIfNeeded() {
+        if #available(macOS 13.0, *) {
+            let service = SMAppService.agent(plistName: agentLaunchAgentPlistName)
+            switch service.status {
+            case .notRegistered:
+                do {
+                    try service.register()
+                    logger.notice(
+                        """
+                        agent SMAppService registered \
+                        status=\(String(describing: service.status), privacy: .public)
+                        """
+                    )
+                } catch {
+                    logger.error(
+                        """
+                        agent SMAppService register failed \
+                        details=\(String(describing: error), privacy: .public) \
+                        recovery=continue-listening
+                        """
+                    )
+                }
+            case .enabled:
+                logger.notice("agent SMAppService already enabled")
+            case .requiresApproval:
+                logger.notice(
+                    "agent SMAppService requiresApproval; user must enable in Login Items"
+                )
+            case .notFound:
+                logger.error("agent SMAppService notFound; plist missing from bundle")
+            @unknown default:
+                logger.error(
+                    """
+                    agent SMAppService unknown status \
+                    rawValue=\(service.status.rawValue, privacy: .public)
+                    """
+                )
+            }
         }
     }
 
@@ -104,13 +121,6 @@ interruptSource.resume()
 terminateSource.resume()
 signalSourceRetention = [interruptSource, terminateSource]
 
-do {
-    try agentRuntime.start()
-} catch {
-    logger.error(
-        "agent failed to start details=\(String(describing: error), privacy: .public) recovery=exit-failure"
-    )
-    exit(EXIT_FAILURE)
-}
+agentRuntime.start()
 
 dispatchMain()

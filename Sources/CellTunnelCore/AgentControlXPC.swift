@@ -1,7 +1,7 @@
 import Foundation
 
-public let agentControlEndpointPath = "/tmp/io.goodkind.celltunnel-agent.sock"
-public let agentBinaryEnvironmentVariable = "CELL_TUNNEL_AGENT_BINARY"
+public let agentMachServiceName = "io.goodkind.celltunnel-agent"
+public let agentLaunchAgentPlistName = "io.goodkind.celltunnel-agent.plist"
 public let agentBinaryName = "CellTunnelAgent"
 public let agentAppBundleName = "CellTunnelAgent.app"
 public let agentBundleIdentifier = "io.goodkind.CellTunnel.Agent"

@@ -134,6 +134,15 @@ let project = Project(
             sources: [
                 "Apps/macOS/Agent/**"
             ],
+            copyFiles: [
+                .wrapper(
+                    name: "LaunchAgents",
+                    subpath: "Contents/Library/LaunchAgents",
+                    files: [
+                        "Apps/macOS/Agent/LaunchAgents/io.goodkind.celltunnel-agent.plist"
+                    ]
+                )
+            ],
             entitlements: .file(path: "Apps/macOS/Entitlements/Agent.entitlements"),
             dependencies: appDependencies + [.target(name: "CellTunnelTunnelProvider")],
             settings: .settings(

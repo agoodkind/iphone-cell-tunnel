@@ -4,23 +4,17 @@ import Foundation
 #if os(macOS)
     private let logger = CellTunnelLog.logger(category: .daemon)
 
-    private let agentSpawnPollSeconds: Double = 0.1
-    private let agentSpawnTimeoutSeconds: Double = 10
-
     public actor AgentClient: TunnelControlClientProtocol {
-        private let endpointPath: String
-        private let binaryName: String
-        private let environmentOverride: [String: String]
         private var connection: NSXPCConnection?
 
         public init(
-            endpointPath: String = agentControlEndpointPath,
+            endpointPath: String = "",
             binaryName: String = agentBinaryName,
             environment: [String: String] = [:]
         ) {
-            self.endpointPath = endpointPath
-            self.binaryName = binaryName
-            self.environmentOverride = environment
+            _ = endpointPath
+            _ = binaryName
+            _ = environment
         }
 
         public func shutdown() {
@@ -108,7 +102,7 @@ import Foundation
             operationName: String
         ) async throws -> AgentControlResponse {
             let payload = try encode(request: request, operationName: operationName)
-            let proxy = try await activeProxy()
+            let proxy = try activeProxy()
             let responseData = try await transmit(
                 payload: payload,
                 proxy: proxy,
@@ -182,8 +176,8 @@ import Foundation
             }
         }
 
-        private func activeProxy() async throws -> any AgentControlXPC {
-            let connection = try await activeConnection()
+        private func activeProxy() throws -> any AgentControlXPC {
+            let connection = activeConnection()
             let proxy = connection.remoteObjectProxyWithErrorHandler { error in
                 logger.error(
                     "agent xpc proxy error details=\(String(describing: error), privacy: .public)"
@@ -198,12 +192,11 @@ import Foundation
             return typed
         }
 
-        private func activeConnection() async throws -> NSXPCConnection {
+        private func activeConnection() -> NSXPCConnection {
             if let connection {
                 return connection
             }
-            let endpoint = try await resolveEndpoint()
-            let created = NSXPCConnection(listenerEndpoint: endpoint)
+            let created = NSXPCConnection(machServiceName: agentMachServiceName)
             created.remoteObjectInterface = NSXPCInterface(with: AgentControlXPC.self)
             created.invalidationHandler = { [weak self] in
                 Task { await self?.handleInvalidation() }
@@ -213,142 +206,10 @@ import Foundation
             }
             created.resume()
             connection = created
-            logger.notice("agent xpc connection opened")
+            logger.notice(
+                "agent xpc connection opened machServiceName=\(agentMachServiceName, privacy: .public)"
+            )
             return created
-        }
-
-        private func resolveEndpoint() async throws -> NSXPCListenerEndpoint {
-            if let endpoint = readEndpoint(operationName: "resolve-existing") {
-                return endpoint
-            }
-            try spawnAgent()
-            let appeared = await AgentEndpointWaiter.wait(
-                forFileAt: endpointPath,
-                pollSeconds: agentSpawnPollSeconds,
-                timeoutSeconds: agentSpawnTimeoutSeconds
-            )
-            guard appeared else {
-                logger.error(
-                    """
-                    agent endpoint did not appear path=\(self.endpointPath, privacy: .public) \
-                    recovery=throw-daemon-unavailable
-                    """
-                )
-                throw TunnelDaemonError.daemonUnavailable(endpointPath)
-            }
-            guard let endpoint = readEndpoint(operationName: "resolve-after-spawn") else {
-                throw TunnelDaemonError.transportFailure("agent endpoint file is unreadable")
-            }
-            return endpoint
-        }
-
-        private func readEndpoint(operationName: String) -> NSXPCListenerEndpoint? {
-            let url = URL(fileURLWithPath: endpointPath)
-            let data: Data
-            do {
-                data = try Data(contentsOf: url)
-            } catch {
-                logger.notice(
-                    "\(operationName) agent endpoint file absent path=\(self.endpointPath, privacy: .public)"
-                )
-                return nil
-            }
-            do {
-                return try NSKeyedUnarchiver.unarchivedObject(
-                    ofClass: NSXPCListenerEndpoint.self,
-                    from: data
-                )
-            } catch {
-                logger.error(
-                    """
-                    \(operationName) agent endpoint decode failed \
-                    details=\(String(describing: error), privacy: .public) \
-                    recovery=return-nil
-                    """
-                )
-                return nil
-            }
-        }
-
-        private func spawnAgent() throws {
-            let executableURL = try resolveAgentBinaryURL()
-            let process = Process()
-            process.executableURL = executableURL
-            process.arguments = []
-            if !environmentOverride.isEmpty {
-                process.environment = ProcessInfo.processInfo.environment
-                    .merging(environmentOverride) { _, override in override }
-            }
-            do {
-                try process.run()
-            } catch {
-                logger.error(
-                    """
-                    agent spawn failed path=\(executableURL.path, privacy: .public) \
-                    details=\(String(describing: error), privacy: .public) \
-                    recovery=throw-transport-failure
-                    """
-                )
-                throw TunnelDaemonError.transportFailure(
-                    "failed to spawn agent at \(executableURL.path): \(error.localizedDescription)"
-                )
-            }
-            logger.notice("agent spawned path=\(executableURL.path, privacy: .public)")
-        }
-
-        private func resolveAgentBinaryURL() throws -> URL {
-            let environment = ProcessInfo.processInfo.environment
-                .merging(environmentOverride) { _, override in override }
-            let override = environment[agentBinaryEnvironmentVariable]?
-                .trimmingCharacters(in: .whitespaces)
-            if let override, !override.isEmpty {
-                return URL(fileURLWithPath: override)
-            }
-            let executablePath = CommandLine.arguments.first ?? binaryName
-            let cliDirectory = URL(fileURLWithPath: executablePath)
-                .deletingLastPathComponent()
-            let candidates = agentBinaryCandidates(relativeTo: cliDirectory)
-            for candidate in candidates
-            where FileManager.default.isExecutableFile(
-                atPath: candidate.path
-            ) {
-                return candidate
-            }
-            let renderedCandidates = candidates.map(\.path).joined(separator: ", ")
-            logger.error(
-                """
-                agent binary not found near CLI candidates=\(renderedCandidates, privacy: .public) \
-                recovery=throw-transport-failure
-                """
-            )
-            throw TunnelDaemonError.transportFailure(
-                """
-                agent binary not found near CLI and \
-                \(agentBinaryEnvironmentVariable) is unset; tried: \(renderedCandidates)
-                """
-            )
-        }
-
-        private func agentBinaryCandidates(relativeTo cliDirectory: URL) -> [URL] {
-            let macOSSubpath = "Contents/MacOS/\(binaryName)"
-            let bundledNeighbor =
-                cliDirectory
-                .appendingPathComponent(agentAppBundleName)
-                .appendingPathComponent(macOSSubpath)
-            let installedSibling =
-                cliDirectory
-                .deletingLastPathComponent()
-                .appendingPathComponent("Applications", isDirectory: true)
-                .appendingPathComponent("CellTunnel", isDirectory: true)
-                .appendingPathComponent(agentAppBundleName)
-                .appendingPathComponent(macOSSubpath)
-            let installedSystem = URL(
-                fileURLWithPath: "/Applications/CellTunnel", isDirectory: true
-            )
-            .appendingPathComponent(agentAppBundleName)
-            .appendingPathComponent(macOSSubpath)
-            let legacySibling = cliDirectory.appendingPathComponent(binaryName)
-            return [bundledNeighbor, installedSibling, installedSystem, legacySibling]
         }
 
         private func handleInvalidation() {
@@ -412,56 +273,6 @@ import Foundation
             TunnelDaemonError.controlFailure(
                 TunnelControlFailure(errorCode: failure.errorCode, message: failure.message)
             )
-        }
-    }
-
-    private enum AgentEndpointWaiter {
-        static func wait(
-            forFileAt path: String,
-            pollSeconds: Double,
-            timeoutSeconds: Double
-        ) async -> Bool {
-            logger.notice("agent endpoint wait starting path=\(path, privacy: .public)")
-            return await withCheckedContinuation { continuation in
-                let box = AgentEndpointWaitBox(continuation: continuation)
-                let queue = DispatchQueue(label: "io.goodkind.celltunnel.agent.endpoint-wait")
-                let timer = DispatchSource.makeTimerSource(queue: queue)
-                timer.schedule(deadline: .now(), repeating: pollSeconds)
-                let deadline = ContinuousClock.now + .seconds(timeoutSeconds)
-                timer.setEventHandler {
-                    if FileManager.default.fileExists(atPath: path) {
-                        box.finish(timer: timer, value: true)
-                        return
-                    }
-                    if ContinuousClock.now >= deadline {
-                        box.finish(timer: timer, value: false)
-                    }
-                }
-                timer.resume()
-            }
-        }
-    }
-
-    private final class AgentEndpointWaitBox: @unchecked Sendable {
-        private let continuation: CheckedContinuation<Bool, Never>
-        private let lock = NSLock()
-        private var finished = false
-
-        init(continuation: CheckedContinuation<Bool, Never>) {
-            self.continuation = continuation
-        }
-
-        func finish(timer: DispatchSourceTimer, value: Bool) {
-            lock.lock()
-            if finished {
-                lock.unlock()
-                return
-            }
-            finished = true
-            lock.unlock()
-            timer.cancel()
-            logger.notice("agent endpoint wait finished appeared=\(value, privacy: .public)")
-            continuation.resume(returning: value)
         }
     }
 #endif

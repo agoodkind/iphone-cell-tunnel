@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>io.goodkind.celltunnel-agent</string>
+    <key>BundleProgram</key>
+    <string>Contents/MacOS/CellTunnelAgent</string>
+    <key>MachServices</key>
+    <dict>
+        <key>io.goodkind.celltunnel-agent</key>
+        <true/>
+    </dict>
+    <key>AssociatedBundleIdentifiers</key>
+    <array>
+        <string>io.goodkind.CellTunnel.Agent</string>
+    </array>
+    <key>ProcessType</key>
+    <string>Background</string>
+    <key>StandardOutPath</key>
+    <string>/dev/null</string>
+    <key>StandardErrorPath</key>
+    <string>/dev/null</string>
+</dict>
+</plist>
