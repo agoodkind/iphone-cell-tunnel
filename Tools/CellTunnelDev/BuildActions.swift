@@ -5,7 +5,7 @@ func generateProject() throws {
     if try projectGenerationIsCurrent() {
         return
     }
-    let team = try signingConfig().developmentTeam
+    let team = try developmentTeamFromEnvironment()
     let environment = [
         "DEVELOPMENT_TEAM": team,
         "TUIST_DEVELOPMENT_TEAM": team,
@@ -51,7 +51,7 @@ private func recordProjectGenerationFingerprint() throws {
 
 private func projectGenerationSourceFingerprint() throws -> String {
     var parts: [String] = []
-    let team = try signingConfig().developmentTeam.trimmingCharacters(in: .whitespaces)
+    let team = try developmentTeamFromEnvironment().trimmingCharacters(in: .whitespaces)
     parts.append("team:\(team)")
     for source in projectGenerationSources {
         let attributes = try fileManager.attributesOfItem(atPath: source.path)
@@ -136,13 +136,17 @@ func buildScheme(
 }
 
 func buildPhoneDevice(configuration: String) throws {
-    let config = try signingConfig()
-    try buildPhoneDevice(configuration: configuration, signing: config, shouldGenerateProject: true)
+    let team = try developmentTeamFromEnvironment()
+    try buildPhoneDevice(
+        configuration: configuration,
+        developmentTeam: team,
+        shouldGenerateProject: true
+    )
 }
 
 func buildPhoneDevice(
     configuration: String,
-    signing config: SigningConfig,
+    developmentTeam: String,
     shouldGenerateProject: Bool
 ) throws {
     if shouldGenerateProject {
@@ -157,7 +161,7 @@ func buildPhoneDevice(
         xcodebuildOptions: ["-allowProvisioningUpdates"],
         buildSettings: [
             "CODE_SIGN_STYLE": "Automatic",
-            "DEVELOPMENT_TEAM": config.developmentTeam,
+            "DEVELOPMENT_TEAM": developmentTeam,
         ]
     )
 }
@@ -236,20 +240,6 @@ func buildWireGuardGoBridge() throws {
             "PLATFORM_NAME": "macosx",
         ]
     )
-}
-
-func installBuiltDaemon(configuration: String) throws {
-    let source = xcodeConfigurationBuildDirectory(
-        configuration: configuration,
-        platformName: macOSPlatformName
-    ).appendingPathComponent("celltunneld")
-    let destination = productsDirectory.appendingPathComponent("celltunneld")
-    guard fileManager.fileExists(atPath: source.path) else {
-        throw ToolError.failure("built celltunneld not found: \(source.path)")
-    }
-    try copyReplacingItem(at: source, to: destination)
-    try fileManager.setAttributes(
-        [.posixPermissions: 0o755], ofItemAtPath: destination.path)
 }
 
 struct XcodeDevice: Decodable {
@@ -367,7 +357,14 @@ func analyzeProject() throws {
 
 func xcodeAnalyze() throws {
     try buildScheme(
-        scheme: "CellTunnelMac",
+        scheme: "CellTunnelAgent",
+        configuration: "Debug",
+        destination: "platform=macOS",
+        platformName: macOSPlatformName,
+        action: "analyze"
+    )
+    try buildScheme(
+        scheme: "CellTunnelTunnelProvider",
         configuration: "Debug",
         destination: "platform=macOS",
         platformName: macOSPlatformName,
@@ -393,7 +390,7 @@ func swiftLintAnalyze() throws {
             "-workspace",
             "CellTunnel.xcworkspace",
             "-scheme",
-            "CellTunnelMac",
+            "CellTunnelAgent",
             "-configuration",
             "Debug",
             "-destination",
@@ -435,19 +432,4 @@ func cleanProject() throws {
     for path in paths where fileManager.fileExists(atPath: path.path) {
         try fileManager.removeItem(at: path)
     }
-}
-
-func runMacApp() throws {
-    try buildProject(target: .mac, configuration: "Debug")
-    let appPath = productsDirectory.appendingPathComponent("Debug/macosx/CellTunnelMac.app")
-    guard fileManager.fileExists(atPath: appPath.path) else {
-        throw ToolError.failure("built app not found: \(appPath.path)")
-    }
-
-    _ = try? capture("pkill", ["-x", "CellTunnelMac"])
-    try run(
-        "open",
-        ["-n", appPath.path],
-        environment: ["CELL_TUNNEL_ROOT": repoRoot.path]
-    )
 }

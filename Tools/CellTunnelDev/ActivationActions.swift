@@ -1,10 +1,6 @@
-import CellTunnelCore
-import CellTunnelLog
 import Foundation
 
 enum ActivationActions {}
-
-private let activationLogger = CellTunnelLog.logger(category: .build)
 
 func activateTarget(
     _ target: ActivationTarget,
@@ -12,146 +8,11 @@ func activateTarget(
     listenerPort: UInt16? = nil
 ) throws {
     switch target {
-    case .mac:
-        try activateMacApp(configuration: configuration)
     case .iphone:
         try activatePhoneDevice(configuration: configuration, listenerPort: listenerPort)
     case .iphoneSimulator:
         try activatePhoneSimulator(configuration: configuration, listenerPort: listenerPort)
     }
-}
-
-func activateMacApp(configuration: String) throws {
-    let appPath = macAppPath(configuration: configuration)
-    guard fileManager.fileExists(atPath: appPath.path) else {
-        throw ToolError.failure("built app not found: \(appPath.path)")
-    }
-
-    _ = try capture("pkill", ["-x", "CellTunnelMac"], echoOutput: false)
-    try run("open", ["-n", appPath.path, "--args", macActivationArgument])
-}
-
-func refreshMacHelper(configuration: String) throws {
-    try installMacHelper(configuration: configuration)
-}
-
-func installMacHelper(configuration: String) throws {
-    let expectedAppPath = macAppPath(configuration: configuration).standardizedFileURL
-    guard fileManager.fileExists(atPath: expectedAppPath.path) else {
-        throw ToolError.failure("built app not found: \(expectedAppPath.path)")
-    }
-    let expectedDaemonPath = expectedAppPath.appendingPathComponent(daemonExecutableRelativePath)
-    let expectedDaemonFingerprint = try helperFingerprint(at: expectedDaemonPath)
-
-    uninstallMacHelper()
-    try installMacAppBundle(from: expectedAppPath)
-    try registerInstalledMacHelper()
-
-    let bundleVerification = currentInstalledDaemonVerification(
-        expectedDaemonFingerprint: expectedDaemonFingerprint
-    )
-    try throwIfVerificationIsStale(
-        bundleVerification,
-        expectedFingerprint: expectedDaemonFingerprint,
-        serviceTarget: daemonServiceTarget
-    )
-
-    try waitForDaemonXPCReady(
-        expectedDaemonFingerprint: expectedDaemonFingerprint,
-        expectedBundlePath: expectedAppPath
-    )
-}
-
-private func waitForDaemonXPCReady(
-    expectedDaemonFingerprint: String,
-    expectedBundlePath: URL
-) throws {
-    let deadline = ContinuousClock.now + daemonInstallVerifyTimeout
-    var lastError: Error?
-    while ContinuousClock.now < deadline {
-        let pingResult = pingDaemonSynchronously()
-        if pingResult == nil {
-            return
-        }
-        lastError = pingResult
-        waitForDaemonInstallVerifyPollInterval()
-    }
-    throw ToolError.failure(
-        """
-        daemon xpc verification timed out service=\(daemonControlMachServiceName) \
-        target=\(daemonServiceTarget) \
-        expected_bundle=\(expectedBundlePath.path) \
-        expected_daemon_fingerprint=\(expectedDaemonFingerprint) \
-        last_error=\(lastError.map { String(describing: $0) } ?? "<none>")
-        """
-    )
-}
-
-private func pingDaemonSynchronously() -> Error? {
-    let semaphore = DispatchSemaphore(value: 0)
-    let holder = PingResultHolder()
-    Task {
-        do {
-            try await pingDaemonOverXPC()
-            holder.store(nil)
-        } catch {
-            activationLogger.notice(
-                "daemon xpc ping failed error=\(String(describing: error), privacy: .public)"
-            )
-            holder.store(error)
-        }
-        semaphore.signal()
-    }
-    semaphore.wait()
-    return holder.value
-}
-
-private final class PingResultHolder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var stored: Error?
-
-    func store(_ value: Error?) {
-        lock.lock()
-        stored = value
-        lock.unlock()
-    }
-
-    var value: Error? {
-        lock.lock()
-        defer { lock.unlock() }
-        return stored
-    }
-}
-
-func uninstallMacHelper() {
-    activationLogger.notice("daemon uninstall removing registered launchd and app artifacts")
-    _ = runBestEffort("pkill", ["-x", "CellTunnelMac"])
-    _ = runBestEffort("sudo", ["launchctl", "bootout", daemonServiceTarget])
-    // Kill any orphan daemon process whose binary survived an earlier overwrite.
-    // bootout leaves them alive when their SMAppService registration is already gone.
-    _ = runBestEffort("sudo", ["pkill", "-x", "celltunneld"])
-    _ = runBestEffort("sudo", ["sfltool", "resetbtm"])
-    _ = runBestEffort(
-        "sudo",
-        ["rm", "-f", "/Library/LaunchDaemons/\(daemonLaunchDaemonPlistName)"])
-    _ = runBestEffort("sudo", ["rm", "-rf", installedMacAppPath.path])
-}
-
-func installMacAppBundle(from sourceAppPath: URL) throws {
-    let installedParentPath = installedMacAppPath.deletingLastPathComponent().path
-    try run("sudo", ["rm", "-rf", installedMacAppPath.path])
-    try run("sudo", ["cp", "-R", sourceAppPath.path, installedParentPath])
-    try run("sudo", ["chown", "-R", "root:wheel", installedMacAppPath.path])
-}
-
-func registerInstalledMacHelper() throws {
-    let executablePath =
-        installedMacAppPath
-        .appendingPathComponent("Contents/MacOS/CellTunnelMac")
-    guard fileManager.fileExists(atPath: executablePath.path) else {
-        throw ToolError.failure("installed app executable not found: \(executablePath.path)")
-    }
-    try run("open", ["-W", "-n", installedMacAppPath.path, "--args", macHelperInstallArgument])
 }
 
 func activatePhoneDevice(configuration: String, listenerPort: UInt16? = nil) throws {
@@ -435,45 +296,4 @@ func compareVersionComponents(lhs: [Int], rhs: [Int]) -> Int {
         }
     }
     return 0
-}
-
-func waitForDaemonInstallVerifyPollInterval() {
-    activationLogger.debug("install verification waiting for next poll interval")
-    RunLoop.current.run(until: Date().addingTimeInterval(0.5))
-}
-
-func throwIfVerificationIsStale(
-    _ verification: InstalledDaemonVerification,
-    expectedFingerprint: String,
-    serviceTarget: String
-) throws {
-    activationLogger.notice(
-        """
-        install verification evaluating \
-        target=\(serviceTarget, privacy: .public) \
-        expectedFingerprint=\(expectedFingerprint, privacy: .public)
-        """
-    )
-    switch verification {
-    case .staleRegistration(let registeredState):
-        activationLogger.error(
-            """
-            install verification detected stale registration \
-            target=\(serviceTarget, privacy: .public) \
-            appPath=\(registeredState.appPath.path, privacy: .public) \
-            fingerprint=\(registeredState.binaryFingerprint, privacy: .public) \
-            expectedFingerprint=\(expectedFingerprint, privacy: .public)
-            """
-        )
-        throw ToolError.failure(
-            """
-            \(serviceTarget) is registered from \(registeredState.appPath.path) \
-            fingerprint=\(registeredState.binaryFingerprint) \
-            expected_fingerprint=\(expectedFingerprint); \
-            run make install to reinstall from the current build
-            """
-        )
-    case .currentBuild, .notRegistered:
-        return
-    }
 }

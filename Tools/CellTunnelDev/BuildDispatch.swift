@@ -28,31 +28,25 @@ func buildProject(target: BuildTarget, configuration: String) throws {
     case .iphoneSimulator:
         try buildIPhoneSimulator(configuration: configuration)
     case .iphoneDevice:
-        let signing = try requireSigningConfig()
+        let team = try developmentTeamFromEnvironment()
         try buildPhoneDevice(
             configuration: configuration,
-            signing: signing,
+            developmentTeam: team,
             shouldGenerateProject: false
         )
     case .all:
-        let signing = try requireSigningConfig()
+        let team = try developmentTeamFromEnvironment()
         try buildMacAgent(configuration: configuration)
         try buildMacTunnelProvider(configuration: configuration)
         try buildIPhoneSimulator(configuration: configuration)
         try buildPhoneDevice(
             configuration: configuration,
-            signing: signing,
+            developmentTeam: team,
             shouldGenerateProject: false
         )
     }
 
     try printBuildArtifactFingerprints(target: target, configuration: configuration)
-}
-
-private func requireSigningConfig() throws -> SigningConfig {
-    let resolved = try signingConfig()
-    try requireSigningIdentity(resolved)
-    return resolved
 }
 
 private func runBuildPrologue() throws {

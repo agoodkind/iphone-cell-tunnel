@@ -35,28 +35,10 @@ include bootstrap.mk
 
 .DEFAULT_GOAL := check
 
-.PHONY: format sign signing-check notary-setup notarize-check notarize \
-	helper-refresh install-helper uninstall-helper \
-	daemon-reload iphone-install smoke logs
+.PHONY: format iphone-install smoke logs
 
 format:
 	@$(CELL_TUNNEL_DEV) format
-
-helper-refresh:
-	@$(CELL_TUNNEL_DEV) refresh-helper $(CONFIG)
-
-# Canonical install/uninstall entry points. `make install` is reserved by
-# swift-build.mk for `deploy` (build+activate) and cannot be cleanly overridden.
-install-helper:
-	@$(CELL_TUNNEL_DEV) install-helper $(CONFIG)
-
-uninstall-helper:
-	@$(CELL_TUNNEL_DEV) uninstall-helper
-
-daemon-reload:
-	@$(CELL_TUNNEL_DEV) build daemon $(CONFIG)
-	@sudo cp Products/celltunneld /Applications/CellTunnelMac.app/Contents/Library/LaunchServices/celltunneld
-	@sudo launchctl kickstart -k system/io.goodkind.celltunneld
 
 iphone-install:
 	@$(CELL_TUNNEL_DEV) activate iphone $(CONFIG)
@@ -76,21 +58,6 @@ smoke:
 
 logs:
 	@printf 'make logs: open two terminals\n'
-	@printf '  terminal 1 (mac daemon):  log stream --predicate %s\n' "'subsystem == \"io.goodkind.celltunnel\"'"
+	@printf '  terminal 1 (mac agent):    log stream --predicate %s\n' "'subsystem == \"io.goodkind.celltunnel\"'"
 	@printf '  terminal 2 (iphone):       $(CELL_TUNNEL_DEV) iphone-logs --app\n'
 	@printf 'TODO: graduate this into a cell-tunnel-dev logs subcommand that streams both\n'
-
-sign:
-	@$(CELL_TUNNEL_DEV) sign $(CONFIG)
-
-signing-check:
-	@$(CELL_TUNNEL_DEV) signing-check
-
-notary-setup:
-	@$(CELL_TUNNEL_DEV) notary-setup
-
-notarize-check:
-	@$(CELL_TUNNEL_DEV) notarize-check
-
-notarize:
-	@$(CELL_TUNNEL_DEV) notarize $(CONFIG)

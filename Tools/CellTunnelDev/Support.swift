@@ -28,32 +28,15 @@ let toolsPackageDirectory = repoRoot.appendingPathComponent("Tools")
 let productsDirectory = repoRoot.appendingPathComponent("Products")
 let buildDirectory = repoRoot.appendingPathComponent("build")
 let derivedDataDirectory = buildDirectory.appendingPathComponent("DerivedData")
-let signingConfigURL = repoRoot.appendingPathComponent("config/signing.env")
-let defaultDeveloperIDIdentity = "Developer ID Application: Alex Goodkind (H3BMXM4W7H)"
-let defaultDevelopmentTeam = "H3BMXM4W7H"
-let defaultBundleIdentifierPrefix = "io.goodkind"
-let defaultNotaryProfile = "cell-tunnel-notary"
-let daemonProductName = "celltunneld"
-let daemonLaunchDaemonPlistName = "io.goodkind.celltunneld.plist"
 let macOSPlatformName = "macosx"
 let iOSDevicePlatformName = "iphoneos"
 let iOSSimulatorPlatformName = "iphonesimulator"
 let phoneBundleIdentifier = "io.goodkind.CellTunnelPhone"
-let macBundleIdentifier = "io.goodkind.CellTunnelMac"
-let macActivationArgument = "--cell-tunnel-activate-helper"
-let macHelperInstallArgument = "--cell-tunnel-install-helper"
 let phoneActivationArgument = "--cell-tunnel-start-relay"
 let phoneListenerPortArgument = "--cell-tunnel-port"
 let autoCreatedSimulatorNamePrefix = "CellTunnelPhone Auto"
-let daemonServiceLabel = "io.goodkind.celltunneld"
-let daemonServiceTarget = "system/\(daemonServiceLabel)"
-let daemonExecutableRelativePath = "Contents/Library/LaunchServices/\(daemonProductName)"
-let daemonInstallVerifyPollInterval = Duration.milliseconds(500)
-let daemonInstallVerifyTimeout = Duration.seconds(15)
-let installedMacAppPath = URL(fileURLWithPath: "/Applications/CellTunnelMac.app")
 
 enum ActivationTarget: String, CaseIterable {
-    case mac
     case iphone
     case iphoneSimulator = "iphone-simulator"
 }
@@ -91,6 +74,55 @@ func xcodeBuildCacheArguments(_ mode: XcodeBuildCacheMode) -> [String] {
     case .disabled:
         return environmentArguments("SWIFT_MK_XCODEBUILD_NO_CACHE_ARGS")
     }
+}
+
+private let developmentTeamConfigPath = repoRoot.appendingPathComponent("config/signing.env")
+
+func developmentTeamFromEnvironment() throws -> String {
+    let environment = ProcessInfo.processInfo.environment
+    for key in ["TUIST_DEVELOPMENT_TEAM", "DEVELOPMENT_TEAM"] {
+        if let value = environment[key]?.trimmingCharacters(in: .whitespaces), !value.isEmpty {
+            return value
+        }
+    }
+    if let teamFromFile = try developmentTeamFromConfigFile() {
+        return teamFromFile
+    }
+    throw ToolError.failure(
+        """
+        DEVELOPMENT_TEAM (or TUIST_DEVELOPMENT_TEAM) must be set in the environment, \
+        or DEVELOPMENT_TEAM defined in \(developmentTeamConfigPath.path)
+        """
+    )
+}
+
+private func developmentTeamFromConfigFile() throws -> String? {
+    guard fileManager.fileExists(atPath: developmentTeamConfigPath.path) else {
+        return nil
+    }
+    let contents = try String(contentsOf: developmentTeamConfigPath, encoding: .utf8)
+    for rawLine in contents.components(separatedBy: .newlines) {
+        let line = rawLine.trimmingCharacters(in: .whitespaces)
+        if line.isEmpty || line.hasPrefix("#") {
+            continue
+        }
+        let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2 else {
+            continue
+        }
+        let key = String(parts[0]).trimmingCharacters(in: .whitespaces)
+        guard key == "DEVELOPMENT_TEAM" else {
+            continue
+        }
+        let value = String(parts[1])
+            .trimmingCharacters(in: .whitespaces)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        guard !value.isEmpty else {
+            continue
+        }
+        return value
+    }
+    return nil
 }
 
 func run(
@@ -214,22 +246,6 @@ func copyReplacingItem(at source: URL, to destination: URL) throws {
         try fileManager.removeItem(at: destination)
     }
     try fileManager.copyItem(at: source, to: destination)
-}
-
-func replaceDirectory(at destination: URL, withItemAt source: URL) throws {
-    if fileManager.fileExists(atPath: destination.path) {
-        _ = try fileManager.replaceItemAt(destination, withItemAt: source)
-        return
-    }
-
-    try fileManager.moveItem(at: source, to: destination)
-}
-
-func makeTemporaryDirectory(name: String) throws -> URL {
-    let stagingParentDirectory = buildDirectory.appendingPathComponent(name)
-    let directory = stagingParentDirectory.appendingPathComponent(UUID().uuidString)
-    try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-    return directory
 }
 
 func xcodeConfigurationBuildDirectory(configuration: String, platformName: String) -> URL {
