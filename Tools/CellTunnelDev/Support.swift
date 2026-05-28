@@ -248,6 +248,10 @@ func copyReplacingItem(at source: URL, to destination: URL) throws {
     try fileManager.copyItem(at: source, to: destination)
 }
 
+func printToolOutput(_ message: String) {
+    print(message)
+}
+
 func xcodeConfigurationBuildDirectory(configuration: String, platformName: String) -> URL {
     productsDirectory.appendingPathComponent(configuration).appendingPathComponent(platformName)
 }
