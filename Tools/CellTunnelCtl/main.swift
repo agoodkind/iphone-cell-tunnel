@@ -11,6 +11,11 @@ enum CellTunnelCtl {
         CellTunnelLog.bootstrap()
         let arguments = Array(CommandLine.arguments.dropFirst())
 
+        if arguments.isEmpty {
+            printUsage()
+            return
+        }
+
         if arguments.first == helpSubcommand || arguments.first == helpShortSubcommand {
             printUsage()
             return
@@ -40,11 +45,8 @@ private func printUsage() {
         commands:
           status                       Print current tunnel daemon status.
           check                        Print environment check report.
-          start-discovery              Start relay discovery on the agent.
-          stop-discovery               Stop relay discovery on the agent.
-          discover                     Start discovery and poll until a service is ready.
-          probe                        Run status + start-discovery + list-relay-services in order.
-          select <serviceID>           Select a discovered relay service.
+          devices                      List discovered relay devices.
+          select <n|serviceID>         Select a relay by 1-based index or service id.
           start --config <path>        Start the tunnel using the given WireGuard config.
                                        Optional: --relay <host:port>.
           stop                         Stop the tunnel.

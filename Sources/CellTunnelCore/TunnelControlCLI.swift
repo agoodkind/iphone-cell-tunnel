@@ -2,14 +2,13 @@ import CellTunnelLog
 import Foundation
 
 private let logger = CellTunnelLog.logger(category: .daemon)
-private let discoverPollingInterval = Duration.milliseconds(250)
-private let discoverTimeout = Duration.seconds(10)
+private let deviceListingIndexBase = 1
+private let noRelayDevicesMessage = "no relay devices found"
 
 public enum TunnelControlCLIAction: Equatable, Sendable {
     case check
-    case discover
-    case probe
-    case select(serviceID: String)
+    case devices
+    case select(reference: String)
     case start(TunnelStartSettings)
     case startDiscovery
     case status
@@ -28,16 +27,14 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
             return .status
         case "check":
             return .check
+        case "devices":
+            return .devices
         case "start-discovery":
             return .startDiscovery
         case "stop-discovery":
             return .stopDiscovery
-        case "discover":
-            return .discover
-        case "probe":
-            return .probe
         case "select":
-            return try .select(serviceID: parseSelect(arguments: Array(arguments.dropFirst())))
+            return try .select(reference: parseSelect(arguments: Array(arguments.dropFirst())))
         case "stop":
             return .stop
         case "start":
@@ -48,15 +45,15 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
     }
 
     private static func parseSelect(arguments: [String]) throws -> String {
-        guard let serviceID = arguments.first else {
-            throw TunnelDaemonError.usage("select requires <serviceID>")
+        guard let reference = arguments.first else {
+            throw TunnelDaemonError.usage("select requires <n|serviceID>")
         }
         guard arguments.count == 1 else {
-            throw TunnelDaemonError.usage("select accepts only <serviceID>")
+            throw TunnelDaemonError.usage("select accepts only <n|serviceID>")
         }
-        let trimmed = serviceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmed = reference.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
-            throw TunnelDaemonError.usage("select <serviceID> must not be empty")
+            throw TunnelDaemonError.usage("select <n|serviceID> must not be empty")
         }
         return trimmed
     }
@@ -109,19 +106,16 @@ public struct TunnelControlCLIExecutor: Sendable {
         case .check:
             let report = try await client.check()
             return report.renderedOutput
+        case .devices:
+            return try await listDevices()
         case .startDiscovery:
             let snapshot = try await client.startRelayDiscovery()
             return snapshot.renderedOutput
         case .stopDiscovery:
             let snapshot = try await client.stopRelayDiscovery()
             return snapshot.renderedOutput
-        case .discover:
-            return try await discover()
-        case .probe:
-            return try await probe()
-        case .select(let serviceID):
-            let snapshot = try await client.selectRelayService(serviceID: serviceID)
-            return snapshot.renderedOutput
+        case .select(let reference):
+            return try await selectDevice(reference: reference)
         case .start(let settings):
             let status = try await client.startTunnel(settings: settings)
             return status.renderedOutput
@@ -131,36 +125,47 @@ public struct TunnelControlCLIExecutor: Sendable {
         }
     }
 
-    private func discover() async throws -> String {
-        _ = try await client.startRelayDiscovery()
-
-        let deadline = ContinuousClock.now + discoverTimeout
-        while ContinuousClock.now < deadline {
-            let snapshot = try await client.listRelayServices()
-            let hasReadyService = snapshot.services.contains { $0.preferredEndpoint != nil }
-            if hasReadyService {
-                return snapshot.renderedOutput
-            }
-            try await Task.sleep(for: discoverPollingInterval)
-        }
-
-        return try await client.listRelayServices().renderedOutput
+    private func listDevices() async throws -> String {
+        let snapshot = try await client.listRelayServices()
+        return renderDeviceListing(services: snapshot.services)
     }
 
-    private func probe() async throws -> String {
-        let status = try await client.status()
-        let discoveryStart = try await client.startRelayDiscovery()
-        let discoveryList = try await client.listRelayServices()
+    private func selectDevice(reference: String) async throws -> String {
+        let serviceID = try await resolveServiceID(reference: reference)
+        let snapshot = try await client.selectRelayService(serviceID: serviceID)
+        return snapshot.renderedOutput
+    }
 
-        return [
-            "probe=status",
-            status.renderedOutput,
-            "",
-            "probe=start-discovery",
-            discoveryStart.renderedOutput,
-            "",
-            "probe=list-relay-services",
-            discoveryList.renderedOutput,
-        ].joined(separator: "\n")
+    // A bare integer is a 1-based index into the most recent `devices` listing;
+    // anything else is treated as a literal service id.
+    private func resolveServiceID(reference: String) async throws -> String {
+        guard let index = Int(reference) else {
+            return reference
+        }
+        let snapshot = try await client.listRelayServices()
+        let services = snapshot.services
+        let offset = index - deviceListingIndexBase
+        guard offset >= 0, offset < services.count else {
+            throw TunnelDaemonError.usage(
+                "select index \(index) is out of range (\(services.count) devices)"
+            )
+        }
+        return services[offset].id
+    }
+
+    private func renderDeviceListing(services: [TunnelRelayService]) -> String {
+        guard !services.isEmpty else {
+            return noRelayDevicesMessage
+        }
+        var lines: [String] = []
+        for (offset, service) in services.enumerated() {
+            let position = offset + deviceListingIndexBase
+            var line = "\(position)) \(service.serviceName)  \(service.id)"
+            if service.isSelected {
+                line += " (selected)"
+            }
+            lines.append(line)
+        }
+        return lines.joined(separator: "\n")
     }
 }

@@ -22,7 +22,14 @@
 	<string>$(MACOSX_DEPLOYMENT_TARGET)</string>
 	<key>LSUIElement</key>
 	<true/>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_cellrelay._udp</string>
+		<string>_cellrelaycontrol._tcp</string>
+	</array>
 	<key>NSHumanReadableCopyright</key>
 	<string>Copyright (c) goodkind.io</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Cell Tunnel discovers the iPhone relay over the local link.</string>
 </dict>
 </plist>

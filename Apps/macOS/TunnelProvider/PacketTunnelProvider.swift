@@ -9,6 +9,7 @@ import WireGuardKit
 private let logger = CellTunnelLog.logger(category: .daemon)
 
 private let providerConfigWireGuardKey = "wireguardConfig"
+private let providerConfigRelayServiceKey = "selectedRelayServiceName"
 private let defaultDiscoveryTimeoutSeconds: UInt64 = 10
 private let discoveryInitialPollNanoseconds: UInt64 = 200_000_000
 private let discoveryMaxPollNanoseconds: UInt64 = 1_000_000_000
@@ -86,7 +87,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let configText = try extractWireGuardConfigText()
         let parsedConfig = try WireGuardConfigParser.parse(configText)
 
-        let (relayServiceEndpoint, resolvedRelay) = try await discoverIPhoneRelay()
+        let selectedRelayServiceName = selectedRelayServiceName()
+        let (relayServiceEndpoint, resolvedRelay) = try await discoverIPhoneRelay(
+            preferredServiceName: selectedRelayServiceName
+        )
         logger.notice(
             """
             discovery resolved host=\(resolvedRelay.host, privacy: .public) \
@@ -284,12 +288,40 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         return configText
     }
 
-    private func discoverIPhoneRelay() async throws -> (
+    // The agent writes the user's chosen relay into providerConfiguration when a
+    // selection exists; absent that key, discovery keeps first-service behavior.
+    private func selectedRelayServiceName() -> String? {
+        guard let providerProtocol = protocolConfiguration as? NETunnelProviderProtocol else {
+            return nil
+        }
+        guard let providerConfiguration = providerProtocol.providerConfiguration else {
+            return nil
+        }
+        guard
+            let name = providerConfiguration[providerConfigRelayServiceKey] as? String
+        else {
+            return nil
+        }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return nil
+        }
+        return trimmed
+    }
+
+    private func discoverIPhoneRelay(
+        preferredServiceName: String?
+    ) async throws -> (
         serviceEndpoint: NWEndpoint,
         resolved: TunnelRelayEndpoint
     ) {
-        logger.notice("discovery launch beginning")
-        let waiter = DiscoveryServiceWaiter()
+        logger.notice(
+            """
+            discovery launch beginning \
+            preferred=\(preferredServiceName ?? "none", privacy: .public)
+            """
+        )
+        let waiter = DiscoveryServiceWaiter(preferredServiceName: preferredServiceName)
         await discoveryManager.start { services in
             waiter.deliver(services: services)
         }
@@ -298,21 +330,21 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         if !initialServices.isEmpty {
             waiter.deliver(services: Set(initialServices))
         }
-        let firstService = try await waiter.waitForFirstService()
+        let service = try await waiter.waitForService()
         logger.notice(
-            "discovery first service surfaced identifier=\(firstService.identifier, privacy: .public)"
+            "discovery service surfaced identifier=\(service.identifier, privacy: .public)"
         )
         // Connect to the Bonjour service endpoint so the Network framework
         // resolves and binds the link-local relay to its interface; a
         // reconstructed hostPort literal loses that scope and cannot route.
         guard
             let serviceEndpoint = await discoveryManager.endpoint(
-                forIdentifier: firstService.identifier
+                forIdentifier: service.identifier
             )
         else {
             throw PacketTunnelProviderError.discoveryTimeout
         }
-        let resolved = try await discoveryManager.resolve(firstService.identifier)
+        let resolved = try await discoveryManager.resolve(service.identifier)
         return (serviceEndpoint, resolved)
     }
 

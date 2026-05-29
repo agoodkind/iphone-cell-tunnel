@@ -7,6 +7,7 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 
 private let providerBundleIdentifier = tunnelProviderBundleIdentifier
 private let providerConfigWireGuardKey = "wireguardConfig"
+private let providerConfigRelayServiceKey = "selectedRelayServiceName"
 private let tunnelLocalizedDescription = "Cell Tunnel"
 private let tunnelServerAddressPlaceholder = "iPhone Cellular Relay"
 private let providerMessageTimeoutSeconds: Double = 5
@@ -25,6 +26,7 @@ actor AgentTunnelController {
     private var manager: NETunnelProviderManager?
     private var statusObserver: NSObjectProtocol?
     private var latestStatus: NEVPNStatus = .invalid
+    private let relayBrowser = RelayDeviceBrowser()
 
     func handle(request: AgentControlRequest) async -> AgentControlResponse {
         switch request {
@@ -37,16 +39,13 @@ actor AgentTunnelController {
         case .stopTunnel:
             return await handleStopTunnel()
         case .startRelayDiscovery:
-            return await forwardDiscovery(operationName: "startRelayDiscovery")
+            return startDiscovery()
         case .stopRelayDiscovery:
-            return await forwardDiscovery(operationName: "stopRelayDiscovery")
+            return snapshotResponse()
         case .listRelayServices:
-            return await forwardDiscovery(operationName: "listRelayServices")
-        case .selectRelayService:
-            return failure(
-                errorCode: .relaySelectionRequired,
-                message: "relay selection happens inside the extension during start"
-            )
+            return snapshotResponse()
+        case .selectRelayService(let serviceID):
+            return selectRelay(serviceID: serviceID)
         }
     }
 
@@ -152,31 +151,52 @@ actor AgentTunnelController {
         }
     }
 
-    private func forwardDiscovery(operationName: String) async -> AgentControlResponse {
-        do {
-            let manager = try await loadOrCreateManager()
-            guard isSessionActive(on: manager) else {
-                return AgentControlResponse(discovery: TunnelDiscoverySnapshot())
-            }
-            let response = try await forward(
-                request: .discoverySnapshot,
-                on: manager,
-                operationName: operationName
+    private func startDiscovery() -> AgentControlResponse {
+        relayBrowser.start()
+        logger.notice("agent relay discovery started from browser")
+        return snapshotResponse()
+    }
+
+    private func selectRelay(serviceID: String) -> AgentControlResponse {
+        let devices = relayBrowser.snapshot()
+        guard let device = devices.first(where: { $0.identifier == serviceID }) else {
+            return failure(
+                errorCode: .relaySelectionRequired,
+                message: "no discovered relay with id \(serviceID)"
             )
-            if let failureMessage = response.failureMessage {
-                return failure(errorCode: .discoveryUnavailable, message: failureMessage)
-            }
-            return AgentControlResponse(discovery: response.discovery ?? TunnelDiscoverySnapshot())
-        } catch {
-            logger.error(
-                """
-                \(operationName) agent operation caught error \
-                details=\(String(describing: error), privacy: .public) \
-                recovery=return-failure-response
-                """
-            )
-            return failure(from: error)
         }
+        RelaySelectionStore.setSelectedRelayServiceName(device.serviceName)
+        logger.notice(
+            "agent selected relay service=\(device.serviceName, privacy: .public)"
+        )
+        return snapshotResponse()
+    }
+
+    private func snapshotResponse() -> AgentControlResponse {
+        let devices = relayBrowser.snapshot()
+        let selectedServiceName = RelaySelectionStore.selectedRelayServiceName()
+        let services = devices.map { device in
+            TunnelRelayService(
+                id: device.identifier,
+                serviceName: device.serviceName,
+                serviceType: device.serviceType,
+                domain: device.domain,
+                interfaceIndex: device.interfaceIndex,
+                hostName: "",
+                endpoints: [],
+                preferredEndpoint: nil,
+                isSelected: device.serviceName == selectedServiceName
+            )
+        }
+        let selectedServiceID = devices.first { device in
+            device.serviceName == selectedServiceName
+        }?.identifier
+        let snapshot = TunnelDiscoverySnapshot(
+            phase: services.isEmpty ? .browsing : .ready,
+            services: services,
+            selectedServiceID: selectedServiceID
+        )
+        return AgentControlResponse(discovery: snapshot)
     }
 
     private func forwardStatus(
@@ -213,7 +233,11 @@ extension AgentTunnelController {
         let providerProtocol = NETunnelProviderProtocol()
         providerProtocol.providerBundleIdentifier = providerBundleIdentifier
         providerProtocol.serverAddress = tunnelServerAddressPlaceholder
-        providerProtocol.providerConfiguration = [providerConfigWireGuardKey: wireGuardConfig]
+        var providerConfiguration = [providerConfigWireGuardKey: wireGuardConfig]
+        if let selectedServiceName = RelaySelectionStore.selectedRelayServiceName() {
+            providerConfiguration[providerConfigRelayServiceKey] = selectedServiceName
+        }
+        providerProtocol.providerConfiguration = providerConfiguration
         manager.protocolConfiguration = providerProtocol
         manager.localizedDescription = tunnelLocalizedDescription
         manager.isEnabled = true
