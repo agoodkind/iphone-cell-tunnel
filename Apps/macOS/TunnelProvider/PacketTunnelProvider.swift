@@ -3,22 +3,16 @@ import CellTunnelLog
 import Foundation
 import Network
 import NetworkExtension
+import Synchronization
 import WireGuardKit
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 
 private let providerConfigWireGuardKey = "wireguardConfig"
-private let defaultTunnelMTU: UInt16 = 1_280
 private let defaultDiscoveryTimeoutSeconds: UInt64 = 10
-private let ipv4PrefixLengthMax: Int = 32
-private let ipv4OctetMask: UInt32 = 0xFF
-private let ipv4OctetShift1: UInt32 = 24
-private let ipv4OctetShift2: UInt32 = 16
-private let ipv4OctetShift3: UInt32 = 8
 private let discoveryInitialPollNanoseconds: UInt64 = 200_000_000
 private let discoveryMaxPollNanoseconds: UInt64 = 1_000_000_000
 private let discoveryPollBackoffFactor: UInt64 = 2
-private let unspecifiedRemoteAddress = "0.0.0.0"
 
 // The completion handler arrives from Objective-C without a Sendable marking;
 // box it so the start Task can call it across the concurrency boundary.
@@ -33,7 +27,6 @@ private struct UncheckedSendableBox<Value>: @unchecked Sendable {
 enum PacketTunnelProviderError: LocalizedError {
     case discoveryTimeout
     case missingWireGuardConfig
-    case unsupportedRelayHost(String)
 
     var errorDescription: String? {
         switch self {
@@ -41,8 +34,6 @@ enum PacketTunnelProviderError: LocalizedError {
             return "discovery did not surface an iPhone relay before timeout"
         case .missingWireGuardConfig:
             return "providerConfiguration is missing \(providerConfigWireGuardKey)"
-        case .unsupportedRelayHost(let host):
-            return "discovered relay host is not usable as NWEndpoint host=\(host)"
         }
     }
 }
@@ -51,12 +42,19 @@ enum PacketTunnelProviderError: LocalizedError {
 // stored state mutated across start and stop is never touched concurrently.
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let discoveryManager = DiscoveryManager()
-    private let relayTransport = RelayTransport()
+    private let relayMetrics: RelayMetrics
+    private let relayTransport: RelayTransport
     private let wireGuardRuntime = WireGuardRuntime()
     private var controlChannel: ControlChannel?
     private var wireGuardRelayBind: WireGuardRelayBind?
+    private var throughputLogger: RelayThroughputLogger?
+    private var statusConsumerTask: Task<Void, Never>?
+    private let phoneCounters = Mutex<TunnelCounters?>(nil)
 
     override init() {
+        let metrics = RelayMetrics()
+        relayMetrics = metrics
+        relayTransport = RelayTransport(metrics: metrics)
         super.init()
         logger.notice("PacketTunnelProvider initialized")
     }
@@ -87,16 +85,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
         let configText = try extractWireGuardConfigText()
         let parsedConfig = try WireGuardConfigParser.parse(configText)
-        let networkSettings = buildNetworkSettings(from: parsedConfig)
-        try await setTunnelNetworkSettings(networkSettings)
-        logger.notice(
-            """
-            network settings applied tunnelRemoteAddress=\(networkSettings.tunnelRemoteAddress, privacy: .public) \
-            mtu=\(networkSettings.mtu?.intValue ?? 0, privacy: .public)
-            """
-        )
 
-        let resolvedRelay = try await discoverIPhoneRelay()
+        let (relayServiceEndpoint, resolvedRelay) = try await discoverIPhoneRelay()
         logger.notice(
             """
             discovery resolved host=\(resolvedRelay.host, privacy: .public) \
@@ -104,8 +94,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             """
         )
 
-        let relayNWEndpoint = try makeNWEndpoint(from: resolvedRelay)
-        try relayTransport.connect(to: relayNWEndpoint)
+        try relayTransport.connect(to: relayServiceEndpoint)
         logger.notice("relay transport connected")
 
         let serverRelayEndpoint = try makeServerRelayEndpoint(from: parsedConfig.peer)
@@ -113,8 +102,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         controlChannel = channel
         try await channel.start()
         logger.notice("control channel handshake done")
+        startPhoneCountersConsumer(channel: channel)
 
-        let relayBind = WireGuardRelayBind(transport: relayTransport)
+        let relayBind = WireGuardRelayBind(transport: relayTransport, metrics: relayMetrics)
         wireGuardRelayBind = relayBind
 
         let tunnelConfiguration = try WireGuardTunnelConfigBuilder.build(
@@ -128,13 +118,39 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         )
         logger.notice("tunnel runtime started")
 
+        let throughputLogger = RelayThroughputLogger(metrics: relayMetrics)
+        self.throughputLogger = throughputLogger
+        throughputLogger.start()
+
         logger.notice("tunnel start completion handler called success=true")
+    }
+
+    // The iPhone pushes its relay counters on the control channel's Status message
+    // every few seconds. Keep the latest copy so `currentStatusSnapshot()` can
+    // report both ends. This runs off the datagram hot path.
+    private func startPhoneCountersConsumer(channel: ControlChannel) {
+        statusConsumerTask = Task { [weak self] in
+            for await status in channel.statusStream {
+                guard let self else {
+                    return
+                }
+                if let counters = status.counters {
+                    phoneCounters.withLock { $0 = counters }
+                }
+            }
+        }
     }
 
     override func stopTunnel(with reason: NEProviderStopReason) async {
         logger.notice(
             "tunnel stop request received reason=\(String(describing: reason), privacy: .public)"
         )
+        throughputLogger?.stop()
+        throughputLogger = nil
+        statusConsumerTask?.cancel()
+        statusConsumerTask = nil
+        phoneCounters.withLock { $0 = nil }
+
         await wireGuardRuntime.stop()
         logger.notice("tunnel runtime stopped on shutdown")
 
@@ -198,7 +214,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         return TunnelDaemonStatusSnapshot(
             running: running,
             routeState: running ? .installed : .notInstalled,
-            peerState: running ? .wireGuardConfigured : .notSelected
+            peerState: running ? .wireGuardConfigured : .notSelected,
+            macCounters: relayMetrics.snapshot(),
+            phoneCounters: phoneCounters.withLock { $0 }
         )
     }
 
@@ -266,38 +284,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         return configText
     }
 
-    private func buildNetworkSettings(
-        from parsedConfig: WireGuardClientConfig
-    ) -> NEPacketTunnelNetworkSettings {
-        let remoteAddress = parsedConfig.peer.endpoint?.host ?? unspecifiedRemoteAddress
-        let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: remoteAddress)
-
-        let ipv4Addresses = parsedConfig.interface.addresses.filter { $0.family == .ipv4 }
-        if let ipv4 = ipv4Addresses.first {
-            let ipv4Settings = NEIPv4Settings(
-                addresses: [ipv4.address],
-                subnetMasks: [ipv4SubnetMask(forPrefixLength: ipv4.prefixLength)]
-            )
-            ipv4Settings.includedRoutes = [NEIPv4Route.default()]
-            settings.ipv4Settings = ipv4Settings
-        }
-
-        let ipv6Addresses = parsedConfig.interface.addresses.filter { $0.family == .ipv6 }
-        if let ipv6 = ipv6Addresses.first {
-            let ipv6Settings = NEIPv6Settings(
-                addresses: [ipv6.address],
-                networkPrefixLengths: [NSNumber(value: ipv6.prefixLength)]
-            )
-            ipv6Settings.includedRoutes = [NEIPv6Route.default()]
-            settings.ipv6Settings = ipv6Settings
-        }
-
-        let mtuValue = parsedConfig.interface.mtu ?? Int(defaultTunnelMTU)
-        settings.mtu = NSNumber(value: mtuValue)
-        return settings
-    }
-
-    private func discoverIPhoneRelay() async throws -> TunnelRelayEndpoint {
+    private func discoverIPhoneRelay() async throws -> (
+        serviceEndpoint: NWEndpoint,
+        resolved: TunnelRelayEndpoint
+    ) {
         logger.notice("discovery launch beginning")
         let waiter = DiscoveryServiceWaiter()
         await discoveryManager.start { services in
@@ -312,15 +302,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         logger.notice(
             "discovery first service surfaced identifier=\(firstService.identifier, privacy: .public)"
         )
-        return try await discoveryManager.resolve(firstService.identifier)
-    }
-
-    private func makeNWEndpoint(from endpoint: TunnelRelayEndpoint) throws -> NWEndpoint {
-        guard let port = NWEndpoint.Port(rawValue: UInt16(clamping: endpoint.port)) else {
-            throw PacketTunnelProviderError.unsupportedRelayHost(endpoint.host)
+        // Connect to the Bonjour service endpoint so the Network framework
+        // resolves and binds the link-local relay to its interface; a
+        // reconstructed hostPort literal loses that scope and cannot route.
+        guard
+            let serviceEndpoint = await discoveryManager.endpoint(
+                forIdentifier: firstService.identifier
+            )
+        else {
+            throw PacketTunnelProviderError.discoveryTimeout
         }
-        let host = NWEndpoint.Host(endpoint.host)
-        return NWEndpoint.hostPort(host: host, port: port)
+        let resolved = try await discoveryManager.resolve(firstService.identifier)
+        return (serviceEndpoint, resolved)
     }
 
     private func makeServerRelayEndpoint(
@@ -335,17 +328,5 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             host: wgEndpoint.host,
             port: wgEndpoint.port
         )
-    }
-
-    private func ipv4SubnetMask(forPrefixLength prefixLength: Int) -> String {
-        guard prefixLength > 0 else {
-            return unspecifiedRemoteAddress
-        }
-        let mask = ~UInt32(0) << (ipv4PrefixLengthMax - prefixLength)
-        let octet1 = (mask >> ipv4OctetShift1) & ipv4OctetMask
-        let octet2 = (mask >> ipv4OctetShift2) & ipv4OctetMask
-        let octet3 = (mask >> ipv4OctetShift3) & ipv4OctetMask
-        let octet4 = mask & ipv4OctetMask
-        return "\(octet1).\(octet2).\(octet3).\(octet4)"
     }
 }

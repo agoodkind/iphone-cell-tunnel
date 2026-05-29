@@ -350,7 +350,7 @@ private final class Resolver: @unchecked Sendable {
                 addressFamily: .ipv4
             )
         case .ipv6(let address):
-            let literal = stringAddress(address)
+            let literal = scopedAddress(address)
             return TunnelRelayEndpoint(
                 host: literal,
                 port: Int(port.rawValue),
@@ -375,10 +375,17 @@ private final class Resolver: @unchecked Sendable {
         return raw
     }
 
-    private static func stringAddress(_ address: IPv6Address) -> String {
+    // The iPhone relay advertises a link-local address (fe80::/10), which only
+    // routes when qualified with the interface scope it lives on. Keep the zone
+    // from the address, and fall back to the resolved interface name, so the
+    // reconstructed NWEndpoint can reach the relay over USB/AWDL.
+    private static func scopedAddress(_ address: IPv6Address) -> String {
         let raw = address.debugDescription
-        if let percentIndex = raw.firstIndex(of: "%") {
-            return String(raw[..<percentIndex])
+        if raw.contains("%") {
+            return raw
+        }
+        if let interfaceName = address.interface?.name {
+            return "\(raw)%\(interfaceName)"
         }
         return raw
     }

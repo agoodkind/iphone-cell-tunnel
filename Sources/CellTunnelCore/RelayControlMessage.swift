@@ -41,16 +41,19 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
         public var hasCellularPath: Bool
         public var cellularInterface: String?
         public var lastError: String?
+        public var counters: TunnelCounters?
 
         public init(
             hasCellularPath: Bool,
             cellularInterface: String? = nil,
             lastError: String? = nil,
+            counters: TunnelCounters? = nil,
             version: Int = relayControlWireVersion
         ) {
             self.hasCellularPath = hasCellularPath
             self.cellularInterface = cellularInterface
             self.lastError = lastError
+            self.counters = counters
             self.version = version
         }
     }

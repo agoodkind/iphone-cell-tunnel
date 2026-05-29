@@ -2,6 +2,14 @@ import Foundation
 import Network
 import WireGuardKit
 
+// The Mac's WireGuard backend never dials the server directly: the relay bind
+// redirects every outbound datagram to the iPhone, which resolves the real
+// server name (forwarded over the control channel) and reaches it over
+// cellular. The peer endpoint here is therefore vestigial, so it carries an IP
+// literal rather than the configured hostname, which makes WireGuardKit skip a
+// pointless server-name DNS lookup at tunnel start.
+private let relayPlaceholderPeerHost = "::1"
+
 enum WireGuardTunnelConfigBuildError: LocalizedError {
     case invalidEndpointPort(String)
     case invalidInterfaceAddress(String)
@@ -98,7 +106,7 @@ enum WireGuardTunnelConfigBuilder {
         guard let port = NWEndpoint.Port(rawValue: parsed.port) else {
             throw WireGuardTunnelConfigBuildError.invalidEndpointPort(String(parsed.port))
         }
-        let host = NWEndpoint.Host(parsed.host)
+        let host = NWEndpoint.Host(relayPlaceholderPeerHost)
         return Endpoint(host: host, port: port)
     }
 }

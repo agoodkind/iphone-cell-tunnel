@@ -1,3 +1,4 @@
+import CellTunnelCore
 import CellTunnelLog
 import Foundation
 import Network
@@ -23,8 +24,13 @@ enum RelayTransportError: LocalizedError {
 
 final class RelayTransport: @unchecked Sendable {
     private let queue = DispatchQueue(label: "io.goodkind.celltunnel.relay")
+    private let metrics: RelayMetrics
     private var connection: NWConnection?
     var onReceive: ((Data) -> Void)?
+
+    init(metrics: RelayMetrics) {
+        self.metrics = metrics
+    }
 
     func connect(to endpoint: NWEndpoint) throws {
         guard connection == nil else {
@@ -52,6 +58,7 @@ final class RelayTransport: @unchecked Sendable {
 
     func send(_ datagram: Data) {
         guard let activeConnection = connection else {
+            metrics.addDropped()
             logger.error(
                 """
                 relay transport send failed error=not-connected \
@@ -60,12 +67,14 @@ final class RelayTransport: @unchecked Sendable {
             )
             return
         }
+        let metrics = self.metrics
         activeConnection.send(
             content: datagram,
             completion: .contentProcessed { error in
                 guard let error else {
                     return
                 }
+                metrics.addDropped()
                 logger.error(
                     """
                     relay transport send failed \
@@ -91,7 +100,11 @@ final class RelayTransport: @unchecked Sendable {
                 return
             }
             if let data, !data.isEmpty {
-                onReceive?(data)
+                if let onReceive {
+                    onReceive(data)
+                } else {
+                    metrics.addDropped()
+                }
             }
             if let error {
                 logger.error(

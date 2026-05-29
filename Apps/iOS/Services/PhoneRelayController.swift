@@ -162,7 +162,8 @@ final class PhoneRelayController: @unchecked Sendable {
         RelayControlMessage.Status(
             hasCellularPath: cellularPath.isSatisfied,
             cellularInterface: cellularPath.interfaceName,
-            lastError: lastError
+            lastError: lastError,
+            counters: counters
         )
     }
 }
@@ -256,7 +257,10 @@ extension PhoneRelayController {
 
     private func receive(on connection: NWConnection) {
         logger.debug("phone relay receive scheduled")
-        connection.receiveMessage { [weak self, weak connection] data, _, isComplete, error in
+        // Each UDP datagram arrives as a complete message, so `isComplete` is
+        // true every time and must not stop the loop; re-arm until the
+        // connection itself goes away or reports an error.
+        connection.receiveMessage { [weak self, weak connection] data, _, _, error in
             if let error {
                 Task { @MainActor [weak self, weak connection] in
                     guard let connection else {
@@ -276,7 +280,7 @@ extension PhoneRelayController {
                 }
             }
 
-            guard !isComplete, let connection else {
+            guard connection != nil else {
                 return
             }
 

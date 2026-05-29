@@ -276,6 +276,8 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     public var lastError: String?
     public var discovery: TunnelDiscoverySnapshot
     public var activeRelayEndpoint: TunnelRelayEndpoint?
+    public var macCounters: TunnelCounters?
+    public var phoneCounters: TunnelCounters?
 
     public init(
         running: Bool = false,
@@ -285,7 +287,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         ipv6Address: String = "",
         lastError: String? = nil,
         discovery: TunnelDiscoverySnapshot = TunnelDiscoverySnapshot(),
-        activeRelayEndpoint: TunnelRelayEndpoint? = nil
+        activeRelayEndpoint: TunnelRelayEndpoint? = nil,
+        macCounters: TunnelCounters? = nil,
+        phoneCounters: TunnelCounters? = nil
     ) {
         self.running = running
         self.routeState = routeState
@@ -295,6 +299,8 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         self.lastError = lastError
         self.discovery = discovery
         self.activeRelayEndpoint = activeRelayEndpoint
+        self.macCounters = macCounters
+        self.phoneCounters = phoneCounters
     }
 
     public var renderedOutput: String {
@@ -308,10 +314,31 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         if let activeRelayEndpoint {
             lines.append("relay=\(activeRelayEndpoint.socketAddress)")
         }
+        if let macCounters {
+            lines.append(contentsOf: renderedCounterLines(macCounters, prefix: "mac"))
+        }
+        if let phoneCounters {
+            lines.append(contentsOf: renderedCounterLines(phoneCounters, prefix: "phone"))
+        }
         if let lastError, !lastError.isEmpty {
             lines.append("last_error=\(lastError)")
         }
         return lines.joined(separator: "\n")
+    }
+
+    private func renderedCounterLines(
+        _ counters: TunnelCounters,
+        prefix: String
+    ) -> [String] {
+        [
+            "\(prefix)_datagrams_from_mac=\(counters.wireGuardDatagramsFromMac)",
+            "\(prefix)_datagrams_to_mac=\(counters.wireGuardDatagramsToMac)",
+            "\(prefix)_datagrams_to_server=\(counters.wireGuardDatagramsToServer)",
+            "\(prefix)_datagrams_from_server=\(counters.wireGuardDatagramsFromServer)",
+            "\(prefix)_dropped=\(counters.droppedWireGuardDatagrams)",
+            "\(prefix)_bytes_in=\(counters.relayBytesIn)",
+            "\(prefix)_bytes_out=\(counters.relayBytesOut)",
+        ]
     }
 }
 
