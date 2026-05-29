@@ -5,6 +5,7 @@ private let readyStateText = "Ready"
 
 struct PhoneContentView: View {
     @Bindable var relayController: PhoneRelayController
+    @State private var isPresentingDebugConsole = false
 
     var body: some View {
         NavigationStack {
@@ -51,6 +52,10 @@ struct PhoneContentView: View {
             }
             .navigationTitle("Cell Tunnel")
             .listStyle(.insetGrouped)
+            .debugConsoleToolbar(
+                isPresented: $isPresentingDebugConsole,
+                relayController: relayController
+            )
         }
     }
 
@@ -76,6 +81,35 @@ private struct RelayStatus {
     let text: String
     let color: Color
     let symbol: String
+}
+
+extension View {
+    #if DEBUG
+        @ViewBuilder func debugConsoleToolbar(
+            isPresented: Binding<Bool>,
+            relayController: PhoneRelayController
+        ) -> some View {
+            toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        isPresented.wrappedValue = true
+                    } label: {
+                        Image(systemName: "ladybug")
+                    }
+                }
+            }
+            .sheet(isPresented: isPresented) {
+                DebugConsoleView(relayController: relayController)
+            }
+        }
+    #else
+        func debugConsoleToolbar(
+            isPresented _: Binding<Bool>,
+            relayController _: PhoneRelayController
+        ) -> some View {
+            self
+        }
+    #endif
 }
 
 #Preview {
