@@ -16,6 +16,7 @@
         let relayController: PhoneRelayController
 
         @Environment(\.dismiss) private var dismiss
+        @State private var tunnelManager = PhoneTunnelManager()
         @State private var endpointText = ""
         @State private var restartResult = ""
         @State private var endpointResult = ""
@@ -123,7 +124,18 @@
 
         @ViewBuilder private var backgroundTunnelSection: some View {
             Section("Background Tunnel") {
-                LabeledContent("iOS NetworkExtension", value: "Not yet built")
+                LabeledContent("Status", value: tunnelManager.statusDescription)
+                LabeledContent("Last Error", value: tunnelManager.lastError ?? valueNone)
+                Button {
+                    startTunnel()
+                } label: {
+                    Label("Start iOS tunnel", systemImage: "play.fill")
+                }
+                Button {
+                    stopTunnel()
+                } label: {
+                    Label("Stop iOS tunnel", systemImage: "stop.fill")
+                }
             }
         }
 
@@ -191,6 +203,18 @@
                     isProbingCellular = false
                 }
             }
+        }
+
+        private func startTunnel() {
+            logger.notice("developer console start ios tunnel requested")
+            Task {
+                await tunnelManager.start()
+            }
+        }
+
+        private func stopTunnel() {
+            logger.notice("developer console stop ios tunnel requested")
+            tunnelManager.stop()
         }
 
         private func runLoopback() {

@@ -52,6 +52,7 @@ let macHardenedRuntimeSettings: SettingsDictionary = [
 let cellTunnelPhoneBaseSettings: SettingsDictionary = [
     "PRODUCT_NAME": "CellTunnelPhone",
     "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "",
+    "REGISTER_APP_GROUPS": "YES",
 ]
 
 let appDependencies: [TargetDependency] = [
@@ -145,7 +146,8 @@ let project = Project(
             sources: [
                 "Apps/iOS/**"
             ],
-            dependencies: appDependencies,
+            entitlements: .file(path: "Apps/iOS/Entitlements/CellTunnelPhone.entitlements"),
+            dependencies: appDependencies + [.target(name: "CellTunnelPhoneTunnel")],
             settings: .settings(base: cellTunnelPhoneBaseSettings)
         ),
         .target(
@@ -189,6 +191,22 @@ let project = Project(
             dependencies: tunnelProviderDependencies,
             settings: .settings(base: macHardenedRuntimeSettings)
         ),
+        .target(
+            name: "CellTunnelPhoneTunnel",
+            destinations: [.iPhone],
+            product: .appExtension,
+            bundleId: "$(PHONE_PROVIDER_BUNDLE_ID)",
+            deploymentTargets: iOSDeploymentTarget,
+            infoPlist: .file(path: "Apps/PhoneTunnelProvider/Info.plist"),
+            sources: [
+                "Apps/PhoneTunnelProvider/**"
+            ],
+            entitlements: .file(
+                path: "Apps/iOS/Entitlements/CellTunnelPhoneTunnel.entitlements"
+            ),
+            dependencies: appDependencies,
+            settings: .settings(base: ["REGISTER_APP_GROUPS": "YES"])
+        ),
     ],
     schemes: [
         .scheme(
@@ -213,6 +231,15 @@ let project = Project(
             name: "CellTunnelTunnelProvider",
             shared: true,
             buildAction: .buildAction(targets: [.target("CellTunnelTunnelProvider")]),
+            runAction: .runAction(configuration: "Debug"),
+            archiveAction: .archiveAction(configuration: "Release"),
+            profileAction: .profileAction(configuration: "Release"),
+            analyzeAction: .analyzeAction(configuration: "Debug")
+        ),
+        .scheme(
+            name: "CellTunnelPhoneTunnel",
+            shared: true,
+            buildAction: .buildAction(targets: [.target("CellTunnelPhoneTunnel")]),
             runAction: .runAction(configuration: "Debug"),
             archiveAction: .archiveAction(configuration: "Release"),
             profileAction: .profileAction(configuration: "Release"),
