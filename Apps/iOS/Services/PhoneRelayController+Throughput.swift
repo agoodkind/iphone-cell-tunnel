@@ -8,7 +8,7 @@ private let throughputInterval: Duration = .seconds(1)
 extension PhoneRelayController {
     func startThroughputLoop() {
         throughputTask?.cancel()
-        throughputBaseline = counters
+        throughputBaseline = forwarder.metrics.snapshot()
         logger.notice("phone relay throughput loop starting")
         throughputTask = Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -23,7 +23,8 @@ extension PhoneRelayController {
                 guard !Task.isCancelled, let self else {
                     return
                 }
-                let snapshot = counters
+                let snapshot = forwarder.metrics.snapshot()
+                counters = snapshot
                 logThroughputDelta(snapshot)
                 throughputBaseline = snapshot
             }

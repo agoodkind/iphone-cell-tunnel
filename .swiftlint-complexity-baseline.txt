@@ -1,1 +1,1 @@
-# swiftlint-complexity: generated_at=2026-05-28T17:24:33Z
+# swiftlint-complexity: generated_at=2026-05-29T05:08:34Z
