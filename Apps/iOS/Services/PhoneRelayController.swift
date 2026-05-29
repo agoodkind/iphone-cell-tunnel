@@ -18,45 +18,13 @@ final class PhoneRelayController: @unchecked Sendable {
     var throughputBaseline = TunnelCounters()
 
     var isRunning = false
-    var isAdvertising = false
     var connectedPeerName: String?
-    var advertisedServiceName: String?
-    var listenerPort: UInt16?
-    var controlListenerPort: UInt16?
     var cellularPath = CellularPathSnapshot()
     var counters = TunnelCounters()
+    var uploadMbps: Double = 0
+    var downloadMbps: Double = 0
     var lastError: String?
     var relayStateDescription = WireGuardDatagramRelayState.stopped.displayName
-
-    var wireGuardRelayStateDescription: String {
-        relayStateDescription
-    }
-
-    func toggle() {
-        let wasRunning = isRunning
-        logger.debug("phone relay toggle requested running=\(wasRunning, privacy: .public)")
-        if isRunning {
-            stop()
-            return
-        }
-
-        start()
-    }
-
-    func updateListenerPort(_ port: UInt16) {
-        let wasRunning = isRunning
-        logger.notice(
-            """
-            phone relay listener port update requested \
-            port=\(port, privacy: .public) wasRunning=\(wasRunning, privacy: .public)
-            """
-        )
-        storeRelayListenerPort(port)
-        if wasRunning {
-            stop()
-            start()
-        }
-    }
 
     func start() {
         guard !isRunning else {
@@ -71,7 +39,6 @@ final class PhoneRelayController: @unchecked Sendable {
         startCellularMonitor()
         configureForwarderCallbacks()
         let serviceName = UIDevice.current.name
-        advertisedServiceName = serviceName
         startControlListener()
         forwarder.startListener(port: resolvedRelayListenerPort(), serviceName: serviceName)
         startThroughputLoop()
@@ -95,21 +62,14 @@ final class PhoneRelayController: @unchecked Sendable {
             }
         }
         forwarder.onListenerReady = { port in
-            Task { @MainActor [weak self] in
-                self?.listenerPort = port
-                self?.isAdvertising = (port != nil)
-            }
+            logger.notice("phone relay listener ready port=\(port ?? 0, privacy: .public)")
         }
     }
 
     func stop() {
         logger.notice("phone relay stopping")
         isRunning = false
-        isAdvertising = false
         connectedPeerName = nil
-        advertisedServiceName = nil
-        listenerPort = nil
-        controlListenerPort = nil
         UIApplication.shared.isIdleTimerDisabled = false
         stopThroughputLoop()
         controlListener.stop()
@@ -130,7 +90,6 @@ final class PhoneRelayController: @unchecked Sendable {
             self?.currentControlStatus() ?? RelayControlMessage.Status(hasCellularPath: false)
         }
         controlListener.start(preferredServiceName: serviceName)
-        controlListenerPort = controlListener.listenerPort
     }
 
     private func applyServerEndpoint(_ endpoint: RelayEndpoint) {

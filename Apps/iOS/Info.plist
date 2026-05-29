@@ -24,7 +24,6 @@
 	<array>
 		<string>_cellrelay._udp</string>
 		<string>_cellrelaycontrol._tcp</string>
-		<string>_celltunnelbench._udp</string>
 	</array>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Cell Tunnel uses local peer-to-peer networking to relay traffic to your Mac.</string>
