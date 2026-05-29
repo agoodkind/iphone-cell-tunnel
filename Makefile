@@ -74,9 +74,8 @@ install-mac:
 smoke:
 	@printf 'make smoke: run these in order against the smoke config\n'
 	@printf '  Products/celltunnelctl status\n'
-	@printf '  Products/celltunnelctl start-discovery\n'
-	@printf '  Products/celltunnelctl discover\n'
-	@printf '  Products/celltunnelctl select <service-id-from-discover>\n'
+	@printf '  Products/celltunnelctl devices\n'
+	@printf '  Products/celltunnelctl select <n>\n'
 	@printf '  Products/celltunnelctl start --config "%s"\n' "/Users/agoodkind/Desktop/wireguard-export/example.com only.conf"
 	@printf '  ping -c 5 208.67.222.222\n'
 	@printf '  ping6 -c 5 2620:119:35::35\n'

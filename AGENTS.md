@@ -13,15 +13,19 @@ The use case is education and research.
 | Component | Path | Role |
 |---|---|---|
 | `celltunnelctl` | `Tools/CellTunnelCtl/main.swift` | User-facing CLI; thin `NSXPCConnection` client of the agent. |
-| `CellTunnelAgent` | `Apps/macOS/Agent/` | User-land macOS app registered as a LaunchAgent via `SMAppService.agent`. Owns the `NETunnelProviderManager` and forwards control messages to the extension over `NETunnelProviderSession.sendProviderMessage`. |
+| `CellTunnelAgent` | `Apps/macOS/Agent/` | User-land macOS background agent (`LSUIElement`) registered as a LaunchAgent via `SMAppService.agent`. Owns the `NETunnelProviderManager`, runs continuous Bonjour relay discovery, persists the selected device, and forwards control messages to the extension over `NETunnelProviderSession.sendProviderMessage`. |
 | `CellTunnelTunnelProvider` | `Apps/macOS/TunnelProvider/` | Packet-tunnel `NEAppExtension` embedded in `CellTunnelAgent.app/Contents/PlugIns/`. Owns the data path: WireGuard, relay transport, discovery. |
-| `CellTunnelPhone` | `Apps/iOS/` | iOS foreground app. Hosts the relay listener and the cellular-bound `WireGuardDatagramRelaySession`. |
+| `CellTunnelPhone` | `Apps/iOS/` | iOS relay app. Hosts the relay control listener (`PhoneControlListener`) and the cellular-bound relay forwarder (`PhoneRelayForwarder`, pinned cellular in `PhoneRelayForwarder+Cellular.swift`). |
 | `CellTunnelCore` | `Sources/CellTunnelCore/` | Shared XPC protocol, relay control framer, wire models. |
 | `CellTunnelLog` | `Sources/CellTunnelLog/` | Subsystem-pinned `os.Logger` categories. Subsystem is `io.goodkind.celltunnel`. |
 
 ## Transports
 
-The Network framework primitives in the provider (`NWBrowser`, `NWListener`, `NWConnection`, `includePeerToPeer = true`) make the Mac-to-iPhone path transport-agnostic. USB-C CDC-NCM, shared Wi-Fi LAN, and AWDL all work without code changes. The iPhone-to-server leg is cellular UDP, pinned by `Apps/iOS/Services/WireGuardDatagramRelaySession.swift`.
+The Network framework primitives in the provider (`NWBrowser`, `NWListener`, `NWConnection`, `includePeerToPeer = true`) make the Mac-to-iPhone path transport-agnostic. USB-C CDC-NCM, shared Wi-Fi LAN, and AWDL all work without code changes. The iPhone-to-server leg is cellular UDP, pinned by `parameters.requiredInterfaceType = .cellular` in `Apps/iOS/Services/PhoneRelayForwarder+Cellular.swift`.
+
+## iPhone app behavior
+
+`CellTunnelPhone` is always-on with no Start control. `Apps/iOS/CellTunnelPhoneApp.swift` starts the relay when the scene phase becomes `.active`, on launch and on returning to the foreground, and stops it on `.background`. `Apps/iOS/Views/PhoneContentView.swift` shows a minimal first-party status screen with relay state, cellular egress, throughput, and dropped counts. The app targets iOS 26.
 
 ## Configuration source of truth
 
@@ -33,7 +37,7 @@ The Network framework primitives in the provider (`NWBrowser`, `NWListener`, `NW
 
 `make build TARGET=daemon|mac|iphone-simulator|iphone-device|all CONFIG=Debug|Release` is the build entrypoint. `TARGET=` is mandatory; bare `make build` errors. `make install-mac` copies the built agent app to `/Applications/CellTunnel/CellTunnelAgent.app` and launches it once so `SMAppService.agent.register()` runs. `make iphone-install` installs and launches `CellTunnelPhone` on the connected device.
 
-`Products/celltunnelctl` is built alongside the daemon target. Subcommands: `status`, `check`, `start-discovery`, `stop-discovery`, `discover`, `probe`, `select <serviceID>`, `start --config <path> [--relay <host:port>]`, `stop`.
+`Products/celltunnelctl` is built alongside the daemon target. Running with no arguments or `--help`/`-h` prints usage. Subcommands: `status`, `check`, `devices` (lists discovered relay devices), `select <n|serviceID>` (selects by 1-based index or service id), `start --config <path> [--relay <host:port>]`, `stop`. Each command returns after one round-trip to the agent.
 
 ## Tooling layout
 
@@ -54,7 +58,7 @@ The Network framework primitives in the provider (`NWBrowser`, `NWListener`, `NW
 
 - Treat source state, build output, installed bundle state, agent XPC state, NetworkExtension state, route table state, Mac unified logs, and iPhone unified logs as separate proof surfaces.
 - Before claiming agent behavior, capture `launchctl print gui/$(id -u)/io.goodkind.celltunnel-agent`, `Products/celltunnelctl status`, and `log show --predicate 'subsystem == "io.goodkind.celltunnel"' --info --last 30s`.
-- Before claiming relay discovery or selection behavior, capture `Products/celltunnelctl discover` and the selected relay endpoint.
+- Before claiming relay discovery or selection behavior, capture `Products/celltunnelctl devices` and the selected relay endpoint.
 - Before claiming route behavior, capture `route -n get` for each tested IPv4 and IPv6 destination, `ifconfig` for the active `utun` interface, and `netstat -ibn` counters before and after traffic.
 - Before any route-mutating test, use narrow `AllowedIPs` host routes. Do not test broad default routes until a scoped IPv4 and IPv6 proof passes and the user has explicitly approved the broader swap.
 - Before claiming traffic uses cellular, capture iPhone-side evidence showing `interface: pdp_ip0` and `uses cell`, plus app logs showing `cellular wireguard udp` send and receive activity. A successful Mac `curl` alone is not cellular proof.
