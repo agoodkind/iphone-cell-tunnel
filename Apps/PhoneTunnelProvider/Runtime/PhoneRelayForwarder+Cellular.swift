@@ -270,6 +270,10 @@ extension PhoneRelayForwarder {
         cellularConnection = nil
         listener?.cancel()
         listener = nil
+        listenerPort = nil
+        listenerServiceName = nil
+        listenerRequiredInterface = nil
+        isListenerRestartPending = false
         pendingDatagrams.removeAll(keepingCapacity: false)
         configuredEndpoint = nil
         state = .stopped

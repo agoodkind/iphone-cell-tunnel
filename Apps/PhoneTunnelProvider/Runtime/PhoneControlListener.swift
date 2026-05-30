@@ -1,10 +1,23 @@
+//
+//  PhoneControlListener.swift
+//  CellTunnelPhoneTunnel
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//  Copyright © 2026
+//
+
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
 import Network
 
+// MARK: - Constants
+
 private let logger = CellTunnelLog.logger(category: .relay)
 private let statusPushIntervalSeconds: UInt64 = 5
+private let controlListenerRestartDelaySeconds: Double = 2
+
+// MARK: - Control listener
 
 @MainActor
 final class PhoneControlListener {
@@ -22,11 +35,25 @@ final class PhoneControlListener {
     private(set) var advertisedServiceName: String?
     private(set) var lastError: String?
 
-    func start(preferredServiceName: String) {
+    // Retained so the listener can be re-created with the same name after a
+    // transient Bonjour failure (NWError -65563 ServiceNotRunning, which every
+    // advertiser on the device hits when mDNSResponder restarts). Cleared by
+    // stop() so a deliberate stop does not trigger a restart.
+    private var restartServiceName: String?
+    private var restartRequiredInterface: NWInterface?
+    private var isControlRestartPending = false
+
+    func start(preferredServiceName: String, requiredInterface: NWInterface?) {
         stop()
         let parameters = NWParameters(tls: nil, tcp: NWProtocolTCP.Options())
         parameters.allowLocalEndpointReuse = true
         parameters.includePeerToPeer = true
+        // The Mac reaches this control listener over the USB link. Pinning the
+        // listener to that wired interface keeps its inbox on the USB link
+        // rather than the cellular interface.
+        if let requiredInterface {
+            parameters.requiredInterface = requiredInterface
+        }
         let framerOptions = RelayControlFramerSupport.framerOptions()
         parameters.defaultProtocolStack.applicationProtocols.insert(framerOptions, at: 0)
 
@@ -50,6 +77,9 @@ final class PhoneControlListener {
             type: relayControlServiceType
         )
         advertisedServiceName = preferredServiceName
+        restartServiceName = preferredServiceName
+        restartRequiredInterface = requiredInterface
+        isControlRestartPending = false
 
         nwListener.newConnectionHandler = { [weak self] connection in
             Task { @MainActor [weak self] in
@@ -82,6 +112,9 @@ final class PhoneControlListener {
         listener = nil
         listenerPort = nil
         advertisedServiceName = nil
+        restartServiceName = nil
+        restartRequiredInterface = nil
+        isControlRestartPending = false
         logger.notice("control listener stopped")
     }
 
@@ -89,6 +122,9 @@ final class PhoneControlListener {
         switch state {
         case .ready:
             listenerPort = listener?.port?.rawValue
+            // A successful (re)advertisement clears any prior transient error so a
+            // recovered listener does not keep reporting a stale failure.
+            lastError = nil
             logger.notice(
                 "control listener ready port=\(self.listenerPort ?? 0, privacy: .public)"
             )
@@ -97,6 +133,7 @@ final class PhoneControlListener {
             logger.error(
                 "control listener failed error=\(error.localizedDescription, privacy: .public)"
             )
+            scheduleControlRestartAfterFailure()
         case .cancelled:
             listenerPort = nil
             logger.notice("control listener cancelled")
@@ -292,7 +329,10 @@ final class PhoneControlListener {
             deadline: .now() + .seconds(Int(statusPushIntervalSeconds)),
             repeating: .seconds(Int(statusPushIntervalSeconds))
         )
-        timer.setEventHandler { [weak self] in
+        // The handler must be @Sendable so it stays nonisolated and runs on the
+        // listener queue without a MainActor executor assertion; it then hops to
+        // the MainActor for the actual connection and status-provider access.
+        timer.setEventHandler { @Sendable [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, let connection = currentConnection else {
                     return
@@ -302,5 +342,42 @@ final class PhoneControlListener {
         }
         timer.resume()
         statusTimer = timer
+    }
+}
+
+// MARK: - Transient-failure recovery
+
+extension PhoneControlListener {
+    // A control listener that fails with a transient Bonjour error stays down
+    // unless re-created, which would leave the Mac unable to reach the relay
+    // control channel. This re-runs start with the same name after a short delay,
+    // guarding against pile-up and against a deliberate stop that cleared the
+    // retained name. The restart hops back to the MainActor through a Task so the
+    // delayed dispatch closure stays nonisolated and never asserts isolation.
+    func scheduleControlRestartAfterFailure() {
+        guard let serviceName = restartServiceName, !isControlRestartPending else {
+            return
+        }
+        isControlRestartPending = true
+        logger.notice(
+            "control listener scheduling restart after transient failure delaySeconds=\(Int(controlListenerRestartDelaySeconds), privacy: .public)"
+        )
+        queue.asyncAfter(deadline: .now() + controlListenerRestartDelaySeconds) { [weak self] in
+            Task { @MainActor [weak self] in
+                self?.performControlRestart(expectedServiceName: serviceName)
+            }
+        }
+    }
+
+    private func performControlRestart(expectedServiceName: String) {
+        isControlRestartPending = false
+        guard restartServiceName == expectedServiceName else {
+            logger.notice("control listener restart skipped because it was stopped")
+            return
+        }
+        start(
+            preferredServiceName: expectedServiceName,
+            requiredInterface: restartRequiredInterface
+        )
     }
 }
