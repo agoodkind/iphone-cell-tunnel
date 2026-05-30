@@ -1,19 +1,9 @@
-//
-//  PacketTunnelProvider.swift
-//  CellTunnelPhoneTunnel
-//
-//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-29.
-//  Copyright © 2026
-//
-
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
 import Network
 import NetworkExtension
 import Synchronization
-
-// MARK: - Constants
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 
@@ -24,10 +14,6 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 private let tunnelRemoteAddress = "127.0.0.1"
 private let tunnelLocalAddress = "10.7.0.2"
 private let tunnelLocalSubnetMask = "255.255.255.255"
-// Bounded wait for the path monitor to surface the USB wired interface before
-// the relay listeners start. The phone is plugged in at start, so a satisfied
-// path arrives within milliseconds; this only guards the no-path case.
-private let localLinkResolveTimeoutSeconds: Double = 3
 
 // The completion handler arrives from Objective-C without a Sendable marking;
 // box it so the start Task can call it across the concurrency boundary.
@@ -57,7 +43,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let forwarder = PhoneRelayForwarder()
     private let controlListener = PhoneControlListener()
     private let cellularObserver = CellularPathObserver()
-    private let interfaceResolver = LocalLinkInterfaceResolver()
     private let statusState = Mutex(RelayStatusState())
 
     // Held so the stop can complete after teardown finishes; invoked once.
@@ -116,36 +101,20 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     // listener that receives the server endpoint over the Mac channel, and the
     // forwarder's local listener advertising the relay Bonjour service.
     private func startRelayRuntime() {
-        logger.notice("relay runtime starting; resolving USB interface")
         cellularObserver.start()
         configureForwarderCallbacks()
-        statusState.withLock { $0.running = true }
-        // Resolve the USB wired interface first so both listeners can pin to it
-        // with requiredInterface, then start them once the interface is known.
-        interfaceResolver.resolve(
-            timeoutSeconds: localLinkResolveTimeoutSeconds
-        ) { [weak self] usbInterface in
-            self?.startListeners(requiredInterface: usbInterface)
-        }
-    }
-
-    private func startListeners(requiredInterface: NWInterface?) {
-        startControlListener(requiredInterface: requiredInterface)
+        startControlListener()
 
         let listenerPort = resolvedRelayListenerPort(
             defaults: UserDefaults(suiteName: cellTunnelAppGroupIdentifier) ?? .standard
         )
         let serviceName = resolvedRelayServiceName()
-        forwarder.startListener(
-            port: listenerPort,
-            serviceName: serviceName,
-            requiredInterface: requiredInterface
-        )
+        forwarder.startListener(port: listenerPort, serviceName: serviceName)
+        statusState.withLock { $0.running = true }
         logger.notice(
             """
             relay runtime started serviceName=\(serviceName, privacy: .public) \
-            port=\(listenerPort.rawValue, privacy: .public) \
-            requiredInterface=\(requiredInterface?.name ?? "none", privacy: .public)
+            port=\(listenerPort.rawValue, privacy: .public)
             """
         )
     }
@@ -153,14 +122,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private func configureForwarderCallbacks() {
         logger.notice("phone relay forwarder callbacks configured")
         forwarder.onStateChange = { [weak self] state in
-            self?.statusState.withLock { snapshot in
-                snapshot.relayState = state.displayName
-                // Reaching ready means the relay recovered, so drop any stale
-                // transient error the status snapshot still carries.
-                if state == .ready {
-                    snapshot.lastError = nil
-                }
-            }
+            self?.statusState.withLock { $0.relayState = state.displayName }
             logger.notice(
                 "phone relay state changed state=\(state.rawValue, privacy: .public)"
             )
@@ -175,17 +137,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 "phone relay peer changed peer=\(name ?? "none", privacy: .public)"
             )
         }
-        forwarder.onListenerReady = { [weak self] port in
-            // A listener that re-advertises after a transient Bonjour failure
-            // clears the latched error so the status reflects the recovered relay.
-            if port != nil {
-                self?.statusState.withLock { $0.lastError = nil }
-            }
+        forwarder.onListenerReady = { port in
             logger.notice("phone relay listener ready port=\(port ?? 0, privacy: .public)")
         }
     }
 
-    private func startControlListener(requiredInterface: NWInterface?) {
+    private func startControlListener() {
         let serviceName = resolvedRelayServiceName()
         logger.notice(
             "phone control listener starting serviceName=\(serviceName, privacy: .public)"
@@ -193,16 +150,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let controlListener = self.controlListener
         let forwarder = self.forwarder
         let cellularObserver = self.cellularObserver
-        // statusState is a non-copyable Mutex, so it cannot be hoisted into a
-        // local; the status closure borrows it through a weak self instead.
-        Task { @MainActor [weak self] in
+        let statusState = self.statusState
+        Task { @MainActor in
             controlListener.onSetServerEndpoint = { endpoint in
                 forwarder.setServerEndpoint(endpoint)
             }
             controlListener.statusProvider = {
-                let lastError = self.flatMap { provider in
-                    provider.statusState.withLock { $0.lastError }
-                }
+                let lastError = statusState.withLock { $0.lastError }
                 let cellularPath = cellularObserver.snapshot
                 return RelayControlMessage.Status(
                     hasCellularPath: cellularPath.isSatisfied,
@@ -211,10 +165,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                     counters: forwarder.metrics.snapshot()
                 )
             }
-            controlListener.start(
-                preferredServiceName: serviceName,
-                requiredInterface: requiredInterface
-            )
+            controlListener.start(preferredServiceName: serviceName)
         }
     }
 
