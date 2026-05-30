@@ -8,6 +8,43 @@ The use case is education and research.
 
 **Hard rule:** Do not enable iOS Personal Hotspot. Do not propose Personal Hotspot or the macOS `en7` interface as the Mac-to-iPhone link. The iPhone app binds its WireGuard UDP egress with `requiredInterfaceType = .cellular`, which uses the regular cellular APN and is what the project routes around hotspot to obtain.
 
+## Architecture and current work
+
+- `docs/architecture.md` is the source of truth for the data path, the per-component responsibilities, the hard constraints, and the source-of-truth map.
+- `docs/ne-inbound-investigation.md` is the source of truth for the open blocker: whether the Mac can reach the iPhone extension's listener over the USB link, with the confirmed NECP finding and the on-device test matrix that resolves it.
+- `docs/plans/ios-background-network-extension.md` records why the iPhone relay runs inside an `NEPacketTunnelProvider`.
+
+## How to operate here (read this first)
+
+This file is the map, not the source of truth. The source of truth is the code and the live tooling; find current behavior by querying them, not by trusting prose (including this file).
+
+- **Commands:** `make help` lists every build, lint, test, format, and install target with a one-line description. It is generated from the live Makefile, so it never drifts. Start there.
+- **Operational and diagnostic actions are Swift, never shell.** Every project operation is a subcommand of the `CellTunnelDev` CLI in `Tools/CellTunnelDev/`, invoked as `swift Tools/cell-tunnel-dev.swift <command>` (run it with no args, or read `printHelp` in `Tools/CellTunnelDev/main.swift`, for the full list). Reading iPhone logs, browsing for the relay, bringing the tunnel up, collecting the device unified log: all are commands there. Shell scripts are banned in this repo. If an operation you need is missing, add a Swift subcommand modeled on an existing one (for example `iphone-logs`), make `make lint` pass, then use it. Do not hand-author throwaway shell pipelines.
+- **`celltunnelctl` is the agent client, not a discovery shortcut.** `Products/celltunnelctl devices` reads the agent's browser snapshot; it returns empty unless discovery was started first (`start-discovery`). Use the `CellTunnelDev` `relay-*` commands, which start discovery and poll deterministically, rather than chaining raw `celltunnelctl` calls and racing the agent's 60s idle timeout.
+- **Logs are the unified log, not just the live stream.** `idevicesyslog` (and `iphone-logs --app`) only show entries emitted after they attach, so a one-time error that already fired is invisible there. To read history, including an error that latched `lastError`, use `swift Tools/cell-tunnel-dev.swift iphone-logs --collect [--contains <text>]`, which `sudo log collect`s the device unified log and filters the `io.goodkind.celltunnel` subsystem. Mac-side logs: `log show --predicate 'subsystem == "io.goodkind.celltunnel"' --info --debug --last <dur>`.
+- **Configuration source of truth** is `Config/Constants.xcconfig` (committed) and `Config/local.xcconfig` plus `Config/local.signing.env` (gitignored). Identifiers, signing, and ports come from there; do not hardcode them.
+- **Verify the real state before acting.** The user drives branches, commits, merges, and the physical device directly. Run `git -C <repo> status`/`log`, `xcrun devicectl list devices`, `celltunnelctl status`, and the relevant `iphone-logs --collect` before concluding anything. Treat source, build output, installed bundle, agent XPC, NetworkExtension, route table, and the two unified logs as separate proof surfaces (see Diagnostic rules below).
+
+## Non-negotiable house rules
+
+- **Never touch lint baselines.** Fix every finding in code. No inline `swiftlint:disable`. The shared config under `.make/` is fetched from `swift-makefile` and is not locally editable, so code is the only lever. `make lint` must be green before any build or merge.
+- **Every Swift file gets the canonical header and `// MARK: -` dividers.** Top of file, before imports:
+
+  ```
+  //
+  //  <FileName>.swift
+  //  <ModuleName>
+  //
+  //  Created by Alexander Goodkind <alex@goodkind.io> on <YYYY-MM-DD>.
+  //  Copyright © <YYYY>
+  //
+  ```
+
+  Author and email are the repo git identity (`git config user.name` / `user.email`). The date is the file's original creation date (`git log --diff-filter=A --follow --format=%ad --date=short -- <path>`), today for a new file. Use `//` not `///` for the header (a free-floating `///` trips `orphaned_doc_comment`); put `///` on the declarations. Add `// MARK: -` section dividers throughout.
+- **Banned in production code:** `Task.sleep`/`sleep` (use `DispatchSource`/`asyncAfter`) and `try?` (handle errors explicitly). Route CLI output through `FileHandle.standardOutput`/`CellTunnelLog`, never `print`. Name magic numbers. These are enforced by `swiftcheck-extra` and `log-audit`.
+- **No em-dashes anywhere**, including Unicode escapes; the commit hook blocks them.
+- **Builds run in the foreground** so their output is visible. Build before install (the install targets deploy a prebuilt bundle).
+
 ## Components
 
 | Component | Path | Role |
@@ -15,17 +52,18 @@ The use case is education and research.
 | `celltunnelctl` | `Tools/CellTunnelCtl/main.swift` | User-facing CLI; thin `NSXPCConnection` client of the agent. |
 | `CellTunnelAgent` | `Apps/macOS/Agent/` | User-land macOS background agent (`LSUIElement`) registered as a LaunchAgent via `SMAppService.agent`. Owns the `NETunnelProviderManager`, runs continuous Bonjour relay discovery, persists the selected device, and forwards control messages to the extension over `NETunnelProviderSession.sendProviderMessage`. |
 | `CellTunnelTunnelProvider` | `Apps/macOS/TunnelProvider/` | Packet-tunnel `NEAppExtension` embedded in `CellTunnelAgent.app/Contents/PlugIns/`. Owns the data path: WireGuard, relay transport, discovery. |
-| `CellTunnelPhone` | `Apps/iOS/` | iOS relay app. Hosts the relay control listener (`PhoneControlListener`) and the cellular-bound relay forwarder (`PhoneRelayForwarder`, pinned cellular in `PhoneRelayForwarder+Cellular.swift`). |
-| `CellTunnelCore` | `Sources/CellTunnelCore/` | Shared XPC protocol, relay control framer, wire models. |
+| `CellTunnelPhoneTunnel` | `Apps/PhoneTunnelProvider/` | iOS packet-tunnel `NEAppExtension` embedded in `CellTunnelPhone.app/PlugIns/`. Owns the always-on relay data plane: the control listener (`Runtime/PhoneControlListener.swift`), the cellular-bound forwarder (`Runtime/PhoneRelayForwarder.swift`, pinned cellular in `Runtime/PhoneRelayForwarder+Cellular.swift`), the cellular path observer, and the Bonjour service name source. The provider hosts these and answers `handleAppMessage(.status)`. |
+| `CellTunnelPhone` | `Apps/iOS/` | iOS host app. Drives the extension through a `NETunnelProviderManager` with an on-demand rule (`Services/PhoneRelayController.swift`), polls status over `sendProviderMessage` (`Services/PhoneRelayController+Throughput.swift`), and shows a minimal first-party status screen. Holds no relay data plane itself. |
+| `CellTunnelCore` | `Sources/CellTunnelCore/` | Shared XPC protocol, relay control framer, wire models, relay port and device-name app-group keys. |
 | `CellTunnelLog` | `Sources/CellTunnelLog/` | Subsystem-pinned `os.Logger` categories. Subsystem is `io.goodkind.celltunnel`. |
 
 ## Transports
 
-The Network framework primitives in the provider (`NWBrowser`, `NWListener`, `NWConnection`, `includePeerToPeer = true`) make the Mac-to-iPhone path transport-agnostic. USB-C CDC-NCM, shared Wi-Fi LAN, and AWDL all work without code changes. The iPhone-to-server leg is cellular UDP, pinned by `parameters.requiredInterfaceType = .cellular` in `Apps/iOS/Services/PhoneRelayForwarder+Cellular.swift`.
+The Network framework primitives in the provider (`NWBrowser`, `NWListener`, `NWConnection`, `includePeerToPeer = true`) make the Mac-to-iPhone path transport-agnostic. USB-C CDC-NCM, shared Wi-Fi LAN, and AWDL all work without code changes. The iPhone-to-server leg is cellular UDP, pinned by `parameters.requiredInterfaceType = .cellular` in `Apps/PhoneTunnelProvider/Runtime/PhoneRelayForwarder+Cellular.swift`.
 
 ## iPhone app behavior
 
-`CellTunnelPhone` is always-on with no Start control. `Apps/iOS/CellTunnelPhoneApp.swift` starts the relay when the scene phase becomes `.active`, on launch and on returning to the foreground, and stops it on `.background`. `Apps/iOS/Views/PhoneContentView.swift` shows a minimal first-party status screen with relay state, cellular egress, throughput, and dropped counts. The app targets iOS 26.
+`CellTunnelPhone` is always-on with no Start control. The relay data plane runs in the `CellTunnelPhoneTunnel` extension, which the system keeps up via an on-demand `NEOnDemandRuleConnect` rule, so it keeps forwarding while the app is backgrounded. `Apps/iOS/CellTunnelPhoneApp.swift` starts/loads the manager on launch and resumes the status poll on `.active`. `Apps/iOS/Views/PhoneContentView.swift` shows a minimal first-party status screen with relay state, cellular egress, throughput, and dropped counts; the DEBUG ladybug console (`Apps/iOS/Views/DebugConsoleView.swift`) shows live detail including `Last Error`. The app targets iOS 26.
 
 ## Configuration source of truth
 
@@ -72,6 +110,7 @@ Run every step from a known state. Verify each precondition with a command befor
 ## Diagnostic rules
 
 - Treat source state, build output, installed bundle state, agent XPC state, NetworkExtension state, route table state, Mac unified logs, and iPhone unified logs as separate proof surfaces.
+- To read iPhone-side history (any error that already fired, including one that latched `lastError`), use `swift Tools/cell-tunnel-dev.swift iphone-logs --collect [--last <dur>] [--contains <text>]`. The live stream (`iphone-logs --app`, `idevicesyslog`) only shows entries emitted after it attaches and will miss a one-time error.
 - Before claiming agent behavior, capture `launchctl print gui/$(id -u)/io.goodkind.celltunnel-agent`, `Products/celltunnelctl status`, and `log show --predicate 'subsystem == "io.goodkind.celltunnel"' --info --last 30s`.
 - Before claiming relay discovery or selection behavior, capture `Products/celltunnelctl devices` and the selected relay endpoint.
 - Before claiming route behavior, capture `route -n get` for each tested IPv4 and IPv6 destination, `ifconfig` for the active `utun` interface, and `netstat -ibn` counters before and after traffic.
