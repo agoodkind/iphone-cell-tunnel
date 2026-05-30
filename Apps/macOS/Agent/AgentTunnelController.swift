@@ -26,7 +26,7 @@ actor AgentTunnelController {
     private var manager: NETunnelProviderManager?
     private var statusObserver: NSObjectProtocol?
     private var latestStatus: NEVPNStatus = .invalid
-    private let relayBrowser = RelayDeviceBrowser()
+    let relayBrowser = RelayDeviceBrowser()
 
     func handle(request: AgentControlRequest) async -> AgentControlResponse {
         switch request {
@@ -120,7 +120,8 @@ actor AgentTunnelController {
             observeStatus(on: manager)
             try startSession(on: manager)
             logger.notice("agent tunnel start requested")
-            return AgentControlResponse(status: snapshot(from: manager))
+            await waitForSessionConnected(on: manager)
+            return try await forwardStatus(on: manager)
         } catch {
             logger.error(
                 """
@@ -222,10 +223,6 @@ extension AgentTunnelController {
         return resolved
     }
 
-    private func loadAllManagers() async throws -> [NETunnelProviderManager] {
-        try await NETunnelProviderManager.loadAllFromPreferences()
-    }
-
     private func applyConfiguration(
         to manager: NETunnelProviderManager,
         wireGuardConfig: String
@@ -234,8 +231,8 @@ extension AgentTunnelController {
         providerProtocol.providerBundleIdentifier = providerBundleIdentifier
         providerProtocol.serverAddress = tunnelServerAddressPlaceholder
         var providerConfiguration = [providerConfigWireGuardKey: wireGuardConfig]
-        if let selectedServiceName = RelaySelectionStore.selectedRelayServiceName() {
-            providerConfiguration[providerConfigRelayServiceKey] = selectedServiceName
+        if let relayName = resolvedRelayServiceName() {
+            providerConfiguration[providerConfigRelayServiceKey] = relayName
         }
         providerProtocol.providerConfiguration = providerConfiguration
         manager.protocolConfiguration = providerProtocol
@@ -252,20 +249,6 @@ extension AgentTunnelController {
     private func load(manager: NETunnelProviderManager) async throws {
         try await resumeVoidContinuation { completion in
             manager.loadFromPreferences(completionHandler: completion)
-        }
-    }
-
-    private func resumeVoidContinuation(
-        _ body: (@escaping @Sendable (Error?) -> Void) -> Void
-    ) async throws {
-        let _: Void = try await withCheckedThrowingContinuation { continuation in
-            body { error in
-                if let error {
-                    continuation.resume(throwing: error)
-                    return
-                }
-                continuation.resume()
-            }
         }
     }
 

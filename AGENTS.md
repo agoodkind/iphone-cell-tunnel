@@ -37,7 +37,22 @@ The Network framework primitives in the provider (`NWBrowser`, `NWListener`, `NW
 
 `make build TARGET=daemon|mac|iphone-simulator|iphone-device|all CONFIG=Debug|Release` is the build entrypoint. `TARGET=` is mandatory; bare `make build` errors. `make install-mac` copies the built agent app to `/Applications/CellTunnel/CellTunnelAgent.app` and launches it once so `SMAppService.agent.register()` runs. `make iphone-install` installs and launches `CellTunnelPhone` on the connected device.
 
-`Products/celltunnelctl` is built alongside the daemon target. Running with no arguments or `--help`/`-h` prints usage. Subcommands: `status`, `check`, `devices` (lists discovered relay devices), `select <n|serviceID>` (selects by 1-based index or service id), `start --config <path> [--relay <host:port>]`, `stop`. Each command returns after one round-trip to the agent.
+`Products/celltunnelctl` is built alongside the daemon target. Running with no arguments or `--help`/`-h` prints usage. Subcommands: `status`, `check`, `devices` (lists discovered relay devices), `select <n|serviceID>` (selects by 1-based index or service id), `start --config <path> [--relay <host:port>]`, `stop`. Every command except `start` returns after one round-trip to the agent. `start` waits (bounded) for the tunnel session to reach connected before returning, so a single `start` reports the real outcome (`running=true`/`routes=installed` on success). The agent hands the provider a concrete relay service name resolved from its always-warm Bonjour browser (a still-visible persisted selection, else the first device), so the extension connects on the first attempt without a cold per-start discovery race.
+
+## Clean launch procedure
+
+Run every step from a known state. Verify each precondition with a command before the next step. Assume nothing about prior state.
+
+1. Build before install. `make install-mac` and `make iphone-install` install a prebuilt bundle and do not build it. After `make clean` or any source change, build the target first:
+   - macOS: `make build TARGET=mac CONFIG=Debug`, then `make install-mac CONFIG=Debug`.
+   - iPhone: `make build TARGET=iphone-device CONFIG=Debug`, then `make iphone-install CONFIG=Debug`.
+   The iPhone device build reads the App Store Connect API key from `Config/local.signing.env` (`APPLE_NOTARY_KEY_ID`, `APPLE_NOTARY_ISSUER_ID`, `APPLE_NOTARY_KEY_PATH`); copy `Config/local.signing.env.example` to seed it. With the env unset the build falls back to the interactive Xcode account.
+2. One relay advertiser only. The agent selects the relay from Bonjour `_cellrelay._udp` advertisers. A booted simulator running `CellTunnelPhone` also advertises and can be selected instead of the physical device, and a simulator cannot egress over cellular. Before any relay test run `xcrun simctl list devices booted`, run `xcrun simctl shutdown <udid>` for each booted `CellTunnelPhone` simulator, then confirm `Products/celltunnelctl devices` lists only the intended physical device.
+3. Confirm the relay is forwarding before testing. The relay forwards only while its app is in the foreground. Device log line `phone relay throughput ... datagrams_to_server=<n>` incrementing means it forwards; `phone relay send rejected state=stopped` means it does not, so relaunch `CellTunnelPhone` (`make iphone-install` launches it).
+4. Bring up the Mac tunnel against the running relay: `Products/celltunnelctl start --config <path>`. `start` blocks until the session reaches connected, then returns `running=true` and `routes=installed`. It connects on the first attempt as long as the relay is advertising (confirm with `devices`); a `running=false` return means the relay was not reachable, not that a retry is needed.
+5. Throughput test uses the config's own routes. `~/Desktop/wireguard-export/example.com only.conf` routes the `speedtest` CLI (speedtest-go); run `speedtest` and read its Download and Upload. Confirm the traffic crossed the relay with the phone counter delta: read `phone_bytes_out` from `Products/celltunnelctl status` before and after.
+6. Never widen routes to test. Do not switch to an all-traffic (`0.0.0.0/0, ::/0`) config to measure throughput. An all-traffic config makes the tunnel the Mac default route, so a relay stall takes the Mac fully offline. Use the scoped config that already routes the test target.
+7. Tear down cleanly. `Products/celltunnelctl stop`, then confirm `Products/celltunnelctl status` reports `running=false` and `route -n get default` points at the physical interface (`en0`), not a `utun`.
 
 ## Tooling layout
 
