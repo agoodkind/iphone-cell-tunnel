@@ -43,7 +43,8 @@ func printHelp() {
                       Build and install CellTunnelPhone on a connected physical iPhone.
           launch-phone-device
                       Launch CellTunnelPhone on a connected physical iPhone.
-          iphone-logs Stream iPhone or simulator logs. See `iphone-logs --help`.
+          iphone-logs Show (and optionally --follow) the iPhone unified log for the
+                      io.goodkind.celltunnel subsystem. See `iphone-logs --help`.
           mac-logs    Show or stream Mac agent and tunnel-provider logs. See `mac-logs --help`.
           relay-browse
                       Foreground Bonjour browse for the iPhone relay service.

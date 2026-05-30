@@ -2,7 +2,7 @@
 //  IPhoneLogsMode.swift
 //  CellTunnelDev
 //
-//  Created by Alex Goodkind <alex@goodkind.io> on 2026-05-24.
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-24.
 //  Copyright © 2026
 //
 
@@ -13,48 +13,53 @@ import Foundation
 
 private let iPhoneLogsLogger = CellTunnelLog.logger(category: .build)
 private let iPhoneLogsUsage = """
-    usage: iphone-logs [--app | --simulator | --collect] [--device <udid>]
-                       [--last <duration>] [--contains <text>]
+    usage: iphone-logs [--last <duration>] [--contains <text>] [--predicate <p>]
+                       [--device <udid>] [--follow [--interval <seconds>]]
 
-    Reads iPhone or simulator logs.
+    Reads the attached iPhone's unified log for the io.goodkind.celltunnel
+    subsystem, using Apple's `log collect` only (no third-party tooling). The
+    unified log carries history, so it shows entries emitted before the command
+    ran, including a one-time error that set lastError.
 
-    Default streams the full iPhone syslog over USB (live).
-      --app         Stream the live iPhone syslog filtered to CellTunnelPhone.
-      --simulator   Stream Mac-side log filtered to the io.goodkind.celltunnel
-                    subsystem (simulator runs and Mac processes).
-      --collect     Collect the device unified log and print the
-                    io.goodkind.celltunnel subsystem with history (the live
-                    syslog cannot show entries emitted before it attached). Uses
-                    `sudo log collect`, so it needs an admin password.
-      --device      Use a specific iPhone USB UDID (idevice_id -l). Defaults to
-                    the first connected device.
-      --last        Time range for --collect, in `log` duration form (default 30m).
-      --contains    With --collect, only show lines whose message contains <text>.
-      --predicate   With --collect, use this raw NSPredicate instead of the
-                    io.goodkind.celltunnel subsystem default, to inspect system
-                    subsystems (mDNSResponder, kernel, nesessionmanager) around an
-                    event. --contains still ANDs onto it.
+      --last        History range, in `log` duration form (default 5m).
+      --contains    Only show lines whose message contains <text>.
+      --predicate   Raw NSPredicate instead of the io.goodkind.celltunnel
+                    subsystem default, to inspect system subsystems
+                    (mDNSResponder, kernel, nesessionmanager). --contains still
+                    ANDs onto it.
+      --device      Collect from a specific device UDID. Defaults to the first
+                    connected device.
+      --follow      After the first dump, keep collecting on an interval and
+                    print each new window, approximating a live stream. Runs
+                    until Ctrl-C. Apple exposes no device log stream, so this
+                    polls `log collect`.
+      --interval    Seconds between --follow polls (default 3).
 
-    Streaming modes run until Ctrl-C. --collect returns when the dump completes.
+    `log collect` needs sudo; credentials cache so --follow does not re-prompt
+    each poll within the sudo timeout.
     """
-private let unifiedLogDefaultDuration = "30m"
+private let unifiedLogDefaultDuration = "5m"
 private let unifiedLogArchiveName = "celltunnel-device.logarchive"
+private let followDefaultIntervalSeconds: Double = 3
+private let followWindowDuration = "10s"
 
 // MARK: - Mode
 
+/// One unified-log dump, or a repeating dump that approximates a live stream.
 private enum IPhoneLogsMode {
-    case appFilteredDevice
-    case fullDevice
-    case simulator
-    case unifiedDevice
+    case follow(intervalSeconds: Double)
+    case snapshot
 }
 
+// MARK: - Options
+
 private struct IPhoneLogsOptions {
-    var mode: IPhoneLogsMode = .fullDevice
     var deviceOverride: String?
     var lastDuration = unifiedLogDefaultDuration
     var containsFilter: String?
     var rawPredicate: String?
+    var follow = false
+    var followIntervalSeconds = followDefaultIntervalSeconds
 }
 
 // MARK: - Entry point
@@ -64,12 +69,6 @@ func runIPhoneLogs(_ arguments: [String]) throws {
     var iterator = arguments.makeIterator()
     while let argument = iterator.next() {
         switch argument {
-        case "--app":
-            try setIPhoneLogsMode(&options.mode, to: .appFilteredDevice)
-        case "--simulator":
-            try setIPhoneLogsMode(&options.mode, to: .simulator)
-        case "--collect":
-            try setIPhoneLogsMode(&options.mode, to: .unifiedDevice)
         case "--device":
             options.deviceOverride = try requireIPhoneLogsValue(&iterator, for: argument)
         case "--last":
@@ -78,6 +77,10 @@ func runIPhoneLogs(_ arguments: [String]) throws {
             options.containsFilter = try requireIPhoneLogsValue(&iterator, for: argument)
         case "--predicate":
             options.rawPredicate = try requireIPhoneLogsValue(&iterator, for: argument)
+        case "--follow":
+            options.follow = true
+        case "--interval":
+            options.followIntervalSeconds = try requireIPhoneLogsInterval(&iterator, for: argument)
         case "-h", "--help":
             FileHandle.standardOutput.write(Data((iPhoneLogsUsage + "\n").utf8))
             return
@@ -89,73 +92,45 @@ func runIPhoneLogs(_ arguments: [String]) throws {
 }
 
 private func dispatchIPhoneLogs(_ options: IPhoneLogsOptions) throws {
-    switch options.mode {
-    case .simulator:
-        try streamSimulatorLogs()
-    case .fullDevice:
-        try streamDeviceLogs(deviceOverride: options.deviceOverride, filterToApp: false)
-    case .appFilteredDevice:
-        try streamDeviceLogs(deviceOverride: options.deviceOverride, filterToApp: true)
-    case .unifiedDevice:
+    let predicate = unifiedLogPredicate(
+        containsFilter: options.containsFilter,
+        rawPredicate: options.rawPredicate
+    )
+    let deviceUDID = resolvedDeviceUDID(override: options.deviceOverride)
+    let mode: IPhoneLogsMode =
+        options.follow ? .follow(intervalSeconds: options.followIntervalSeconds) : .snapshot
+
+    try collectAndShowUnifiedLog(
+        deviceUDID: deviceUDID,
+        lastDuration: options.lastDuration,
+        predicate: predicate
+    )
+    guard case .follow(let intervalSeconds) = mode else {
+        return
+    }
+    while true {
+        iPhoneLogsFollowDelay(seconds: intervalSeconds)
         try collectAndShowUnifiedLog(
-            deviceOverride: options.deviceOverride,
-            lastDuration: options.lastDuration,
-            containsFilter: options.containsFilter,
-            rawPredicate: options.rawPredicate
+            deviceUDID: deviceUDID,
+            lastDuration: followWindowDuration,
+            predicate: predicate
         )
     }
 }
 
-// MARK: - Live streaming modes
-
-private func streamSimulatorLogs() throws {
-    let predicate = "subsystem == \"\(CellTunnelLog.subsystem)\""
-    let arguments = [
-        "stream",
-        "--predicate",
-        predicate,
-        "--level",
-        "debug",
-    ]
-    announceInvocation("log " + renderShellArguments(arguments))
-    try run("log", arguments)
-}
-
-private func streamDeviceLogs(deviceOverride: String?, filterToApp: Bool) throws {
-    try requireIDeviceSyslog()
-    let udid = try resolveUSBDeviceUDID(override: deviceOverride)
-
-    if filterToApp {
-        let pipeline =
-            "idevicesyslog -u \(shellQuote(udid)) "
-            + "| grep --line-buffered -i -E 'CellTunnelPhone|io\\.goodkind\\.celltunnel'"
-        announceInvocation(pipeline)
-        try run("sh", ["-c", pipeline])
-        return
-    }
-
-    let arguments = ["-u", udid]
-    announceInvocation("idevicesyslog " + renderShellArguments(arguments))
-    try run("idevicesyslog", arguments)
-}
-
 // MARK: - Unified-log collection
 
-/// Collects the attached device's unified log into a temporary archive and prints
-/// the io.goodkind.celltunnel subsystem entries it contains, optionally narrowed
-/// to lines whose message contains a substring. The live syslog cannot show
-/// entries emitted before it attached, so this is the way to read our own logging
-/// after the fact, including a one-time error that set lastError.
+/// Collects the attached device's unified log into a temporary archive, then
+/// prints the entries matching the predicate. `log collect` is the only device
+/// log path Apple ships; it carries history, unlike a live attach. The predicate
+/// filters the `log show` pass; `log collect` ignores it for an attached device.
 private func collectAndShowUnifiedLog(
-    deviceOverride: String?,
+    deviceUDID: String?,
     lastDuration: String,
-    containsFilter: String?,
-    rawPredicate: String?
+    predicate: String
 ) throws {
     iPhoneLogsLogger.notice(
         "iphone-logs collecting unified log lastDuration=\(lastDuration, privacy: .public)")
-    try requireIDeviceID()
-    let udid = try resolveUSBDeviceUDID(override: deviceOverride)
     let archiveURL = fileManager.temporaryDirectory.appendingPathComponent(unifiedLogArchiveName)
     if fileManager.fileExists(atPath: archiveURL.path) {
         try fileManager.removeItem(at: archiveURL)
@@ -164,12 +139,17 @@ private func collectAndShowUnifiedLog(
         cleanupUnifiedLogArchive(at: archiveURL)
     }
 
-    let collectArguments = [
-        "log", "collect",
-        "--device-udid", udid,
+    var collectArguments = ["log", "collect"]
+    if let deviceUDID {
+        collectArguments.append(contentsOf: ["--device-udid", deviceUDID])
+    } else {
+        collectArguments.append("--device")
+    }
+    collectArguments.append(contentsOf: [
         "--last", lastDuration,
+        "--predicate", predicate,
         "--output", archiveURL.path,
-    ]
+    ])
     announceInvocation("sudo " + renderShellArguments(collectArguments))
     try run(
         "sudo",
@@ -177,7 +157,6 @@ private func collectAndShowUnifiedLog(
         failureMessage: "sudo log collect failed (needs an admin password and a connected device)"
     )
 
-    let predicate = unifiedLogPredicate(containsFilter: containsFilter, rawPredicate: rawPredicate)
     let showArguments = [
         "show", archiveURL.path,
         "--predicate", predicate,
@@ -215,27 +194,12 @@ private func cleanupUnifiedLogArchive(at archiveURL: URL) {
     }
 }
 
-// MARK: - Tool and device resolution
+// MARK: - Device resolution
 
-private func requireIDeviceSyslog() throws {
-    try requireLogTool("idevicesyslog")
-}
-
-private func requireIDeviceID() throws {
-    try requireLogTool("idevice_id")
-}
-
-private func requireLogTool(_ name: String) throws {
-    let result = try capture("which", [name], echoOutput: false)
-    guard result.status == 0 else {
-        throw ToolError.failure(
-            "\(name) not found on PATH. Install with: brew install libimobiledevice")
-    }
-}
-
-/// Resolves the iPhone USB UDID that idevicesyslog and `log collect --device-udid`
-/// both expect, from an explicit override, the environment, or `idevice_id -l`.
-private func resolveUSBDeviceUDID(override: String?) throws -> String {
+/// Resolves the device UDID for `log collect --device-udid` from an explicit
+/// override or the environment, returning nil so the caller falls back to
+/// `log collect --device` (first connected device) when none is set.
+private func resolvedDeviceUDID(override: String?) -> String? {
     if let override, !override.isEmpty {
         return override
     }
@@ -245,20 +209,19 @@ private func resolveUSBDeviceUDID(override: String?) throws -> String {
             return value
         }
     }
-    let result = try capture("idevice_id", ["-l"], echoOutput: false)
-    guard result.status == 0 else {
-        throw ToolError.failure("idevice_id -l failed to list connected devices")
+    return nil
+}
+
+// MARK: - Follow delay
+
+/// Waits the follow interval without a sleep call by signaling a semaphore from a
+/// delayed dispatch, matching the no-sleep convention the repo enforces.
+private func iPhoneLogsFollowDelay(seconds: Double) {
+    let semaphore = DispatchSemaphore(value: 0)
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) {
+        semaphore.signal()
     }
-    let udid =
-        result.output
-        .split(whereSeparator: \.isNewline)
-        .first
-        .map(String.init)?
-        .trimmingCharacters(in: .whitespaces) ?? ""
-    guard !udid.isEmpty else {
-        throw ToolError.failure("no USB-attached iPhone found via idevice_id -l")
-    }
-    return udid
+    semaphore.wait()
 }
 
 // MARK: - Rendering helpers
@@ -278,11 +241,15 @@ private func requireIPhoneLogsValue(
     return value
 }
 
-private func setIPhoneLogsMode(_ mode: inout IPhoneLogsMode, to requested: IPhoneLogsMode) throws {
-    guard mode == .fullDevice else {
-        throw ToolError.usage("--app, --simulator, and --collect are mutually exclusive")
+private func requireIPhoneLogsInterval(
+    _ iterator: inout IndexingIterator<[String]>,
+    for option: String
+) throws -> Double {
+    let raw = try requireIPhoneLogsValue(&iterator, for: option)
+    guard let seconds = Double(raw), seconds > 0 else {
+        throw ToolError.usage("\(option) must be a positive number of seconds")
     }
-    mode = requested
+    return seconds
 }
 
 private func renderShellArguments(_ arguments: [String]) -> String {
