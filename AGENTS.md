@@ -8,9 +8,9 @@ The use case is education and research.
 
 **Hard rule:** Do not enable iOS Personal Hotspot. Do not propose Personal Hotspot or the macOS `en7` interface as the Mac-to-iPhone link. The iPhone app binds its WireGuard UDP egress with `requiredInterfaceType = .cellular`, which uses the regular cellular APN and is what the project routes around hotspot to obtain.
 
-## Architecture and current work
+## Architecture docs
 
-- `docs/architecture.md` is the source of truth for the data path, the per-component responsibilities, the hard constraints, and the source-of-truth map.
+- `docs/architecture.md` is the source of truth for the data path, the per-component responsibilities, the hard constraints, the rationale for running the iPhone relay inside an `NEPacketTunnelProvider`, and the source-of-truth map.
 - `docs/ne-inbound-investigation.md` is the source of truth for the open blocker: whether the Mac can reach the iPhone extension's listener over the USB link, with the confirmed NECP finding and the on-device test matrix that resolves it.
 - `docs/plans/ios-background-network-extension.md` records why the iPhone relay runs inside an `NEPacketTunnelProvider`.
 

@@ -82,13 +82,13 @@ The deciding behavior is undocumented, so the topology is chosen by the matrix, 
 
 A topology is chosen only after its cell passes on device: the extension receives inbound datagrams over the USB link, with no NECP drop on the data path.
 
-## Resolved topology
+## Topology selection
 
-To be filled when the matrix completes.
+The topology follows from the matrix.
 
-If a Mac-dials-iPhone cell passes (3 or 4): keep that direction, apply the minimal interface constraint that passed.
+If a Mac-dials-iPhone cell passes (3 or 4): the Mac keeps dialing the iPhone, with the minimal interface constraint that passed.
 
-If only cell 5 passes: the iPhone extension dials out over the USB link to a listener in the Mac agent, which pipes datagrams to and from the macOS packet-tunnel extension over the existing app-group and XPC seam.
+If only cell 5 passes: the iPhone extension dials out over the USB link to a listener in the Mac agent, which pipes datagrams to and from the macOS packet-tunnel extension over the app-group and XPC seam.
 
 ## Control plane
 

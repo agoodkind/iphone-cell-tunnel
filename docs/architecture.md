@@ -43,6 +43,20 @@ WireGuard is a transport tool, not a participant. Its handshake carries no proje
 - Routes stay scoped to the config's `AllowedIPs`. Never widened to all traffic (`0.0.0.0/0`, `::/0`).
 - iOS Personal Hotspot is never used. The cellular egress is pinned with `requiredInterfaceType = .cellular`.
 
+## Why an iOS packet-tunnel extension
+
+The iPhone relay runs inside an `NEPacketTunnelProvider` because it is the stock iOS mechanism that keeps a custom process and its sockets alive in the background over carrier cellular. An on-demand connect rule (`NEOnDemandRuleConnect`) makes it effectively always-on.
+
+The provider hosts the relay's own sockets. It is configured with no captured routes, so the iPhone's own traffic and the relay's cellular socket are not pulled into the tunnel.
+
+The rejected alternatives:
+
+- `NEAppPushProvider` (Local Push Connectivity) activates only on a matched Wi-Fi SSID or a private LTE network. There is no trigger for public carrier cellular.
+- `NEAppProxyProvider` and `NETransparentProxyProvider` are per-app flow proxies. They do not accept an inbound listener and forward raw UDP.
+- Plain `UIBackgroundModes` does not keep an arbitrary listener and outbound socket alive. The app is suspended.
+
+The accepted trade-offs: iOS shows the VPN indicator while the provider runs, and the active VPN configuration bypasses iCloud Private Relay.
+
 ## Source of truth
 
 | Topic | Source of truth |
