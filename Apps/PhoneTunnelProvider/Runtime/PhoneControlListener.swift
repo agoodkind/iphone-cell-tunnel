@@ -2,7 +2,6 @@ import CellTunnelCore
 import CellTunnelLog
 import Foundation
 import Network
-import UIKit
 
 private let logger = CellTunnelLog.logger(category: .relay)
 private let statusPushIntervalSeconds: UInt64 = 5
@@ -15,7 +14,7 @@ final class PhoneControlListener {
     private let queue = DispatchQueue(label: "io.goodkind.celltunnel.controlListener")
     private var listener: NWListener?
     private var currentConnection: NWConnection?
-    private var statusTask: Task<Void, Never>?
+    private var statusTimer: DispatchSourceTimer?
 
     var onSetServerEndpoint: EndpointHandler?
     var statusProvider: StatusProvider?
@@ -75,8 +74,8 @@ final class PhoneControlListener {
     }
 
     func stop() {
-        statusTask?.cancel()
-        statusTask = nil
+        statusTimer?.cancel()
+        statusTimer = nil
         currentConnection?.cancel()
         currentConnection = nil
         listener?.cancel()
@@ -279,27 +278,29 @@ final class PhoneControlListener {
         send(.status(status), on: connection)
     }
 
+    // A repeating dispatch timer fires the periodic status push instead of a
+    // sleep loop, satisfying the sleep_in_production rule. The timer fires on the
+    // listener queue, then hops to the MainActor to read state and send, since the
+    // connection and status provider are MainActor-isolated.
     private func startStatusLoop() {
-        statusTask?.cancel()
+        statusTimer?.cancel()
         logger.notice(
             "control status loop starting intervalSeconds=\(statusPushIntervalSeconds, privacy: .public)"
         )
-        statusTask = Task { @MainActor [weak self] in
-            while !Task.isCancelled {
-                do {
-                    try await Task.sleep(nanoseconds: statusPushIntervalSeconds * 1_000_000_000)
-                } catch {
-                    logger.notice(
-                        "control status loop sleep interrupted recovery=exit-loop"
-                    )
-                    return
-                }
-                guard !Task.isCancelled else { return }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(
+            deadline: .now() + .seconds(Int(statusPushIntervalSeconds)),
+            repeating: .seconds(Int(statusPushIntervalSeconds))
+        )
+        timer.setEventHandler { [weak self] in
+            Task { @MainActor [weak self] in
                 guard let self, let connection = currentConnection else {
-                    continue
+                    return
                 }
                 sendStatusSnapshot(on: connection)
             }
         }
+        timer.resume()
+        statusTimer = timer
     }
 }

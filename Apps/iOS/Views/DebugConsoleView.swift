@@ -8,22 +8,20 @@
     private let valueNone = "None"
 
     /// DEBUG-only developer console for live debugging against the real relay
-    /// infra: the iOS relay listener, the Mac control/data link, and the cellular
-    /// egress. Most rows read `PhoneRelayController`'s `@Observable` state directly
-    /// so they auto-update; the buttons drive real network interactions and report
-    /// their latest outcome inline. Nothing here is a synthetic unit test.
+    /// infra: the iOS relay listener in the background extension, the Mac
+    /// control/data link, and the cellular egress. Most rows read
+    /// `PhoneRelayController`'s `@Observable` state, which the status poller fills
+    /// from the extension, so they auto-update; the buttons drive real
+    /// interactions and report their latest outcome inline. Nothing here is a
+    /// synthetic unit test.
     struct DebugConsoleView: View {
         let relayController: PhoneRelayController
 
         @Environment(\.dismiss) private var dismiss
-        @State private var tunnelManager = PhoneTunnelManager()
         @State private var endpointText = ""
         @State private var restartResult = ""
-        @State private var endpointResult = ""
         @State private var cellularProbeResult = ""
-        @State private var loopbackResult = ""
         @State private var isProbingCellular = false
-        @State private var isRunningLoopback = false
 
         var body: some View {
             NavigationStack {
@@ -31,9 +29,7 @@
                     relaySection
                     macLinkSection
                     cellularSection
-                    diagnosticsSection
                     countersSection
-                    backgroundTunnelSection
                 }
                 .navigationTitle("Developer")
                 .toolbar {
@@ -68,15 +64,6 @@
                     value: yesNo(relayController.connectedPeerName != nil)
                 )
                 LabeledContent("Advertising", value: yesNo(relayController.isRunning))
-                TextField(endpointFieldPlaceholder, text: $endpointText)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                Button {
-                    setServerEndpoint()
-                } label: {
-                    Label("Set server endpoint", systemImage: "antenna.radiowaves.left.and.right")
-                }
-                resultCaption(endpointResult)
             }
         }
 
@@ -86,6 +73,9 @@
                 LabeledContent("Interface", value: relayController.cellularInterfaceDescription)
                 LabeledContent("IPv4", value: yesNo(relayController.cellularPath.supportsIPv4))
                 LabeledContent("IPv6", value: yesNo(relayController.cellularPath.supportsIPv6))
+                TextField(endpointFieldPlaceholder, text: $endpointText)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
                 Button {
                     probeCellular()
                 } label: {
@@ -93,18 +83,6 @@
                 }
                 .disabled(isProbingCellular)
                 resultCaption(cellularProbeResult)
-            }
-        }
-
-        @ViewBuilder private var diagnosticsSection: some View {
-            Section("Diagnostics") {
-                Button {
-                    runLoopback()
-                } label: {
-                    Label("Local link loopback", systemImage: "arrow.triangle.2.circlepath")
-                }
-                .disabled(isRunningLoopback)
-                resultCaption(loopbackResult)
             }
         }
 
@@ -119,23 +97,6 @@
                 counterRow("Bytes Out", relayController.counters.relayBytesOut)
                 throughputRow("Upload", relayController.uploadMbps)
                 throughputRow("Download", relayController.downloadMbps)
-            }
-        }
-
-        @ViewBuilder private var backgroundTunnelSection: some View {
-            Section("Background Tunnel") {
-                LabeledContent("Status", value: tunnelManager.statusDescription)
-                LabeledContent("Last Error", value: tunnelManager.lastError ?? valueNone)
-                Button {
-                    startTunnel()
-                } label: {
-                    Label("Start iOS tunnel", systemImage: "play.fill")
-                }
-                Button {
-                    stopTunnel()
-                } label: {
-                    Label("Stop iOS tunnel", systemImage: "stop.fill")
-                }
             }
         }
 
@@ -171,21 +132,16 @@
 
         // MARK: - Actions
 
+        // The relay runs in the background extension now, so a restart cycles the
+        // VPN session via the controller rather than tearing down an in-app
+        // forwarder.
         private func restartRelay() {
             logger.notice("developer console restart relay requested")
             relayController.stop()
-            relayController.start()
-            restartResult = "Relay restarted"
-        }
-
-        private func setServerEndpoint() {
-            logger.notice("developer console set server endpoint requested")
-            guard let endpoint = DebugConsoleProbes.parseEndpoint(from: endpointText) else {
-                endpointResult = "Could not parse \"\(endpointText)\""
-                return
+            Task {
+                await relayController.start()
             }
-            relayController.forwarder.setServerEndpoint(endpoint)
-            endpointResult = "Set \(endpoint.host):\(endpoint.port)"
+            restartResult = "Relay restarting"
         }
 
         private func probeCellular() {
@@ -201,32 +157,6 @@
                 await MainActor.run {
                     cellularProbeResult = result.detail
                     isProbingCellular = false
-                }
-            }
-        }
-
-        private func startTunnel() {
-            logger.notice("developer console start ios tunnel requested")
-            Task {
-                await tunnelManager.start()
-            }
-        }
-
-        private func stopTunnel() {
-            logger.notice("developer console stop ios tunnel requested")
-            tunnelManager.stop()
-        }
-
-        private func runLoopback() {
-            logger.notice("developer console loopback probe requested")
-            isRunningLoopback = true
-            loopbackResult = "Running..."
-            Task {
-                let result = await DebugConsoleProbes.runLocalLinkLoopback()
-                await MainActor.run {
-                    let status = result.passed ? "Pass" : "Fail"
-                    loopbackResult = "\(status): \(result.detail)"
-                    isRunningLoopback = false
                 }
             }
         }

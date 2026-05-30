@@ -1,3 +1,4 @@
+import CellTunnelCore
 import CellTunnelLog
 import SwiftUI
 
@@ -22,19 +23,34 @@ struct CellTunnelPhoneApp: App {
         WindowGroup {
             PhoneContentView(relayController: relayController)
                 .task {
-                    relayController.start()
+                    await relayController.start()
                 }
                 .onChange(of: scenePhase) { _, phase in
-                    if phase == .active {
-                        relayController.start()
-                    } else if phase == .background {
-                        relayController.stop()
-                    }
+                    handleScenePhase(phase)
                 }
+        }
+    }
+
+    // The tunnel is always-on via on-demand, so backgrounding never stops it; it
+    // only suspends the in-app status poll to save work, and foregrounding
+    // resumes the poll with a fresh refresh.
+    private func handleScenePhase(_ phase: ScenePhase) {
+        switch phase {
+        case .active:
+            logger.notice("phone app scene phase active; resuming status poll")
+            relayController.resumePolling()
+        case .background:
+            logger.notice("phone app scene phase background; suspending status poll")
+            relayController.suspendPolling()
+        default:
+            break
         }
     }
 }
 
+// Writes the launch-provided relay listener port into the app-group UserDefaults
+// the extension reads via resolvedRelayListenerPort, so a device test can pin
+// the port the background provider advertises.
 private func applyLaunchPortOverride() {
     let arguments = CommandLine.arguments
     guard let argumentIndex = arguments.firstIndex(of: relayListenerPortLaunchArgument) else {
@@ -54,7 +70,8 @@ private func applyLaunchPortOverride() {
         )
         return
     }
-    storeRelayListenerPort(port)
+    let defaults = UserDefaults(suiteName: cellTunnelAppGroupIdentifier) ?? .standard
+    storeRelayListenerPort(port, defaults: defaults)
     logger.notice(
         "phone app launch port argument applied port=\(port, privacy: .public)")
 }

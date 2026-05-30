@@ -7,32 +7,21 @@
     private let logger = CellTunnelLog.logger(category: .relay)
 
     /// Result of a single live debug probe, surfaced as a one-line caption in the
-    /// developer console. The probes are real network interactions against the
-    /// running relay infra, not synthetic unit tests.
+    /// developer console. The probe is a real network interaction against the
+    /// running relay infra, not a synthetic unit test.
     struct DebugProbeResult: Sendable {
         let passed: Bool
         let detail: String
     }
 
-    /// Namespace for the developer console's live probes. Every probe is a real
+    /// Namespace for the developer console's live probe. The probe is a real
     /// network interaction: a UDP reachability check pinned to the cellular
-    /// interface, and a local loopback that drives the relay listener plus the
-    /// Mac-facing receive path plus metrics without a Mac. Waiting is built on
-    /// `DispatchQueue.asyncAfter` rather than `Task.sleep` to match the rest of
-    /// the relay runtime.
+    /// interface. Waiting is built on `DispatchQueue.asyncAfter` rather than
+    /// `Task.sleep` to match the rest of the relay runtime.
     enum DebugConsoleProbes {
-        // Named constants so the probes satisfy no_magic_numbers; every timeout,
-        // interval, port, and size below is referenced by name from a probe body.
-        static let loopbackPort: UInt16 = 51_999
-        static let loopbackServiceName = "CellTunnelDebugLoopback"
-        static let loopbackDatagramCount = 8
-        static let loopbackDatagramByteCount = 64
-        static let loopbackDatagramFillByte: UInt8 = 0x5A
-        static let loopbackHost = "127.0.0.1"
-
-        private static let listenerWarmupNanoseconds: UInt64 = 250_000_000
+        // Named constants so the probe satisfies no_magic_numbers; every timeout
+        // and interval below is referenced by name from the probe body.
         private static let pollIntervalNanoseconds: UInt64 = 100_000_000
-        private static let loopbackPollAttemptLimit = 20
         private static let cellularPollAttemptLimit = 30
         private static let nanosecondsPerMillisecond: UInt64 = 1_000_000
 
@@ -84,29 +73,6 @@
             return cellularProbeResult(outcome, transportNote: transportNote, interface: interface)
         }
 
-        /// Stands up a throwaway forwarder listener on a fixed local port, sends a
-        /// burst of UDP datagrams to it over loopback, and polls the Mac-facing
-        /// ingress counter until it reaches the sent count. This exercises the
-        /// NWListener plus the Mac-facing receive path plus metrics without a Mac.
-        static func runLocalLinkLoopback() async -> DebugProbeResult {
-            logger.notice("loopback probe starting port=\(loopbackPort, privacy: .public)")
-            let forwarder = PhoneRelayForwarder()
-            guard let port = NWEndpoint.Port(rawValue: loopbackPort) else {
-                return DebugProbeResult(passed: false, detail: "Invalid loopback port")
-            }
-            forwarder.startListener(port: port, serviceName: loopbackServiceName)
-            await asyncDelay(nanoseconds: listenerWarmupNanoseconds)
-            await sendLoopbackDatagrams(to: port)
-            let target = UInt64(loopbackDatagramCount)
-            let observed = await pollMacIngress(forwarder: forwarder, target: target)
-            forwarder.stop()
-            let passed = observed >= target
-            return DebugProbeResult(
-                passed: passed,
-                detail: "From Mac \(observed)/\(loopbackDatagramCount)"
-            )
-        }
-
         // MARK: - Cellular probe internals
 
         private static func cellularProbeResult(
@@ -152,52 +118,6 @@
                 await asyncDelay(nanoseconds: pollIntervalNanoseconds)
             }
             return box.value ?? .timedOut
-        }
-
-        // MARK: - Loopback internals
-
-        private static func sendLoopbackDatagrams(to port: NWEndpoint.Port) async {
-            logger.notice(
-                "loopback probe sending datagrams count=\(loopbackDatagramCount, privacy: .public)"
-            )
-            let sendQueue = DispatchQueue(label: "CellTunnelPhone.DebugLoopbackSend")
-            let connection = NWConnection(
-                host: NWEndpoint.Host(loopbackHost), port: port, using: .udp
-            )
-            connection.start(queue: sendQueue)
-            let payload = Data(
-                repeating: loopbackDatagramFillByte, count: loopbackDatagramByteCount
-            )
-            for _ in 0..<loopbackDatagramCount {
-                await sendOneDatagram(on: connection, payload: payload)
-            }
-            connection.cancel()
-        }
-
-        private static func sendOneDatagram(on connection: NWConnection, payload: Data) async {
-            logger.debug("loopback probe sending one datagram")
-            await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                connection.send(
-                    content: payload,
-                    completion: .contentProcessed { _ in
-                        continuation.resume()
-                    }
-                )
-            }
-        }
-
-        private static func pollMacIngress(
-            forwarder: PhoneRelayForwarder, target: UInt64
-        ) async -> UInt64 {
-            var observed: UInt64 = 0
-            for _ in 0..<loopbackPollAttemptLimit {
-                observed = forwarder.metrics.snapshot().wireGuardDatagramsFromMac
-                if observed >= target {
-                    break
-                }
-                await asyncDelay(nanoseconds: pollIntervalNanoseconds)
-            }
-            return observed
         }
 
         // MARK: - Waiting

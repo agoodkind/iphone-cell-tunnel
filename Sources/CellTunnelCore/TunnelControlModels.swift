@@ -278,6 +278,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     public var activeRelayEndpoint: TunnelRelayEndpoint?
     public var macCounters: TunnelCounters?
     public var phoneCounters: TunnelCounters?
+    public var cellularPath: CellularPathSnapshot?
+    public var connectedPeerName: String?
+    public var relayState: String?
 
     public init(
         running: Bool = false,
@@ -289,7 +292,10 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         discovery: TunnelDiscoverySnapshot = TunnelDiscoverySnapshot(),
         activeRelayEndpoint: TunnelRelayEndpoint? = nil,
         macCounters: TunnelCounters? = nil,
-        phoneCounters: TunnelCounters? = nil
+        phoneCounters: TunnelCounters? = nil,
+        cellularPath: CellularPathSnapshot? = nil,
+        connectedPeerName: String? = nil,
+        relayState: String? = nil
     ) {
         self.running = running
         self.routeState = routeState
@@ -301,6 +307,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         self.activeRelayEndpoint = activeRelayEndpoint
         self.macCounters = macCounters
         self.phoneCounters = phoneCounters
+        self.cellularPath = cellularPath
+        self.connectedPeerName = connectedPeerName
+        self.relayState = relayState
     }
 
     public var renderedOutput: String {
