@@ -8,6 +8,7 @@ Products/
 .make/
 **/.make/
 Config/local.xcconfig
+Config/local.signing.env
 Sources/CellTunnelCore/Generated/
 *.xcodeproj/
 *.xcworkspace/

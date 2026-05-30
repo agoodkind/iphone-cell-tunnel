@@ -19,6 +19,19 @@ make build TARGET=iphone-device CONFIG=Debug
 make build TARGET=iphone-simulator CONFIG=Debug
 ```
 
+## Signing
+
+The iOS device build uses automatic signing. Registering the App Group and Network
+Extension capabilities needs an App Store Connect API key, supplied through
+`APPLE_NOTARY_KEY_ID`, `APPLE_NOTARY_ISSUER_ID`, and either `APPLE_NOTARY_KEY_PATH`
+(a `.p8` path) or `APPLE_NOTARY_KEY_BASE64`. Set these in the environment or in
+`Config/local.signing.env` (gitignored); copy `Config/local.signing.env.example` to
+start. The `.p8` key lives outside the repo. With no key set, the build falls back
+to the interactive Xcode account.
+
+The macOS targets sign from `Config/local.xcconfig` (`DEVELOPMENT_TEAM`,
+`CODE_SIGN_IDENTITY`, `CODE_SIGN_STYLE`).
+
 ## Install and run
 
 Install the Mac side, then install and launch the iPhone app:

@@ -129,6 +129,125 @@ private func developmentTeamFromLocalXcconfig() throws -> String? {
     return nil
 }
 
+private let signingEnvironmentLocalPath = repoRoot.appendingPathComponent(
+    "Config/local.signing.env")
+
+// xcodebuild flags that authenticate automatic signing with an App Store Connect
+// API key, or an empty array when no key is configured. With no key the iOS
+// device build falls back to the interactive Xcode account, so this coexists with
+// GUI signing. Each value is read from the process environment first, then from
+// Config/local.signing.env (gitignored). The private key is supplied either as a
+// .p8 path in APPLE_NOTARY_KEY_PATH or as base64 in APPLE_NOTARY_KEY_BASE64, which
+// is written to a 0600 temp .p8. No key id, issuer id, key path, or key bytes are
+// ever logged.
+func appStoreConnectAuthArguments() throws -> [String] {
+    let keyID = signingEnvironmentValue("APPLE_NOTARY_KEY_ID")
+    let issuerID = signingEnvironmentValue("APPLE_NOTARY_ISSUER_ID")
+    guard let keyID, let issuerID else {
+        if keyID != nil || issuerID != nil {
+            printToolOutput(
+                """
+                App Store Connect API key auth skipped: set both \
+                APPLE_NOTARY_KEY_ID and APPLE_NOTARY_ISSUER_ID
+                """
+            )
+        }
+        return []
+    }
+    guard let keyPath = try appStoreConnectKeyPath(keyID: keyID) else {
+        printToolOutput(
+            """
+            App Store Connect API key auth skipped: set \
+            APPLE_NOTARY_KEY_PATH or APPLE_NOTARY_KEY_BASE64
+            """
+        )
+        return []
+    }
+    printToolOutput("App Store Connect API key auth enabled for automatic signing")
+    return [
+        "-authenticationKeyID", keyID,
+        "-authenticationKeyIssuerID", issuerID,
+        "-authenticationKeyPath", keyPath,
+    ]
+}
+
+// Reads a signing value from the process environment first, then from
+// Config/local.signing.env, returning nil when unset or empty.
+private func signingEnvironmentValue(_ key: String) -> String? {
+    let environment = ProcessInfo.processInfo.environment
+    let value = environment[key]?.trimmingCharacters(in: .whitespaces)
+    if let value, !value.isEmpty {
+        return value
+    }
+    return signingEnvironmentFileValue(key)
+}
+
+private func signingEnvironmentFileValue(_ key: String) -> String? {
+    guard fileManager.fileExists(atPath: signingEnvironmentLocalPath.path),
+        let contents = try? String(contentsOf: signingEnvironmentLocalPath, encoding: .utf8)
+    else {
+        return nil
+    }
+    for rawLine in contents.components(separatedBy: .newlines) {
+        let line = rawLine.trimmingCharacters(in: .whitespaces)
+        if line.isEmpty || line.hasPrefix("#") {
+            continue
+        }
+        let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+        guard parts.count == 2,
+            String(parts[0]).trimmingCharacters(in: .whitespaces) == key
+        else {
+            continue
+        }
+        let value = String(parts[1])
+            .trimmingCharacters(in: .whitespaces)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+        if value.isEmpty {
+            continue
+        }
+        return value
+    }
+    return nil
+}
+
+// Resolves the .p8 path from APPLE_NOTARY_KEY_PATH (tilde expanded) or by decoding
+// APPLE_NOTARY_KEY_BASE64 to a 0600 temp file named AuthKey_<keyID>.p8.
+private func appStoreConnectKeyPath(keyID: String) throws -> String? {
+    if let rawPath = signingEnvironmentValue("APPLE_NOTARY_KEY_PATH") {
+        let expanded = (rawPath as NSString).expandingTildeInPath
+        guard fileManager.fileExists(atPath: expanded) else {
+            throw ToolError.failure(
+                "APPLE_NOTARY_KEY_PATH is set but no file exists at the resolved path")
+        }
+        return expanded
+    }
+    guard let base64 = signingEnvironmentValue("APPLE_NOTARY_KEY_BASE64") else {
+        return nil
+    }
+    guard let keyData = Data(base64Encoded: base64) else {
+        throw ToolError.failure("APPLE_NOTARY_KEY_BASE64 is not valid base64")
+    }
+    let destination = fileManager.temporaryDirectory
+        .appendingPathComponent("AuthKey_\(keyID).p8")
+    // Remove any stale file first so the key is created fresh with 0600 applied at
+    // creation. This closes the window a write-then-chmod leaves open, and a file
+    // owned by another user surfaces as a removeItem error rather than a stale key.
+    if fileManager.fileExists(atPath: destination.path) {
+        try fileManager.removeItem(at: destination)
+    }
+    guard
+        fileManager.createFile(
+            atPath: destination.path,
+            contents: keyData,
+            attributes: [.posixPermissions: 0o600]
+        )
+    else {
+        throw ToolError.failure(
+            "failed to write the decoded App Store Connect key to a temp file")
+    }
+    return destination.path
+}
+
 func run(
     _ executable: String,
     _ arguments: [String],

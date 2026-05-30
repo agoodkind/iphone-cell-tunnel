@@ -140,6 +140,14 @@ func buildPhoneDevice(configuration: String) throws {
     )
 }
 
+// Signing follow-ups not implemented this pass, recorded so the next pass has the
+// recipe.
+// macOS Developer ID notarization: package CellTunnelAgent.app with ditto, run
+// xcrun notarytool submit --wait using the APPLE_NOTARY_* key, verify Accepted,
+// then xcrun stapler staple.
+// CI release: add .github/workflows/release.yml that builds with the App Store
+// Connect key, notarizes, and publishes, mirroring macos-fan-curve and reusing the
+// same secret names.
 func buildPhoneDevice(
     configuration: String,
     developmentTeam: String,
@@ -154,7 +162,7 @@ func buildPhoneDevice(
         destination: ProcessInfo.processInfo.environment["IOS_DEVICE_DESTINATION"]
             ?? "generic/platform=iOS",
         platformName: iOSDevicePlatformName,
-        xcodebuildOptions: ["-allowProvisioningUpdates"],
+        xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments(),
         buildSettings: [
             "CODE_SIGN_STYLE": "Automatic",
             "DEVELOPMENT_TEAM": developmentTeam,
