@@ -292,7 +292,13 @@ final class PhoneControlListener {
             deadline: .now() + .seconds(Int(statusPushIntervalSeconds)),
             repeating: .seconds(Int(statusPushIntervalSeconds))
         )
-        timer.setEventHandler { [weak self] in
+        // The handler is `@Sendable` so it stays nonisolated and runs on the
+        // listener queue. Without it the closure inherits the type's MainActor
+        // isolation, and dispatch firing it off the main thread traps with a
+        // "Block was expected to execute on queue [com.apple.main-thread]"
+        // assertion. It hops to the MainActor through a Task for the actual
+        // connection and status-provider access.
+        timer.setEventHandler { @Sendable [weak self] in
             Task { @MainActor [weak self] in
                 guard let self, let connection = currentConnection else {
                     return
