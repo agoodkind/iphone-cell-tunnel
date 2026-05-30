@@ -45,17 +45,7 @@ WireGuard is a transport tool, not a participant. Its handshake carries no proje
 
 ## Why an iOS packet-tunnel extension
 
-The iPhone relay runs inside an `NEPacketTunnelProvider` because it is the stock iOS mechanism that keeps a custom process and its sockets alive in the background over carrier cellular. An on-demand connect rule (`NEOnDemandRuleConnect`) makes it effectively always-on.
-
-The provider hosts the relay's own sockets. It is configured with no captured routes, so the iPhone's own traffic and the relay's cellular socket are not pulled into the tunnel.
-
-The rejected alternatives:
-
-- `NEAppPushProvider` (Local Push Connectivity) activates only on a matched Wi-Fi SSID or a private LTE network. There is no trigger for public carrier cellular.
-- `NEAppProxyProvider` and `NETransparentProxyProvider` are per-app flow proxies. They do not accept an inbound listener and forward raw UDP.
-- Plain `UIBackgroundModes` does not keep an arbitrary listener and outbound socket alive. The app is suspended.
-
-The accepted trade-offs: iOS shows the VPN indicator while the provider runs, and the active VPN configuration bypasses iCloud Private Relay.
+The iPhone relay runs inside an `NEPacketTunnelProvider`, the stock iOS mechanism that keeps a custom process and its sockets alive in the background over carrier cellular. An `NEOnDemandRuleConnect` rule makes it always-on. The provider captures no routes, so the iPhone's own traffic and the relay's cellular socket are not pulled into the tunnel.
 
 ## Source of truth
 
@@ -66,6 +56,4 @@ The accepted trade-offs: iOS shows the VPN indicator while the provider runs, an
 | Build, lint, test, install targets | `make help` (generated from the `Makefile`). |
 | Identifiers, ports, signing | `Config/Constants.xcconfig` and `Config/local.xcconfig`. |
 | Task and ticket state | Tack workspace `main`, project `OSS`, epic `OSS-7`. |
-| Active inbound-path investigation | `docs/ne-inbound-investigation.md`. |
-| Background-extension rationale | `docs/plans/ios-background-network-extension.md`. |
 | Component map and house rules | `AGENTS.md`. |
