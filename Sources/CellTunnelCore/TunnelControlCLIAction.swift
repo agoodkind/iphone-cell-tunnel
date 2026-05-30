@@ -3,6 +3,7 @@ import Foundation
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 private let deviceListingIndexBase = 1
+private let optionArgumentStride = 2
 private let noRelayDevicesMessage = "no relay devices found"
 
 public enum TunnelControlCLIAction: Equatable, Sendable {
@@ -71,13 +72,13 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
                     throw TunnelDaemonError.usage("missing value for --config")
                 }
                 configPath = arguments[index + 1]
-                index += 2
+                index += optionArgumentStride
             case "--relay":
                 guard index + 1 < arguments.count else {
                     throw TunnelDaemonError.usage("missing value for --relay")
                 }
                 relayEndpoint = try TunnelRelayEndpoint.parse(argument: arguments[index + 1])
-                index += 2
+                index += optionArgumentStride
             default:
                 throw TunnelDaemonError.usage("unknown start option: \(argument)")
             }

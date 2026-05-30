@@ -1,5 +1,8 @@
+import CellTunnelLog
 import Foundation
 import SwiftMkCore
+
+private let logger = CellTunnelLog.logger(category: .build)
 
 func generateProject() throws {
     try requireTool("tuist")
@@ -93,6 +96,12 @@ func buildScheme(
     xcodebuildOptions: [String] = [],
     buildSettings: [String: String] = [:]
 ) throws {
+    logger.notice(
+        """
+        xcodebuild scheme=\(scheme, privacy: .public) action=\(action, privacy: .public) \
+        configuration=\(configuration, privacy: .public) platform=\(platformName, privacy: .public)
+        """
+    )
     let configurationBuildDirectory = xcodeConfigurationBuildDirectory(
         configuration: configuration,
         platformName: platformName
@@ -153,6 +162,8 @@ func buildPhoneDevice(
     developmentTeam: String,
     shouldGenerateProject: Bool
 ) throws {
+    logger.notice(
+        "building phone device configuration=\(configuration, privacy: .public)")
     if shouldGenerateProject {
         try generateProject()
     }
@@ -246,14 +257,6 @@ func buildWireGuardGoBridge() throws {
     )
 }
 
-struct XcodeDevice: Decodable {
-    let simulator: Bool
-    let available: Bool
-    let platform: String
-    let identifier: String
-    let name: String
-}
-
 func selectedPhoneDeviceIdentifier() throws -> String {
     let environment = ProcessInfo.processInfo.environment
     for key in ["CELL_TUNNEL_IOS_DEVICE_ID", "IOS_DEVICE_ID", "IOS_DEVICE_UDID"] {
@@ -340,6 +343,7 @@ func xcodeAnalyze() throws {
 }
 
 func swiftLintAnalyze() throws {
+    logger.notice("swiftlint analyze compiler-log build starting")
     let analyzeDirectory = buildDirectory.appendingPathComponent("Analyze")
     try fileManager.createDirectory(at: analyzeDirectory, withIntermediateDirectories: true)
     let compilerLog = analyzeDirectory.appendingPathComponent("swiftlint-xcodebuild.log")
@@ -379,6 +383,7 @@ func swiftLintAnalyze() throws {
 }
 
 func cleanProject() throws {
+    logger.notice("cleaning build and product outputs")
     let paths = [
         buildDirectory,
         productsDirectory,

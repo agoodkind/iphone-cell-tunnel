@@ -11,6 +11,8 @@ public final class RelayControlFramer: NWProtocolFramerImplementation {
     public static let label = "RelayControl"
 
     private static let lengthPrefixBytes = 4
+    private static let bitsPerByte = 8
+    private static let byteMask: UInt32 = 0xff
 
     public init(framer _: NWProtocolFramer.Instance) {
         // No per-instance state.
@@ -51,12 +53,10 @@ public final class RelayControlFramer: NWProtocolFramerImplementation {
                 return Self.lengthPrefixBytes
             }
 
-            let payloadLength = Int(
-                (UInt32(lengthBuffer[0]) << 24)
-                    | (UInt32(lengthBuffer[1]) << 16)
-                    | (UInt32(lengthBuffer[2]) << 8)
-                    | UInt32(lengthBuffer[3])
-            )
+            var payloadLength = 0
+            for byte in lengthBuffer {
+                payloadLength = (payloadLength << Self.bitsPerByte) | Int(byte)
+            }
             guard payloadLength > 0, payloadLength <= RelayControlMessageCodec.maxPayloadBytes
             else {
                 logger.error(
@@ -86,10 +86,10 @@ public final class RelayControlFramer: NWProtocolFramerImplementation {
     ) {
         var header = [UInt8](repeating: 0, count: Self.lengthPrefixBytes)
         let unsignedLength = UInt32(messageLength)
-        header[0] = UInt8((unsignedLength >> 24) & 0xff)
-        header[1] = UInt8((unsignedLength >> 16) & 0xff)
-        header[2] = UInt8((unsignedLength >> 8) & 0xff)
-        header[3] = UInt8(unsignedLength & 0xff)
+        for index in 0..<Self.lengthPrefixBytes {
+            let shift = (Self.lengthPrefixBytes - 1 - index) * Self.bitsPerByte
+            header[index] = UInt8((unsignedLength >> UInt32(shift)) & Self.byteMask)
+        }
         framer.writeOutput(data: Data(header))
         do {
             try framer.writeOutputNoCopy(length: messageLength)

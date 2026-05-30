@@ -2,6 +2,7 @@ import CellTunnelCore
 import CellTunnelLog
 import Foundation
 
+private let logger = CellTunnelLog.logger(category: .daemon)
 private let helpSubcommand = "--help"
 private let helpShortSubcommand = "-h"
 
@@ -10,6 +11,8 @@ enum CellTunnelCtl {
     static func main() async {
         CellTunnelLog.bootstrap()
         let arguments = Array(CommandLine.arguments.dropFirst())
+        logger.notice(
+            "celltunnelctl invoked argumentCount=\(arguments.count, privacy: .public)")
 
         if arguments.isEmpty {
             printUsage()
@@ -27,7 +30,7 @@ enum CellTunnelCtl {
             let executor = TunnelControlCLIExecutor(client: client)
             let output = try await executor.run(action: action)
             if !output.isEmpty {
-                print(output)
+                FileHandle.standardOutput.write(Data((output + "\n").utf8))
             }
             await client.shutdown()
         } catch {
@@ -52,7 +55,7 @@ private func printUsage() {
           stop                         Stop the tunnel.
           --help, -h                   Print this help text.
         """
-    print(usage)
+    FileHandle.standardOutput.write(Data((usage + "\n").utf8))
 }
 
 private func emit(error: Error) {

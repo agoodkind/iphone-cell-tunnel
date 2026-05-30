@@ -1,9 +1,11 @@
 import Foundation
 
+private let hostPortComponentCount = 2
+
 public enum TunnelAddressFamily: String, Codable, Equatable, Sendable {
-    case unspecified
     case ipv4
     case ipv6
+    case unspecified
 }
 
 public enum TunnelRouteState: String, Codable, Equatable, Sendable {
@@ -25,8 +27,8 @@ public enum TunnelDiscoveryPhase: String, Codable, Equatable, Sendable {
 }
 
 public enum TunnelControlErrorCode: String, Codable, Equatable, Sendable {
-    case discoveryUnavailable = "discoveryUnavailable"
     case `internal` = "internal"
+    case discoveryUnavailable = "discoveryUnavailable"
     case invalidRelayEndpoint = "invalidRelayEndpoint"
     case missingWireGuardConfigPath = "missingWireGuardConfigPath"
     case relaySelectionRequired = "relaySelectionRequired"
@@ -125,7 +127,8 @@ public struct TunnelRelayEndpoint: Codable, Equatable, Hashable, Sendable {
 
         let components = trimmedArgument.split(
             separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-        guard components.count == 2, let port = Int(components[1]), port > 0 else {
+        guard components.count == hostPortComponentCount, let port = Int(components[1]), port > 0
+        else {
             throw TunnelDaemonError.controlFailure(
                 TunnelControlFailure(
                     errorCode: .invalidRelayEndpoint, message: "invalid relay endpoint")

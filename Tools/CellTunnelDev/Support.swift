@@ -1,23 +1,9 @@
+import CellTunnelLog
 import Foundation
 
-enum ToolError: Error, CustomStringConvertible {
-    case usage(String)
-    case failure(String)
-
-    var description: String {
-        switch self {
-        case .usage(let message):
-            return message
-        case .failure(let message):
-            return message
-        }
-    }
-}
-
-struct CommandResult {
-    let status: Int32
-    let output: String
-}
+private let logger = CellTunnelLog.logger(category: .build)
+private let keyValuePairComponentCount = 2
+private let commandNotFoundExitStatus: Int32 = 127
 
 var fileManager: FileManager {
     FileManager.default
@@ -35,16 +21,6 @@ let phoneBundleIdentifier = "io.goodkind.CellTunnelPhone"
 let phoneActivationArgument = "--cell-tunnel-start-relay"
 let phoneListenerPortArgument = "--cell-tunnel-port"
 let autoCreatedSimulatorNamePrefix = "CellTunnelPhone Auto"
-
-enum ActivationTarget: String, CaseIterable {
-    case iphone
-    case iphoneSimulator = "iphone-simulator"
-}
-
-enum XcodeBuildCacheMode {
-    case enabled
-    case disabled
-}
 
 let activationTargetUsage = ActivationTarget.allCases.map(\.rawValue).joined(separator: "|")
 
@@ -111,7 +87,7 @@ private func developmentTeamFromLocalXcconfig() throws -> String? {
             line = String(line[..<semicolon]).trimmingCharacters(in: .whitespaces)
         }
         let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-        guard parts.count == 2 else {
+        guard parts.count == keyValuePairComponentCount else {
             continue
         }
         let key = String(parts[0]).trimmingCharacters(in: .whitespaces)
@@ -183,9 +159,19 @@ private func signingEnvironmentValue(_ key: String) -> String? {
 }
 
 private func signingEnvironmentFileValue(_ key: String) -> String? {
-    guard fileManager.fileExists(atPath: signingEnvironmentLocalPath.path),
-        let contents = try? String(contentsOf: signingEnvironmentLocalPath, encoding: .utf8)
-    else {
+    guard fileManager.fileExists(atPath: signingEnvironmentLocalPath.path) else {
+        return nil
+    }
+    let contents: String
+    do {
+        contents = try String(contentsOf: signingEnvironmentLocalPath, encoding: .utf8)
+    } catch {
+        logger.error(
+            """
+            failed reading signing env file \
+            details=\(error.localizedDescription, privacy: .public) recovery=skip-file
+            """
+        )
         return nil
     }
     for rawLine in contents.components(separatedBy: .newlines) {
@@ -194,7 +180,7 @@ private func signingEnvironmentFileValue(_ key: String) -> String? {
             continue
         }
         let parts = line.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
-        guard parts.count == 2,
+        guard parts.count == keyValuePairComponentCount,
             String(parts[0]).trimmingCharacters(in: .whitespaces) == key
         else {
             continue
@@ -213,6 +199,7 @@ private func signingEnvironmentFileValue(_ key: String) -> String? {
 // Resolves the .p8 path from APPLE_NOTARY_KEY_PATH (tilde expanded) or by decoding
 // APPLE_NOTARY_KEY_BASE64 to a 0600 temp file named AuthKey_<keyID>.p8.
 private func appStoreConnectKeyPath(keyID: String) throws -> String? {
+    logger.debug("resolving App Store Connect API key path")
     if let rawPath = signingEnvironmentValue("APPLE_NOTARY_KEY_PATH") {
         let expanded = (rawPath as NSString).expandingTildeInPath
         guard fileManager.fileExists(atPath: expanded) else {
@@ -255,6 +242,7 @@ func run(
     workingDirectory: URL = repoRoot,
     failureMessage: String? = nil
 ) throws {
+    logger.debug("run executable=\(executable, privacy: .public)")
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = [executable] + arguments
@@ -278,6 +266,7 @@ func runBestEffort(
     environment: [String: String] = [:],
     workingDirectory: URL = repoRoot
 ) -> Int32 {
+    logger.debug("runBestEffort executable=\(executable, privacy: .public)")
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = [executable] + arguments
@@ -289,7 +278,13 @@ func runBestEffort(
         process.waitUntilExit()
         return process.terminationStatus
     } catch {
-        return 127
+        logger.error(
+            """
+            runBestEffort failed executable=\(executable, privacy: .public) \
+            details=\(error.localizedDescription, privacy: .public) recovery=return-not-found-status
+            """
+        )
+        return commandNotFoundExitStatus
     }
 }
 
@@ -300,6 +295,7 @@ func capture(
     workingDirectory: URL = repoRoot,
     echoOutput: Bool = true
 ) throws -> CommandResult {
+    logger.debug("capture executable=\(executable, privacy: .public)")
     let process = Process()
     process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
     process.arguments = [executable] + arguments
@@ -317,7 +313,7 @@ func capture(
     let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
     let output = String(data: outputData, encoding: .utf8) ?? ""
     if echoOutput, !output.isEmpty {
-        print(output, terminator: "")
+        FileHandle.standardOutput.write(Data(output.utf8))
     }
 
     return CommandResult(status: process.terminationStatus, output: output)
@@ -329,10 +325,20 @@ func runWritingOutput(
     outputURL: URL,
     environment: [String: String] = [:]
 ) throws -> Int32 {
+    logger.debug("runWritingOutput executable=\(executable, privacy: .public)")
     fileManager.createFile(atPath: outputURL.path, contents: nil)
     let outputFile = try FileHandle(forWritingTo: outputURL)
     defer {
-        try? outputFile.close()
+        do {
+            try outputFile.close()
+        } catch {
+            logger.error(
+                """
+                runWritingOutput failed closing output file \
+                details=\(error.localizedDescription, privacy: .public) recovery=continue
+                """
+            )
+        }
     }
 
     let process = Process()
@@ -365,6 +371,8 @@ func mergedEnvironment(_ overrides: [String: String]) -> [String: String] {
 }
 
 func copyReplacingItem(at source: URL, to destination: URL) throws {
+    logger.debug(
+        "copyReplacingItem source=\(source.lastPathComponent, privacy: .public)")
     if fileManager.fileExists(atPath: destination.path) {
         try fileManager.removeItem(at: destination)
     }
@@ -372,7 +380,7 @@ func copyReplacingItem(at source: URL, to destination: URL) throws {
 }
 
 func printToolOutput(_ message: String) {
-    print(message)
+    FileHandle.standardOutput.write(Data((message + "\n").utf8))
 }
 
 func xcodeConfigurationBuildDirectory(configuration: String, platformName: String) -> URL {

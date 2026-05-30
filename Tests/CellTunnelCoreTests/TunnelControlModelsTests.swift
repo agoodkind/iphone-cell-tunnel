@@ -1,120 +1,126 @@
 import CellTunnelCore
+import CellTunnelLog
 import Foundation
-import XCTest
+import Testing
 
-final class TunnelControlModelsTests: XCTestCase {
-    func testStartSettingsUsesDaemonSelectedRelayByDefault() {
+private let logger = CellTunnelLog.logger(category: .daemon)
+private let relayPort = 51_820
+private let discoverySelectionPort = 5_354
+
+struct TunnelControlModelsTests {
+    @Test func startSettingsUsesDaemonSelectedRelayByDefault() {
         let settings = TunnelStartSettings(wireGuardConfigPath: "/tmp/wg.conf")
 
-        XCTAssertTrue(settings.isReadyToStart)
-        XCTAssertTrue(settings.usesDaemonSelectedRelay)
-        XCTAssertFalse(settings.hasLocalRelayEndpoint)
+        #expect(settings.isReadyToStart)
+        #expect(settings.usesDaemonSelectedRelay)
+        #expect(!settings.hasLocalRelayEndpoint)
     }
 
-    func testRelayEndpointParsesBracketedIPv6() throws {
+    @Test func relayEndpointParsesBracketedIPv6() throws {
         let endpoint = try TunnelRelayEndpoint.parse(argument: "[fd00::44]:51820")
 
-        XCTAssertEqual(endpoint.host, "fd00::44")
-        XCTAssertEqual(endpoint.port, 51_820)
-        XCTAssertEqual(endpoint.addressFamily, .ipv6)
-        XCTAssertEqual(endpoint.socketAddress, "[fd00::44]:51820")
+        #expect(endpoint.host == "fd00::44")
+        #expect(endpoint.port == relayPort)
+        #expect(endpoint.addressFamily == .ipv6)
+        #expect(endpoint.socketAddress == "[fd00::44]:51820")
     }
 
-    func testCLIParseStartWithExplicitRelay() throws {
+    @Test func cliParseStartWithExplicitRelay() throws {
         let action = try TunnelControlCLIAction.parse(
             arguments: ["start", "--config", "/tmp/wg.conf", "--relay", "[fd00::44]:51820"]
         )
 
         guard case .start(let settings) = action else {
-            XCTFail("unexpected action: \(action)")
+            Issue.record("unexpected action: \(action)")
             return
         }
-        XCTAssertEqual(settings.wireGuardConfigPath, "/tmp/wg.conf")
-        XCTAssertEqual(settings.relayEndpoint?.socketAddress, "[fd00::44]:51820")
+        #expect(settings.wireGuardConfigPath == "/tmp/wg.conf")
+        #expect(settings.relayEndpoint?.socketAddress == "[fd00::44]:51820")
     }
 
-    func testCLIParseDevices() throws {
+    @Test func cliParseDevices() throws {
         let action = try TunnelControlCLIAction.parse(arguments: ["devices"])
 
-        XCTAssertEqual(action, .devices)
+        #expect(action == .devices)
     }
 
-    func testCLIParseSelectRequiresReference() {
-        XCTAssertThrowsError(try TunnelControlCLIAction.parse(arguments: ["select"]))
+    @Test func cliParseSelectRequiresReference() {
+        #expect(throws: (any Error).self) {
+            try TunnelControlCLIAction.parse(arguments: ["select"])
+        }
     }
 
-    func testCLIParseSelectRejectsExtraArguments() {
-        XCTAssertThrowsError(
+    @Test func cliParseSelectRejectsExtraArguments() {
+        #expect(throws: (any Error).self) {
             try TunnelControlCLIAction.parse(arguments: ["select", "relay-1", "extra"])
-        )
+        }
     }
 
-    func testCLIParseSelectTrimsAndStoresReference() throws {
+    @Test func cliParseSelectTrimsAndStoresReference() throws {
         let action = try TunnelControlCLIAction.parse(arguments: ["select", "  relay-1  "])
 
-        XCTAssertEqual(action, .select(reference: "relay-1"))
+        #expect(action == .select(reference: "relay-1"))
     }
 
-    func testCLIExecutorDevicesListsNumberedServices() async throws {
+    @Test func cliExecutorDevicesListsNumberedServices() async throws {
         let client = FakeTunnelControlClient()
-        let executor = TunnelControlCLIExecutor(client: client)
 
-        let output = try await executor.run(action: .devices)
+        let output = try await runCLI(.devices, on: client)
 
-        XCTAssertEqual(client.events, ["listRelayServices"])
-        XCTAssertEqual(output, "1) CellTunnelPhone  relay-1")
+        #expect(client.events == ["listRelayServices"])
+        #expect(output == "1) CellTunnelPhone  relay-1")
     }
 
-    func testCLIExecutorDevicesReportsEmptyListing() async throws {
+    @Test func cliExecutorDevicesReportsEmptyListing() async throws {
         let client = FakeTunnelControlClient()
         client.listedDiscoverySnapshotOverride = TunnelDiscoverySnapshot(
             phase: .browsing,
             services: []
         )
-        let executor = TunnelControlCLIExecutor(client: client)
 
-        let output = try await executor.run(action: .devices)
+        let output = try await runCLI(.devices, on: client)
 
-        XCTAssertEqual(output, "no relay devices found")
+        #expect(output == "no relay devices found")
     }
 
-    func testCLIExecutorSelectByServiceIDCallsSelectRelayService() async throws {
+    @Test func cliExecutorSelectByServiceIDCallsSelectRelayService() async throws {
         let client = FakeTunnelControlClient()
-        let executor = TunnelControlCLIExecutor(client: client)
 
-        let output = try await executor.run(action: .select(reference: "relay-1"))
+        let output = try await runCLI(.select(reference: "relay-1"), on: client)
 
-        XCTAssertEqual(client.events, ["selectRelayService"])
-        XCTAssertEqual(output, client.selectedDiscoverySnapshot.renderedOutput)
+        #expect(client.events == ["selectRelayService"])
+        #expect(output == client.selectedDiscoverySnapshot.renderedOutput)
     }
 
-    func testCLIExecutorSelectByIndexResolvesServiceID() async throws {
+    @Test func cliExecutorSelectByIndexResolvesServiceID() async throws {
         let client = FakeTunnelControlClient()
-        let executor = TunnelControlCLIExecutor(client: client)
 
-        let output = try await executor.run(action: .select(reference: "1"))
+        let output = try await runCLI(.select(reference: "1"), on: client)
 
-        XCTAssertEqual(client.events, ["listRelayServices", "selectRelayService"])
-        XCTAssertEqual(output, client.selectedDiscoverySnapshot.renderedOutput)
+        #expect(client.events == ["listRelayServices", "selectRelayService"])
+        #expect(output == client.selectedDiscoverySnapshot.renderedOutput)
     }
 
-    func testCLIExecutorSelectByOutOfRangeIndexThrows() async {
+    @Test func cliExecutorSelectByOutOfRangeIndexThrows() async {
         let client = FakeTunnelControlClient()
-        let executor = TunnelControlCLIExecutor(client: client)
 
         let thrownError = await captureError {
-            _ = try await executor.run(action: .select(reference: "9"))
+            _ = try await runCLI(.select(reference: "9"), on: client)
         }
 
         guard let daemonError = thrownError as? TunnelDaemonError, case .usage = daemonError else {
-            XCTFail("expected usage error, got \(String(describing: thrownError))")
+            Issue.record("expected usage error, got \(String(describing: thrownError))")
             return
         }
-        XCTAssertEqual(client.events, ["listRelayServices"])
+        #expect(client.events == ["listRelayServices"])
     }
 
-    func testStatusSnapshotRendersDiscoverySelection() {
-        let endpoint = TunnelRelayEndpoint(host: "fd00::1", port: 5_354, addressFamily: .ipv6)
+    @Test func statusSnapshotRendersDiscoverySelection() {
+        let endpoint = TunnelRelayEndpoint(
+            host: "fd00::1",
+            port: discoverySelectionPort,
+            addressFamily: .ipv6
+        )
         let discovery = TunnelDiscoverySnapshot(
             phase: .ready,
             services: [],
@@ -133,12 +139,23 @@ final class TunnelControlModelsTests: XCTestCase {
             activeRelayEndpoint: endpoint
         )
 
-        XCTAssertTrue(snapshot.running)
-        XCTAssertEqual(snapshot.routeState, .installed)
-        XCTAssertEqual(snapshot.peerState, .wireGuardConfigured)
-        XCTAssertEqual(snapshot.discovery.selectedServiceID, "relay-1")
-        XCTAssertEqual(snapshot.activeRelayEndpoint?.socketAddress, "[fd00::1]:5354")
+        #expect(snapshot.running)
+        #expect(snapshot.routeState == .installed)
+        #expect(snapshot.peerState == .wireGuardConfigured)
+        #expect(snapshot.discovery.selectedServiceID == "relay-1")
+        #expect(snapshot.activeRelayEndpoint?.socketAddress == "[fd00::1]:5354")
     }
+}
+
+// Single boundary the suite uses to drive the async CLI executor; logs the
+// crossing so this one call into the runtime carries structured context.
+private func runCLI(
+    _ action: TunnelControlCLIAction,
+    on client: FakeTunnelControlClient
+) async throws -> String {
+    logger.debug("test driving cli executor action")
+    let executor = TunnelControlCLIExecutor(client: client)
+    return try await executor.run(action: action)
 }
 
 // Runs a throwing operation and returns the thrown error so the caller can
@@ -198,7 +215,7 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
                 serviceName: "CellTunnelPhone",
                 host: "iphone.local",
                 endpointHost: "fd00::44",
-                endpointPort: 51_820
+                endpointPort: relayPort
             )
         ],
         selectedServiceID: nil,
@@ -213,12 +230,16 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
                 serviceName: "CellTunnelPhone",
                 host: "iphone.local",
                 endpointHost: "fd00::44",
-                endpointPort: 51_820,
+                endpointPort: relayPort,
                 isSelected: true
             )
         ],
         selectedServiceID: "relay-1",
-        selectedEndpoint: TunnelRelayEndpoint(host: "fd00::44", port: 51_820, addressFamily: .ipv6),
+        selectedEndpoint: TunnelRelayEndpoint(
+            host: "fd00::44",
+            port: relayPort,
+            addressFamily: .ipv6
+        ),
         lastError: nil
     )
 
@@ -268,7 +289,7 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
     func selectRelayService(serviceID: String) async -> TunnelDiscoverySnapshot {
         await Task.yield()
         events.append("selectRelayService")
-        XCTAssertEqual(serviceID, "relay-1")
+        #expect(serviceID == "relay-1")
         return selectedDiscoverySnapshot
     }
 }

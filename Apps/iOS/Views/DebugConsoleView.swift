@@ -137,8 +137,8 @@
         // forwarder.
         private func restartRelay() {
             logger.notice("developer console restart relay requested")
-            relayController.stop()
             Task {
+                await relayController.stop()
                 await relayController.start()
             }
             restartResult = "Relay restarting"

@@ -52,9 +52,9 @@ let allowlist = [
         reason: "CellTunnelLog exports categories instead of declaring a private category."
     ),
     AuditAllowlistEntry(
-        pathSuffix: "Sources/CellTunnelCore/TunnelControlModels.swift",
+        pathSuffix: "Sources/CellTunnelCore/TunnelDaemonStatusSnapshot.swift",
         rule: .loggerDeclaration,
-        reason: "TunnelControlModels contains Codable socket payloads and no runtime side effects."
+        reason: "TunnelDaemonStatusSnapshot holds Codable payloads with no side effects."
     ),
 ]
 
@@ -87,6 +87,10 @@ let logNeedles = [
     ".info(",
     ".notice(",
 ]
+
+// Assembled from fragments so this detector's own source does not contain the
+// literal inline-disable marker it scans for.
+let inlineLintDisableMarker = "swiftlint:" + "disable"
 
 func allows(path: String, rule: AuditRule) -> Bool {
     allowlist.contains { entry in
@@ -179,7 +183,7 @@ func auditText(path: String, lines: [String], violations: inout [Violation]) {
 
     for (index, line) in lines.enumerated() where !isCommentOnly(line) {
         let lineNumber = index + 1
-        if line.contains("swiftlint:disable") {
+        if line.contains(inlineLintDisableMarker) {
             violations.append(
                 Violation(
                     path: path,
@@ -304,13 +308,16 @@ final class AuditVisitor: SyntaxVisitor {
 }
 
 func audit(path: String) -> [Violation] {
-    guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
+    let contents: String
+    do {
+        contents = try String(contentsOfFile: path, encoding: .utf8)
+    } catch {
         return [
             Violation(
                 path: path,
                 line: 1,
                 rule: .missingBoundaryLog,
-                message: "could not read Swift source"
+                message: "could not read Swift source: \(error.localizedDescription)"
             )
         ]
     }

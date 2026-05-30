@@ -1,10 +1,24 @@
+//
+//  ControlChannel.swift
+//  CellTunnelTunnelProvider
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//  Copyright © 2026
+//
+
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
 import Network
 
+// MARK: - Constants
+
 private let logger = CellTunnelLog.logger(category: .daemon)
-private let handshakeTimeoutSeconds: UInt64 = 10
+// Bounded wait for the control Bonjour service to appear during discovery only.
+// The control connection itself is NOT bounded by an invented timer: it resolves
+// on the connection's real ready or failed state, and WireGuard owns its own
+// handshake timing per the config, so the provider never cuts a handshake short.
+private let controlServiceDiscoveryTimeoutSeconds: UInt64 = 10
 
 private let tcpKeepaliveIdleSeconds = 10
 private let tcpKeepaliveIntervalSeconds = 5
@@ -130,7 +144,7 @@ actor ControlChannel {
         continuation: CheckedContinuation<NWEndpoint, Error>
     ) {
         connectionQueue.asyncAfter(
-            deadline: .now() + .seconds(Int(handshakeTimeoutSeconds))
+            deadline: .now() + .seconds(Int(controlServiceDiscoveryTimeoutSeconds))
         ) { [weak self] in
             guard let self else {
                 return
@@ -189,12 +203,10 @@ actor ControlChannel {
             }
             resolver.bind(continuation: continuation)
             nwConnection.start(queue: connectionQueue)
-
-            connectionQueue.asyncAfter(
-                deadline: .now() + .seconds(Int(handshakeTimeoutSeconds))
-            ) {
-                _ = resolver.resolveOnce(with: .failure(ControlChannelError.handshakeTimeout))
-            }
+            // No invented handshake timer: the control connection resolves on its
+            // real .ready or .failed state. WireGuard owns its own handshake retry
+            // timing with the server per the config, so the provider must not fail
+            // the tunnel on a timeout WireGuard never asked for.
         }
 
         try await sendSetServerEndpoint(on: nwConnection)

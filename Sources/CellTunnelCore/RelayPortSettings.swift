@@ -5,6 +5,22 @@ public let relayListenerPortDefaultsKey = "io.goodkind.celltunnel.relay.port"
 public let relayListenerPortDefaultValue: UInt16 = 51_821
 public let relayListenerPortLaunchArgument = "--cell-tunnel-port"
 
+// App-group key the iOS app writes the user-visible device name to so the
+// background extension, which has no UIKit, advertises the same Bonjour service
+// name instead of the process host name.
+public let relayServiceDeviceNameDefaultsKey = "io.goodkind.celltunnel.relay.deviceName"
+
+public func storeRelayServiceDeviceName(
+    _ name: String,
+    defaults: UserDefaults = .standard
+) {
+    let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmed.isEmpty else {
+        return
+    }
+    defaults.set(trimmed, forKey: relayServiceDeviceNameDefaultsKey)
+}
+
 public func resolvedRelayListenerPort(
     defaults: UserDefaults = .standard
 ) -> NWEndpoint.Port {

@@ -17,27 +17,6 @@ func swiftBuildArguments(packagePath: String, additionalArguments: [String]) -> 
     return arguments
 }
 
-func runToolBinary(_ executable: URL, arguments: [String], workingDirectory: URL) throws {
-    let process = Process()
-    process.executableURL = executable
-    process.arguments = arguments
-    process.currentDirectoryURL = workingDirectory
-    process.environment = ProcessInfo.processInfo.environment
-    try process.run()
-    process.waitUntilExit()
-    guard process.terminationStatus == 0 else {
-        let renderedCommand = ([executable.path] + arguments).joined(separator: " ")
-        throw NSError(
-            domain: "CellTunnelDevWrapper",
-            code: Int(process.terminationStatus),
-            userInfo: [
-                NSLocalizedDescriptionKey:
-                    "\(renderedCommand) failed with status \(process.terminationStatus)"
-            ]
-        )
-    }
-}
-
 do {
     let currentDirectoryURL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
     let toolsPackageDirectory = currentDirectoryURL.appendingPathComponent(
@@ -79,10 +58,25 @@ do {
     }
 
     let toolBinary = URL(fileURLWithPath: binPath).appendingPathComponent("CellTunnelDev")
-    try runToolBinary(
-        toolBinary, arguments: forwardedArguments, workingDirectory: currentDirectoryURL)
-    exit(0)
+    let toolProcess = Process()
+    toolProcess.executableURL = toolBinary
+    toolProcess.arguments = forwardedArguments
+    toolProcess.currentDirectoryURL = currentDirectoryURL
+    toolProcess.environment = ProcessInfo.processInfo.environment
+    try toolProcess.run()
+    toolProcess.waitUntilExit()
+    guard toolProcess.terminationStatus == 0 else {
+        let renderedCommand = ([toolBinary.path] + forwardedArguments).joined(separator: " ")
+        throw NSError(
+            domain: "CellTunnelDevWrapper",
+            code: Int(toolProcess.terminationStatus),
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "\(renderedCommand) failed with status \(toolProcess.terminationStatus)"
+            ]
+        )
+    }
 } catch {
     FileHandle.standardError.write(Data("failed to start CellTunnelDev: \(error)\n".utf8))
-    exit(1)
+    throw error
 }

@@ -25,15 +25,15 @@ extension PhoneRelayController {
                 guard let self else {
                     return
                 }
-                guard let session = self.session else {
-                    await self.delayBeforeNextPoll()
+                guard let session else {
+                    await delayBeforeNextPoll()
                     continue
                 }
-                await self.pollStatus(on: session)
+                await pollStatus(on: session)
                 guard !Task.isCancelled else {
                     return
                 }
-                await self.delayBeforeNextPoll()
+                await delayBeforeNextPoll()
             }
         }
     }
@@ -75,7 +75,10 @@ extension PhoneRelayController {
         connectedPeerName = snapshot.connectedPeerName
         lastError = snapshot.lastError
         relayStateDescription = snapshot.relayState ?? relayStoppedStateText
-        isRunning = snapshot.running || isConnectionRunning(connectionStatus)
+        let running = snapshot.running || isConnectionRunning(connectionStatus)
+        isRunning = running
+        logger.debug(
+            "phone relay snapshot applied running=\(running, privacy: .public)")
         updateThroughput(from: polledCounters)
     }
 

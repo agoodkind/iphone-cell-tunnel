@@ -1,5 +1,8 @@
 import Foundation
 
+private let keyValuePairComponentCount = 2
+private let simulatorNameSuffixLength = 8
+
 enum ActivationActions {}
 
 func activateTarget(
@@ -141,7 +144,7 @@ func simulatorIdentifier(from destination: String) throws -> String? {
     for part in destination.split(separator: ",") {
         let trimmedPart = part.trimmingCharacters(in: .whitespacesAndNewlines)
         let pieces = trimmedPart.split(separator: "=", maxSplits: 1)
-        guard pieces.count == 2 else {
+        guard pieces.count == keyValuePairComponentCount else {
             continue
         }
         components[String(pieces[0])] = String(pieces[1])
@@ -230,7 +233,8 @@ func createPhoneSimulator() throws -> String {
             "no supported iPhone simulator device type found for \(runtime.name)")
     }
 
-    let simulatorName = "\(autoCreatedSimulatorNamePrefix) \(String(UUID().uuidString.prefix(8)))"
+    let simulatorName =
+        "\(autoCreatedSimulatorNamePrefix) \(String(UUID().uuidString.prefix(simulatorNameSuffixLength)))"
     let result = try capture(
         "xcrun",
         ["simctl", "create", simulatorName, deviceType.identifier, runtime.identifier],

@@ -46,6 +46,7 @@ final class PhoneRelayController: @unchecked Sendable {
 
     func start() async {
         logger.notice("phone relay controller start requested")
+        publishDeviceNameForRelayAdvertisement()
         lastError = nil
         UIApplication.shared.isIdleTimerDisabled = true
         do {
@@ -68,19 +69,41 @@ final class PhoneRelayController: @unchecked Sendable {
         }
     }
 
-    func stop() {
+    func stop() async {
         logger.notice("phone relay controller stop requested")
         guard let manager else {
             logger.notice("phone relay controller stop ignored because no manager is loaded")
             return
         }
         stopThroughputLoop()
+        // On-demand keeps reconnecting the tunnel, so disable the rules and
+        // persist before stopping; start re-enables them via loadOrCreateManager.
+        manager.isOnDemandEnabled = false
+        do {
+            try await manager.saveToPreferences()
+        } catch {
+            logger.error(
+                """
+                phone relay controller failed disabling on-demand before stop \
+                details=\(String(describing: error), privacy: .public) recovery=continue-stop
+                """
+            )
+        }
         guard let session = manager.connection as? NETunnelProviderSession else {
             logger.notice("phone relay controller stop ignored because session is unavailable")
             return
         }
         session.stopTunnel()
         applyConnectionStatus(session.status)
+    }
+
+    // The background extension has no UIKit and otherwise advertises the process
+    // host name, so the app publishes the user-visible device name into the
+    // shared app group for the provider to use as the Bonjour service name.
+    private func publishDeviceNameForRelayAdvertisement() {
+        let defaults = UserDefaults(suiteName: cellTunnelAppGroupIdentifier) ?? .standard
+        storeRelayServiceDeviceName(UIDevice.current.name, defaults: defaults)
+        logger.notice("phone relay controller published device name for relay advertisement")
     }
 
     func suspendPolling() {

@@ -1,7 +1,19 @@
+//
+//  PhoneContentView.swift
+//  CellTunnelPhone
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-23.
+//  Copyright © 2026
+//
+
 import SwiftUI
+
+// MARK: - Constants
 
 private let peerPlaceholder = "None"
 private let readyStateText = "Ready"
+
+// MARK: - Status screen
 
 struct PhoneContentView: View {
     @Bindable var relayController: PhoneRelayController
@@ -60,9 +72,11 @@ struct PhoneContentView: View {
     }
 
     private var status: RelayStatus {
-        if relayController.lastError != nil {
-            return RelayStatus(text: "Error", color: .red, symbol: "exclamationmark.triangle.fill")
-        }
+        // A working relay wins over a momentary error. A transient mDNSResponder
+        // restart fails every Bonjour advertiser on the device for a moment and
+        // self-heals within seconds, so it must not flip a forwarding relay to a
+        // red failure. The error is surfaced only when the relay is not running,
+        // and as a recoverable warning carrying its message, never a bare "Error".
         if relayController.isRunning, relayController.relayStateDescription == readyStateText {
             return RelayStatus(text: "Relay active", color: .green, symbol: "checkmark.circle.fill")
         }
@@ -71,6 +85,13 @@ struct PhoneContentView: View {
                 text: relayController.relayStateDescription,
                 color: .orange,
                 symbol: "arrow.triangle.2.circlepath"
+            )
+        }
+        if let lastError = relayController.lastError {
+            return RelayStatus(
+                text: lastError,
+                color: .orange,
+                symbol: "exclamationmark.triangle.fill"
             )
         }
         return RelayStatus(text: "Stopped", color: .secondary, symbol: "pause.circle.fill")

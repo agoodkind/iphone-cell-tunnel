@@ -29,7 +29,10 @@ let package = Package(
         ),
         .testTarget(
             name: "CellTunnelCoreTests",
-            dependencies: ["CellTunnelCore"]
+            dependencies: [
+                "CellTunnelCore",
+                "CellTunnelLog",
+            ]
         ),
     ]
 )

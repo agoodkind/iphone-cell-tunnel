@@ -1,8 +1,23 @@
+//
+//  main.swift
+//  CellTunnelDev
+//
+//  Created by Alex Goodkind <alex@goodkind.io> on 2026-05-24.
+//  Copyright © 2026
+//
+
 import Foundation
 
+// MARK: - Constants
+
+private let programAndCommandArgumentCount = 2
+private let maxBuildArguments = 2
+private let optionAndValueArgumentStride = 2
+
+// MARK: - Help
+
 func printHelp() {
-    print(
-        """
+    let helpText = """
         usage: swift Tools/cell-tunnel-dev.swift <command>
 
         commands:
@@ -29,13 +44,29 @@ func printHelp() {
           launch-phone-device
                       Launch CellTunnelPhone on a connected physical iPhone.
           iphone-logs Stream iPhone or simulator logs. See `iphone-logs --help`.
+          mac-logs    Show or stream Mac agent and tunnel-provider logs. See `mac-logs --help`.
+          relay-browse
+                      Foreground Bonjour browse for the iPhone relay service.
+                      Optional positional duration in seconds (default 8).
+          relay-discover
+                      Start agent discovery and wait for the relay device.
+                      Options: --discover-timeout <s>.
+          relay-up    Bring the relay tunnel up end to end (discover, select,
+                      start, wait for connected). Required: --config <path>.
+                      Options: --relay <name>, --discover-timeout <s>,
+                      --connect-timeout <s>.
+          relay-status
+                      Print the current tunnel daemon status snapshot.
+          relay-down  Stop the relay tunnel.
           clean       Remove build and product outputs.
         """
-    )
+    FileHandle.standardOutput.write(Data((helpText + "\n").utf8))
 }
 
+// MARK: - Argument parsing
+
 func parseConfiguration(command: String) throws -> String {
-    let arguments = Array(CommandLine.arguments.dropFirst(2))
+    let arguments = Array(CommandLine.arguments.dropFirst(programAndCommandArgumentCount))
     guard arguments.count <= 1 else {
         throw ToolError.usage("usage: \(command) [Debug|Release]")
     }
@@ -43,7 +74,7 @@ func parseConfiguration(command: String) throws -> String {
 }
 
 func parseBuildTarget() throws -> (BuildTarget, String) {
-    let arguments = Array(CommandLine.arguments.dropFirst(2))
+    let arguments = Array(CommandLine.arguments.dropFirst(programAndCommandArgumentCount))
     let usage = "usage: build <\(buildTargetUsage)> [Debug|Release]"
     guard let raw = arguments.first else {
         throw ToolError.usage(usage)
@@ -51,15 +82,15 @@ func parseBuildTarget() throws -> (BuildTarget, String) {
     guard let target = BuildTarget(rawValue: raw) else {
         throw ToolError.usage("unknown build target: \(raw). \(usage)")
     }
-    guard arguments.count <= 2 else {
+    guard arguments.count <= maxBuildArguments else {
         throw ToolError.usage(usage)
     }
-    let configuration = arguments.count == 2 ? arguments[1] : "Debug"
+    let configuration = arguments.count == maxBuildArguments ? arguments[1] : "Debug"
     return (target, configuration)
 }
 
 func parseActivation(command: String) throws -> ActivationOptions {
-    let arguments = Array(CommandLine.arguments.dropFirst(2))
+    let arguments = Array(CommandLine.arguments.dropFirst(programAndCommandArgumentCount))
     let usage =
         "usage: \(command) <\(activationTargetUsage)> [Debug|Release] [--port <listener-port>]"
     guard let rawTarget = arguments.first else {
@@ -84,7 +115,7 @@ func parseActivation(command: String) throws -> ActivationOptions {
                     "invalid --port value: \(arguments[index + 1]). \(usage)")
             }
             listenerPort = port
-            index += 2
+            index += optionAndValueArgumentStride
             continue
         }
         if configuration == "Debug", argument == "Debug" || argument == "Release" {
@@ -105,6 +136,8 @@ struct ActivationOptions {
     let listenerPort: UInt16?
 }
 
+// MARK: - Command dispatch
+
 func runCommand(_ command: String) throws {
     if try runCoreCommand(command) {
         return
@@ -113,6 +146,9 @@ func runCommand(_ command: String) throws {
         return
     }
     if try runDeviceCommand(command) {
+        return
+    }
+    if try runDiagnosticCommand(command) {
         return
     }
     if try runLogCommand(command) {
@@ -124,8 +160,12 @@ func runCommand(_ command: String) throws {
 func runLogCommand(_ command: String) throws -> Bool {
     switch command {
     case "iphone-logs":
-        let arguments = Array(CommandLine.arguments.dropFirst(2))
+        let arguments = Array(CommandLine.arguments.dropFirst(programAndCommandArgumentCount))
         try runIPhoneLogs(arguments)
+        return true
+    case "mac-logs":
+        let arguments = Array(CommandLine.arguments.dropFirst(programAndCommandArgumentCount))
+        try runMacLogs(arguments)
         return true
     default:
         return false
@@ -207,6 +247,33 @@ func runDeviceCommand(_ command: String) throws -> Bool {
         return false
     }
 }
+
+// MARK: - Diagnostic commands
+
+func runDiagnosticCommand(_ command: String) throws -> Bool {
+    let arguments = Array(CommandLine.arguments.dropFirst(programAndCommandArgumentCount))
+    switch command {
+    case "relay-browse":
+        try runRelayBrowse(arguments)
+        return true
+    case "relay-discover":
+        try runRelayDiscover(arguments)
+        return true
+    case "relay-up":
+        try runRelayUp(arguments)
+        return true
+    case "relay-status":
+        try runRelayStatus(arguments)
+        return true
+    case "relay-down":
+        try runRelayDown(arguments)
+        return true
+    default:
+        return false
+    }
+}
+
+// MARK: - Entry point
 
 func main() throws {
     let command = CommandLine.arguments.dropFirst().first ?? "help"
