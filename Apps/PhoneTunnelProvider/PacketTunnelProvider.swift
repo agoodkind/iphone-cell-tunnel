@@ -150,13 +150,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let controlListener = self.controlListener
         let forwarder = self.forwarder
         let cellularObserver = self.cellularObserver
-        let statusState = self.statusState
-        Task { @MainActor in
+        // statusState is a non-copyable Mutex, so it cannot be hoisted into a
+        // local; the status closure borrows it through a weak self instead.
+        Task { @MainActor [weak self] in
             controlListener.onSetServerEndpoint = { endpoint in
                 forwarder.setServerEndpoint(endpoint)
             }
             controlListener.statusProvider = {
-                let lastError = statusState.withLock { $0.lastError }
+                let lastError = self.flatMap { provider in
+                    provider.statusState.withLock { $0.lastError }
+                }
                 let cellularPath = cellularObserver.snapshot
                 return RelayControlMessage.Status(
                     hasCellularPath: cellularPath.isSatisfied,
