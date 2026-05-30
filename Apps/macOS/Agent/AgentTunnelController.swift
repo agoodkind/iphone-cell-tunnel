@@ -46,6 +46,37 @@ actor AgentTunnelController {
             return snapshotResponse()
         case .selectRelayService(let serviceID):
             return selectRelay(serviceID: serviceID)
+        case .reset:
+            return await handleReset()
+        }
+    }
+
+    // Removes every saved tunnel manager so the next start recreates a clean
+    // NETunnelProviderManager. Deleting the agent app bundle does not remove the
+    // persisted VPN configuration, so this is how a reinstall reaches a known
+    // state. Each manager is stopped first so an active session does not linger.
+    private func handleReset() async -> AgentControlResponse {
+        do {
+            let managers = try await loadAllManagers()
+            for candidate in managers {
+                stopSession(on: candidate)
+                try await resumeVoidContinuation { completion in
+                    candidate.removeFromPreferences(completionHandler: completion)
+                }
+            }
+            manager = nil
+            logger.notice(
+                "agent reset removed managers count=\(managers.count, privacy: .public)")
+            return AgentControlResponse(discovery: TunnelDiscoverySnapshot())
+        } catch {
+            logger.error(
+                """
+                reset agent operation caught error \
+                details=\(String(describing: error), privacy: .public) \
+                recovery=return-failure-response
+                """
+            )
+            return failure(from: error)
         }
     }
 

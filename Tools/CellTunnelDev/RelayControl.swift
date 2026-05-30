@@ -94,6 +94,21 @@ func runRelayUp(_ arguments: [String]) throws {
     }
 }
 
+// MARK: - reset-mac
+
+/// Removes every saved Mac tunnel manager through the agent so a reinstall starts
+/// from a clean NETunnelProviderManager. Deleting the agent app bundle leaves the
+/// persisted VPN configuration behind, so this is the in-code way to clear it.
+func runResetMac(_ arguments: [String]) throws {
+    _ = arguments
+    relayControlLogger.notice("reset-mac requested")
+    printToolOutput("reset-mac: removing saved tunnel managers")
+    try runRelayCommand { client in
+        try await client.resetConfiguration()
+        printToolOutput("reset-mac: removed saved tunnel managers")
+    }
+}
+
 // MARK: - relay-status / relay-down
 
 /// Prints the current tunnel daemon status snapshot from the agent.

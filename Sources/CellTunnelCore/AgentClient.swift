@@ -22,6 +22,14 @@ import Foundation
             tearDownConnection(reason: "shutdown")
         }
 
+        public func resetConfiguration() async throws {
+            logger.notice("agent client invoked rpc=reset")
+            let response = try await send(request: .reset, operationName: "reset")
+            if let failure = response.failure {
+                throw mapFailure(failure)
+            }
+        }
+
         public func status() async throws -> TunnelDaemonStatusSnapshot {
             logger.notice("agent client invoked rpc=status")
             let response = try await send(request: .status, operationName: "status")
