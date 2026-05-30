@@ -58,8 +58,6 @@ func printHelp() {
           relay-status
                       Print the current tunnel daemon status snapshot.
           relay-down  Stop the relay tunnel.
-          reset-mac   Remove every saved Mac tunnel manager through the agent so a
-                      reinstall starts from a clean NETunnelProviderManager.
           clean       Remove build and product outputs.
         """
     FileHandle.standardOutput.write(Data((helpText + "\n").utf8))
@@ -269,9 +267,6 @@ func runDiagnosticCommand(_ command: String) throws -> Bool {
         return true
     case "relay-down":
         try runRelayDown(arguments)
-        return true
-    case "reset-mac":
-        try runResetMac(arguments)
         return true
     default:
         return false
