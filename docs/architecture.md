@@ -43,6 +43,7 @@ WireGuard is a transport tool, not a participant. Its handshake carries no proje
 - usbmux (the iproxy/libusbmuxd loopback channel) is banned from the data plane. It caps near 3 mbps.
 - Backgrounding is the success bar. There is no foreground-only data path.
 - Routes stay scoped to the config's `AllowedIPs`. Never widened to all traffic (`0.0.0.0/0`, `::/0`).
+- The Mac tunnel comes up connected immediately and stays connected with no captured routes until the iPhone relay link is up. The Mac extension owns route installation: WireGuard's adapter applies its settings through the extension's `setTunnelNetworkSettings`, which gates the routes, installing the config's `AllowedIPs` when the agent signals the iPhone link is up and withdrawing them when it drops. WireGuard runs as a dumb crypto engine and never decides routes.
 - iOS Personal Hotspot is never used. The cellular egress is pinned with `requiredInterfaceType = .cellular`.
 - The Mac-to-iPhone link is hosted by a normal process and dialed by the extensions. A listener inside a packet-tunnel extension does not receive inbound from the peer device over the local link, on either platform. The Mac agent hosts the control listener and the relay data listener. The iPhone extension dials both. The Mac tunnel extension dials the agent over loopback, and the agent bridges relay datagrams between the loopback side and the iPhone side.
 

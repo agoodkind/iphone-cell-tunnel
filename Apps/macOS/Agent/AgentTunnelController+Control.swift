@@ -34,6 +34,12 @@ extension AgentTunnelController {
         let listener = AgentControlListener(serverEndpoint: endpoint)
         controlListener = listener
         try await listener.start()
+        relayBridge.onPhoneConnected = { [weak self] in
+            Task { await self?.signalRouteState(true) }
+        }
+        relayBridge.onPhoneDisconnected = { [weak self] in
+            Task { await self?.signalRouteState(false) }
+        }
         relayBridge.start(serviceName: ProcessInfo.processInfo.hostName)
         logger.notice(
             """

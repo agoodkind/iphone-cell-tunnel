@@ -346,6 +346,31 @@ extension AgentTunnelController {
         )
     }
 
+    // Tells the Mac extension to install or withdraw routes as the iPhone relay
+    // link comes and goes, so routes track the link rather than tunnel start.
+    func signalRouteState(_ installed: Bool) async {
+        guard let manager else {
+            return
+        }
+        do {
+            _ = try await forward(
+                request: .setRouteState(installed: installed),
+                on: manager,
+                operationName: "setRouteState"
+            )
+            logger.notice(
+                "agent signaled route state installed=\(installed, privacy: .public)"
+            )
+        } catch {
+            logger.error(
+                """
+                agent route state signal failed installed=\(installed, privacy: .public) \
+                details=\(String(describing: error), privacy: .public) recovery=await-next-link-change
+                """
+            )
+        }
+    }
+
     private func forward(
         request: ProviderControlRequest,
         on manager: NETunnelProviderManager,

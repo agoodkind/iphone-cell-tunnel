@@ -4,14 +4,17 @@ public let providerControlWireVersion = 1
 
 public enum ProviderControlRequest: Codable, Sendable {
     case discoverySnapshot
+    case setRouteState(installed: Bool)
     case status
 
     private enum CodingKeys: String, CodingKey {
+        case installed
         case kind
     }
 
     private enum Kind: String, Codable {
         case discoverySnapshot
+        case setRouteState
         case status
     }
 
@@ -21,6 +24,9 @@ public enum ProviderControlRequest: Codable, Sendable {
         switch kind {
         case .discoverySnapshot:
             self = .discoverySnapshot
+        case .setRouteState:
+            let installed = try container.decode(Bool.self, forKey: .installed)
+            self = .setRouteState(installed: installed)
         case .status:
             self = .status
         }
@@ -31,6 +37,9 @@ public enum ProviderControlRequest: Codable, Sendable {
         switch self {
         case .discoverySnapshot:
             try container.encode(Kind.discoverySnapshot, forKey: .kind)
+        case .setRouteState(let installed):
+            try container.encode(Kind.setRouteState, forKey: .kind)
+            try container.encode(installed, forKey: .installed)
         case .status:
             try container.encode(Kind.status, forKey: .kind)
         }

@@ -221,6 +221,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         switch request {
         case .status:
             return ProviderControlResponse(status: currentStatusSnapshot())
+        case .setRouteState:
+            // Route gating is a Mac-side concern; the iPhone relay ignores it.
+            return ProviderControlResponse(status: currentStatusSnapshot())
         case .discoverySnapshot:
             return ProviderControlResponse(discovery: TunnelDiscoverySnapshot())
         }

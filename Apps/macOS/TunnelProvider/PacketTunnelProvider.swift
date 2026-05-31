@@ -42,6 +42,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let relayMetrics: RelayMetrics
     private let relayTransport: RelayTransport
     private let wireGuardRuntime = WireGuardRuntime()
+    private let routeGate = RouteGate()
     private var wireGuardRelayBind: WireGuardRelayBind?
     private var throughputLogger: RelayThroughputLogger?
 
@@ -156,17 +157,59 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         switch request {
         case .status:
             return ProviderControlResponse(status: currentStatusSnapshot())
+        case .setRouteState(let installed):
+            applyRouteState(installed)
+            return ProviderControlResponse(status: currentStatusSnapshot())
         case .discoverySnapshot:
             // Discovery is owned by the agent; the extension holds no browser.
             return ProviderControlResponse(discovery: TunnelDiscoverySnapshot())
         }
     }
 
+    // The agent signals the iPhone link state. Routes install only while the link
+    // is up and withdraw when it drops, so the Mac tunnel stays connected with no
+    // captured traffic when the relay is unreachable.
+    private func applyRouteState(_ installed: Bool) {
+        guard let settings = routeGate.setInstalled(installed) else {
+            logger.notice(
+                "route state change with no recorded settings installed=\(installed, privacy: .public)"
+            )
+            return
+        }
+        super.setTunnelNetworkSettings(settings) { error in
+            if let error {
+                logger.error(
+                    """
+                    route state apply failed installed=\(installed, privacy: .public) \
+                    error=\(error.localizedDescription, privacy: .public) recovery=keep-tunnel
+                    """
+                )
+                return
+            }
+            logger.notice("route state applied installed=\(installed, privacy: .public)")
+        }
+    }
+
+    override func setTunnelNetworkSettings(
+        _ tunnelNetworkSettings: NETunnelNetworkSettings?,
+        completionHandler: ((Error?) -> Void)?
+    ) {
+        guard let packetSettings = tunnelNetworkSettings as? NEPacketTunnelNetworkSettings else {
+            super.setTunnelNetworkSettings(
+                tunnelNetworkSettings,
+                completionHandler: completionHandler
+            )
+            return
+        }
+        let gated = routeGate.record(packetSettings)
+        super.setTunnelNetworkSettings(gated, completionHandler: completionHandler)
+    }
+
     private func currentStatusSnapshot() -> TunnelDaemonStatusSnapshot {
         let running = wireGuardRelayBind != nil
         return TunnelDaemonStatusSnapshot(
             running: running,
-            routeState: running ? .installed : .notInstalled,
+            routeState: routeGate.isInstalled ? .installed : .notInstalled,
             peerState: running ? .wireGuardConfigured : .notSelected,
             macCounters: relayMetrics.snapshot()
         )

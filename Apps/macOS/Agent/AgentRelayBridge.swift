@@ -37,6 +37,11 @@ final class AgentRelayBridge: @unchecked Sendable {
     private var macConnection: NWConnection?
     private var phoneConnection: NWConnection?
 
+    /// Fired when the iPhone relay connection is adopted or dropped, so the agent
+    /// can tell the Mac extension to install or withdraw routes with the link.
+    var onPhoneConnected: (@Sendable () -> Void)?
+    var onPhoneDisconnected: (@Sendable () -> Void)?
+
     // MARK: - Lifecycle
 
     func start(serviceName: String) {
@@ -119,6 +124,7 @@ final class AgentRelayBridge: @unchecked Sendable {
                 endpoint=\(String(describing: connection.endpoint), privacy: .public)
                 """
             )
+            onPhoneConnected?()
         }
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             guard let connection else {
@@ -153,6 +159,7 @@ final class AgentRelayBridge: @unchecked Sendable {
             macConnection = nil
         } else if !isLoopback, phoneConnection === connection {
             phoneConnection = nil
+            onPhoneDisconnected?()
         }
     }
 
