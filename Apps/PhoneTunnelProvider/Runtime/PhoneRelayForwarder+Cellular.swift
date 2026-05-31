@@ -147,6 +147,7 @@ extension PhoneRelayForwarder {
         }
         if outstandingCellularSends >= cellularSendWindow.allowance {
             metrics.addDropped()
+            cellularWindowSaturated = true
             return
         }
         outstandingCellularSends += 1
@@ -178,7 +179,10 @@ extension PhoneRelayForwarder {
     // the last logged value, so the controller is observable without a per-datagram
     // log flood.
     private func recordCellularSendWait(_ milliseconds: Double) {
-        cellularSendWindow.recordWait(milliseconds: milliseconds)
+        cellularSendWindow.recordWait(
+            milliseconds: milliseconds, windowLimited: cellularWindowSaturated
+        )
+        cellularWindowSaturated = false
         let allowance = cellularSendWindow.allowance
         let grewPastBand = allowance >= loggedSendAllowance * allowanceLogBand
         let shrankPastBand = allowance * allowanceLogBand <= loggedSendAllowance
@@ -369,6 +373,7 @@ extension PhoneRelayForwarder {
         outstandingCellularSends = 0
         cellularSendWindow = CellularSendWindow()
         loggedSendAllowance = 0
+        cellularWindowSaturated = false
         configuredEndpoint = nil
         state = .stopped
         onPeerChange?(nil)

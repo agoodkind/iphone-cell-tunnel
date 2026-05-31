@@ -81,6 +81,10 @@ final class PhoneRelayForwarder: @unchecked Sendable {
     var cellularSendWindow = CellularSendWindow()
     var outstandingCellularSends = 0
     var loggedSendAllowance = 0
+    // Set when a datagram is dropped because the window was full, the signal that
+    // the window is the bottleneck and may grow. Read and cleared on the next
+    // accepted send so the window grows only while the relay is filling it.
+    var cellularWindowSaturated = false
 
     // Once-only flags so each boundary function logs context exactly once
     // (satisfying the boundary-log audit) instead of logging per datagram.

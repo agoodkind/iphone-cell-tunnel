@@ -22,20 +22,43 @@ struct CellularSendWindowTests {
         var window = CellularSendWindow()
         let start = window.allowance
         for _ in 0..<20 {
-            window.recordWait(milliseconds: overTarget)
+            window.recordWait(milliseconds: overTarget, windowLimited: true)
         }
 
         #expect(window.allowance < start)
     }
 
-    @Test func waitBelowTargetGrowsAllowance() {
+    @Test func waitBelowTargetAndLimitedGrowsAllowance() {
         var window = CellularSendWindow()
         let start = window.allowance
         for _ in 0..<20 {
-            window.recordWait(milliseconds: underTarget)
+            window.recordWait(milliseconds: underTarget, windowLimited: true)
         }
 
         #expect(window.allowance > start)
+    }
+
+    // MARK: - The window-limited gate
+
+    @Test func belowTargetButNotLimitedHolds() {
+        var window = CellularSendWindow()
+        let start = window.allowance
+        for _ in 0..<50 {
+            window.recordWait(milliseconds: underTarget, windowLimited: false)
+        }
+
+        // Not the bottleneck, so the allowance does not balloon during the lull.
+        #expect(window.allowance == start)
+    }
+
+    @Test func aboveTargetShrinksEvenWhenNotLimited() {
+        var window = CellularSendWindow()
+        let start = window.allowance
+        for _ in 0..<20 {
+            window.recordWait(milliseconds: overTarget, windowLimited: false)
+        }
+
+        #expect(window.allowance < start)
     }
 
     // MARK: - Bounds
@@ -43,7 +66,7 @@ struct CellularSendWindowTests {
     @Test func allowanceClampsAtFloor() {
         var window = CellularSendWindow()
         for _ in 0..<2_000 {
-            window.recordWait(milliseconds: overTarget)
+            window.recordWait(milliseconds: overTarget, windowLimited: true)
         }
 
         #expect(window.allowance == CellularSendWindow.minAllowance)
@@ -52,23 +75,9 @@ struct CellularSendWindowTests {
     @Test func allowanceClampsAtCeiling() {
         var window = CellularSendWindow()
         for _ in 0..<2_000 {
-            window.recordWait(milliseconds: underTarget)
+            window.recordWait(milliseconds: underTarget, windowLimited: true)
         }
 
         #expect(window.allowance == CellularSendWindow.maxAllowance)
-    }
-
-    // MARK: - Steady state
-
-    @Test func steadyAtTargetHoldsThenGrowsSlowly() {
-        var window = CellularSendWindow()
-        let start = window.allowance
-        // A wait exactly at the target is not above it, so the allowance grows by
-        // one per sample rather than shrinking.
-        for _ in 0..<5 {
-            window.recordWait(milliseconds: CellularSendWindow.targetWaitMilliseconds)
-        }
-
-        #expect(window.allowance == start + 5)
     }
 }

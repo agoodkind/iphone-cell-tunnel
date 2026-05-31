@@ -16,11 +16,14 @@ import Foundation
 /// operating system accepts it; the gap between the two is how long that datagram
 /// waited in the send buffer. This type keeps a smoothed wait and the current
 /// allowance, and on each measured wait it moves the allowance toward holding the
-/// wait at a target: at or below the target it raises the allowance by one so the
-/// uplink can fill, above the target it cuts the allowance by a fraction so the
-/// buffer drains. The allowance stays between a floor that never idles the radio
-/// and a ceiling that bounds a stall. It is pure and unit tested without Network;
-/// the relay confines it to its serial queue.
+/// wait at a target. Above the target it cuts the allowance by a fraction so the
+/// buffer drains. At or below the target it raises the allowance by one, but only
+/// when the window was the bottleneck (the relay had more to send and the
+/// allowance blocked it); when the relay is not filling the window the allowance
+/// holds, so it does not balloon during a lull and overshoot when traffic resumes.
+/// The allowance stays between a floor that never idles the radio and a ceiling
+/// that bounds a stall. It is pure and unit tested without Network; the relay
+/// confines it to its serial queue.
 public struct CellularSendWindow: Sendable, Equatable {
     // MARK: - Tunables
 
@@ -34,7 +37,7 @@ public struct CellularSendWindow: Sendable, Equatable {
 
     /// The most datagrams allowed in flight, so a stalled uplink cannot let the
     /// buffer grow without bound.
-    public static let maxAllowance = 512
+    public static let maxAllowance = 256
 
     /// The starting allowance before any wait is measured.
     public static let initialAllowance = 64
@@ -62,8 +65,10 @@ public struct CellularSendWindow: Sendable, Equatable {
     // MARK: - Control
 
     /// Folds one measured send-buffer wait into the smoothed wait and moves the
-    /// allowance toward holding the wait at the target.
-    public mutating func recordWait(milliseconds: Double) {
+    /// allowance toward holding the wait at the target. `windowLimited` is whether
+    /// the window was the bottleneck since the last sample: the allowance grows
+    /// only when it was, so it does not balloon while the relay is not filling it.
+    public mutating func recordWait(milliseconds: Double, windowLimited: Bool) {
         if hasSample {
             smoothedWaitMilliseconds =
                 (1 - Self.smoothingWeight) * smoothedWaitMilliseconds
@@ -74,7 +79,7 @@ public struct CellularSendWindow: Sendable, Equatable {
         }
         if smoothedWaitMilliseconds > Self.targetWaitMilliseconds {
             allowance = max(Self.minAllowance, Int(Double(allowance) * Self.decreaseFactor))
-        } else {
+        } else if windowLimited {
             allowance = min(Self.maxAllowance, allowance + 1)
         }
     }
