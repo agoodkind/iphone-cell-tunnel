@@ -151,111 +151,62 @@ public struct RelayPathEvaluation: Sendable, Equatable {
 
 // MARK: - RelayTransportPolicy
 
-/// The tunables the transport manager reads when it decides whether and how to
-/// switch the live relay link. They damp flapping (a margin and a debounce) and
-/// bound how long a candidate may take to come up before the manager tries the
-/// next one.
+/// The declared inputs the carrying-link algorithm reads. They are knobs, not
+/// thresholds that close links: the policy in force, the cadence of the keepalive
+/// the relay sends on every warm link, and the flap margin that keeps two links a
+/// hair apart from trading places. None of them ever closes a link; a link closes
+/// only when its connection errors.
 public enum RelayTransportPolicy {
-    /// The minimum score advantage the best candidate must hold over the active
-    /// transport before the manager switches a working link, so a tie or a tiny
-    /// attribute change does not move the live link.
-    public static let switchScoreMargin = 1
+    /// The policy the relay runs. Changing behavior is this one value or a new
+    /// case in `RelayLinkPolicyKind`.
+    public static let activeLinkPolicy = RelayLinkPolicyKind.activeBackup
 
-    /// The window the manager coalesces rapid interface changes into a single
-    /// switch decision, so an interface that bounces does not trigger repeated
-    /// swaps.
-    public static let evaluationDebounceMilliseconds = 750
-
-    /// How long the manager waits for a candidate connection to reach ready
-    /// before abandoning it and trying the next candidate in the evaluation.
-    public static let candidateEstablishTimeoutSeconds = 4
-
-    // MARK: - Multi-link liveness tunables
-
-    /// How often each side sends an empty heartbeat datagram on every warm link.
-    /// The relay forwards only non-empty datagrams, so a heartbeat never reaches
-    /// WireGuard; it exists only to refresh the receiving side's last-heard time.
+    /// How often each side sends an empty keepalive on every warm link. The relay
+    /// forwards only non-empty datagrams, so a keepalive never reaches WireGuard;
+    /// it exists only to refresh the receiving side's freshness.
     public static let heartbeatIntervalMilliseconds = 250
 
-    /// The miss window for a low-latency link (wired, Wi-Fi LAN, loopback). A link
-    /// that has not delivered a heartbeat or datagram within this window is dead,
-    /// so failover triggers fast on a stall the connection error did not surface.
-    public static let lowLatencyLivenessDeadlineMilliseconds = 400
-
-    /// The miss window for the Apple peer-to-peer link (AWDL). It is loose because
-    /// the availability-window duty cycle delivers heartbeats late, so a tight
-    /// deadline would declare a working AWDL link dead.
-    public static let peerToPeerLivenessDeadlineMilliseconds = 1_200
-}
-
-// MARK: - RelayLinkLiveness
-
-/// Decides whether one link is still alive from the last time a heartbeat or
-/// datagram arrived on it. A standby link carries no WireGuard data, so it has no
-/// other liveness signal; each side stamps the last-heard time per link and asks
-/// this type whether the link missed its class deadline. The type is pure: it
-/// takes the current time as an argument and computes nothing from the clock, so
-/// it is unit tested without Network and shared by the agent and the iPhone.
-public struct RelayLinkLiveness: Sendable, Equatable {
-    public let linkClass: RelayLinkClass
-    public let lastHeardMilliseconds: Int
-
-    public init(linkClass: RelayLinkClass, lastHeardMilliseconds: Int) {
-        self.linkClass = linkClass
-        self.lastHeardMilliseconds = lastHeardMilliseconds
-    }
-
-    /// The miss window for a link class. Low-latency links use the tight window so
-    /// failover is fast; the peer-to-peer link uses the loose window because its
-    /// duty cycle delivers heartbeats late.
-    public static func deadlineMilliseconds(for linkClass: RelayLinkClass) -> Int {
-        switch linkClass {
-        case .peerToPeer:
-            RelayTransportPolicy.peerToPeerLivenessDeadlineMilliseconds
-        case .wired, .wifiLan, .cellular, .loopback, .other:
-            RelayTransportPolicy.lowLatencyLivenessDeadlineMilliseconds
-        }
-    }
-
-    /// Whether the link is alive at `nowMilliseconds`: the last heartbeat or
-    /// datagram arrived no longer ago than the class deadline. A clock that has
-    /// not advanced past the deadline keeps the link alive.
-    public func isAlive(atMilliseconds nowMilliseconds: Int) -> Bool {
-        nowMilliseconds - lastHeardMilliseconds
-            <= Self.deadlineMilliseconds(for: linkClass)
-    }
+    /// The floor on the relative freshness band. Two links whose last packet
+    /// arrived within this of each other are treated as equally fresh, so links a
+    /// cadence apart do not trade the carrying role. The band grows above this
+    /// floor with the freshest link's own silence, so the comparison stays
+    /// relative when every link is slow. This never closes a link.
+    public static let flapMarginFloorMilliseconds = 1_000
 }
 
 // MARK: - RelayLinkSnapshot
 
-/// One warm link as the policy sees it: which interface it runs over, its scored
-/// class, and whether it is currently live. The relay keeps one of these per
-/// interface and hands the set to the policy whenever liveness or membership
-/// changes. It carries no Network object so the policy stays pure and testable.
+/// One open link as the policy sees it: which interface it runs over, its scored
+/// preference, and its freshness, the time since a packet last arrived on it. The
+/// relay builds one per open link off the packet path and hands the set to the
+/// policy whenever the set or its freshness changes. It carries no Network object
+/// so the policy stays pure and testable.
 public struct RelayLinkSnapshot: Sendable, Equatable {
     public let interfaceName: String
     public let linkClass: RelayLinkClass
     public let score: Int
-    public let isLive: Bool
+    public let silenceMilliseconds: Int
 
-    public init(interfaceName: String, linkClass: RelayLinkClass, isLive: Bool) {
+    public init(
+        interfaceName: String, linkClass: RelayLinkClass, silenceMilliseconds: Int
+    ) {
         self.interfaceName = interfaceName
         self.linkClass = linkClass
         self.score = RelayLinkScorer.score(
             linkClass: linkClass, isExpensive: false, isConstrained: false
         )
-        self.isLive = isLive
+        self.silenceMilliseconds = silenceMilliseconds
     }
 }
 
 // MARK: - RelayLinkPlan
 
-/// What the policy decided: which links to keep warm and the egress preference.
-/// `keepWarm` lists every interface the relay should dial and heartbeat, ordered
-/// best first. `egressOrder` lists only the live interfaces, best first, so the
-/// hot path egresses on `egressOrder.first` and reorders only when this plan is
-/// recomputed. An empty `egressOrder` means no link is live, which is the
-/// any-link-down signal that withdraws routes.
+/// What the policy decided. `keepWarm` lists the interfaces to dial and hold open,
+/// best first. `egressOrder` ranks the same links for carrying traffic, the links
+/// keeping up first in declared preference order, then any lagging links. The hot
+/// path carries on `egressInterfaceName`, recomputed off the packet path. The
+/// order is never empty while any link is open, so the carrying link never
+/// vanishes during a blackout.
 public struct RelayLinkPlan: Sendable, Equatable {
     public let keepWarm: [String]
     public let egressOrder: [String]
@@ -265,40 +216,77 @@ public struct RelayLinkPlan: Sendable, Equatable {
         self.egressOrder = egressOrder
     }
 
-    /// The interface the hot path egresses on, or nil when no link is live.
+    /// The interface the hot path carries traffic on, or nil when no link is open.
     public var egressInterfaceName: String? {
         egressOrder.first
     }
 }
 
+// MARK: - RelayLinkPolicyKind
+
+/// The policies the relay can run. Each is a declared input to the same
+/// algorithm, swapped through `RelayTransportPolicy.activeLinkPolicy` with no
+/// change to discovery, keepalives, or the packet path. An outside controller and
+/// weighted load-balance are tracked under `OSS-73`.
+public enum RelayLinkPolicyKind: String, Sendable, CaseIterable {
+    /// Keep every reachable link open; carry on the preferred link keeping up.
+    case activeBackup
+    /// Keep only the top-preference link open; carry on it.
+    case batterySaver
+}
+
 // MARK: - RelayLinkPolicy
 
-/// The one declarative control point for multi-link behavior. A pure function
-/// maps the current set of links to a plan, so changing behavior is one edit
-/// here and nothing on the discovery, heartbeat, or per-datagram path moves. The
-/// shipped policy is active-backup: keep every reachable link warm and egress on
-/// the single highest-scoring live link. Battery (keep only the top link warm),
-/// orchestrator (take an external order), and weighted load-balance are later
-/// policies that slot in beside `activeBackup` behind `plan(for:)`; they are
-/// tracked under `OSS-73`.
+/// The carrying-link algorithm and the keep-open decision, the one place link
+/// behavior is declared. It reads the declared preference (`RelayLinkScorer`), the
+/// flap margin, and each link's freshness, and returns which links to keep open
+/// and the order to carry traffic on. Nothing here is a fixed threshold or a
+/// frozen order: reorder the preference by editing the scorer, or change behavior
+/// by selecting another `RelayLinkPolicyKind`.
 public enum RelayLinkPolicy {
-    /// Maps the current links to the active plan. The single dispatch point a
-    /// later policy mode replaces.
+    /// Runs the policy in force from `RelayTransportPolicy.activeLinkPolicy`.
     public static func plan(for links: [RelayLinkSnapshot]) -> RelayLinkPlan {
-        activeBackup(links)
+        plan(for: links, kind: RelayTransportPolicy.activeLinkPolicy)
     }
 
-    /// Keeps every reachable link warm and egresses on the single highest-scoring
-    /// live link. Ties break by interface name so both ends order identically.
-    static func activeBackup(_ links: [RelayLinkSnapshot]) -> RelayLinkPlan {
-        let ordered = links.sorted { lhs, rhs in
+    /// Runs a named policy. Pure: the same links always produce the same plan.
+    public static func plan(
+        for links: [RelayLinkSnapshot], kind: RelayLinkPolicyKind
+    ) -> RelayLinkPlan {
+        let byPreference = links.sorted { lhs, rhs in
             if lhs.score != rhs.score {
                 return lhs.score > rhs.score
             }
             return lhs.interfaceName < rhs.interfaceName
         }
-        let keepWarm = ordered.map(\.interfaceName)
-        let egressOrder = ordered.filter(\.isLive).map(\.interfaceName)
-        return RelayLinkPlan(keepWarm: keepWarm, egressOrder: egressOrder)
+        let keepWarm: [String]
+        switch kind {
+        case .activeBackup:
+            keepWarm = byPreference.map(\.interfaceName)
+        case .batterySaver:
+            keepWarm = byPreference.first.map { [$0.interfaceName] } ?? []
+        }
+        return RelayLinkPlan(keepWarm: keepWarm, egressOrder: carryingOrder(byPreference))
+    }
+
+    /// Ranks links for carrying. A link keeps up when its silence is within the
+    /// flap margin of the freshest link; the margin is the larger of the declared
+    /// floor and the freshest link's own silence, so the test stays relative when
+    /// every link is slow and holds the whole set together during a blackout.
+    /// Links keeping up come first in declared preference order, then any lagging
+    /// links, so the carrying link is the preferred one keeping up and is never
+    /// empty while any link is open.
+    private static func carryingOrder(_ byPreference: [RelayLinkSnapshot]) -> [String] {
+        guard let bestSilence = byPreference.map(\.silenceMilliseconds).min() else {
+            return []
+        }
+        let margin = max(RelayTransportPolicy.flapMarginFloorMilliseconds, bestSilence)
+        let keepingUp = byPreference.filter { link in
+            link.silenceMilliseconds - bestSilence <= margin
+        }
+        let lagging = byPreference.filter { link in
+            link.silenceMilliseconds - bestSilence > margin
+        }
+        return keepingUp.map(\.interfaceName) + lagging.map(\.interfaceName)
     }
 }

@@ -16,12 +16,12 @@ import Network
 private let logger = CellTunnelLog.logger(category: .daemon)
 private let nanosecondsPerMillisecond = 1_000_000
 
-// MARK: - Phone link set, heartbeat, liveness, egress
+// MARK: - Phone link set, heartbeat, carrying selection
 
-/// The multi-link half of the relay bridge: the set of warm phone links, the
-/// per-link heartbeat that keeps a standby link's liveness fresh, the sweep that
-/// reaps a dead link, and the policy that selects which link the upload path
-/// egresses on. Every method runs only on `AgentRelayBridge.queue`.
+/// The multi-link half of the relay bridge: the set of phone links, the per-link
+/// keepalive that keeps each link's freshness current, and the policy that
+/// selects which link the upload path carries on. A link is removed only when its
+/// connection errors. Every method runs only on `AgentRelayBridge.queue`.
 extension AgentRelayBridge {
     // MARK: - Membership
 
@@ -92,11 +92,12 @@ extension AgentRelayBridge {
         return nil
     }
 
-    // MARK: - Maintenance: heartbeat and liveness sweep
+    // MARK: - Maintenance: heartbeat and carrying refresh
 
-    /// Starts the single repeating timer that, each tick, sends an empty
-    /// heartbeat on every phone link and reaps any link that missed its class
-    /// deadline. One timer covers both so the bridge has no per-link timer churn.
+    /// Starts the single repeating timer that, each tick, sends an empty keepalive
+    /// on every phone link and recomputes the carrying link from current
+    /// freshness. The tick never closes a link; a link closes only when its
+    /// connection errors.
     func startMaintenanceTimer() {
         maintenanceTimer?.cancel()
         let timer = DispatchSource.makeTimerSource(queue: queue)
@@ -117,7 +118,7 @@ extension AgentRelayBridge {
 
     private func maintenanceTick() {
         sendHeartbeats()
-        sweepDeadLinks()
+        recomputeEgress()
     }
 
     private func sendHeartbeats() {
@@ -134,59 +135,28 @@ extension AgentRelayBridge {
             link.connection.send(
                 content: Data(),
                 completion: .contentProcessed { _ in
-                    // Best-effort heartbeat: a send error is surfaced by the link
-                    // missing its liveness deadline, which the sweep reaps.
+                    // Best-effort keepalive. A genuinely gone path surfaces as a
+                    // connection error, which closes the link; this send does not.
                 }
             )
         }
     }
 
-    private func sweepDeadLinks() {
-        let now = nowMilliseconds()
-        let dead = phoneLinks.values.filter { link in
-            let liveness = RelayLinkLiveness(
-                linkClass: link.linkClass,
-                lastHeardMilliseconds: link.lastHeardMilliseconds
-            )
-            return !liveness.isAlive(atMilliseconds: now)
-        }
-        guard !dead.isEmpty else {
-            return
-        }
-        for link in dead {
-            logger.notice(
-                """
-                agent relay bridge reaping dead link interface=\(link.interfaceName, privacy: .public) \
-                class=\(link.linkClass.rawValue, privacy: .public)
-                """
-            )
-            link.connection.cancel()
-            phoneLinks.removeValue(forKey: link.interfaceName)
-        }
-        recomputeEgress()
-        if phoneLinks.isEmpty {
-            onPhoneDisconnected?()
-        }
-    }
-
     // MARK: - Egress selection
 
-    /// Recomputes the cached egress pointer from the shared policy. The upload
-    /// path reads one pointer per datagram; it is recomputed only here, when the
-    /// link set or liveness changes. Both ends run the same policy over the same
-    /// class ranking, so the agent egresses upload on the link the iPhone
-    /// egresses download on.
+    /// Recomputes the cached carrying pointer from the policy off the packet path.
+    /// The upload path reads one pointer per datagram; it is recomputed here, on
+    /// each tick and on a membership change, from each link's freshness. Both ends
+    /// run the same policy over the same preference, so the agent carries upload on
+    /// the link the iPhone carries download on. The carrying link is empty only
+    /// when no link is open.
     func recomputeEgress() {
         let now = nowMilliseconds()
         let snapshots = phoneLinks.values.map { link in
-            let liveness = RelayLinkLiveness(
-                linkClass: link.linkClass,
-                lastHeardMilliseconds: link.lastHeardMilliseconds
-            )
-            return RelayLinkSnapshot(
+            RelayLinkSnapshot(
                 interfaceName: link.interfaceName,
                 linkClass: link.linkClass,
-                isLive: liveness.isAlive(atMilliseconds: now)
+                silenceMilliseconds: now - link.lastHeardMilliseconds
             )
         }
         let plan = RelayLinkPolicy.plan(for: Array(snapshots))
@@ -198,7 +168,7 @@ extension AgentRelayBridge {
         }
         if egressConnection !== link.connection {
             logger.notice(
-                "agent relay bridge egress link interface=\(egressName, privacy: .public)"
+                "agent relay bridge carrying link interface=\(egressName, privacy: .public)"
             )
         }
         egressConnection = link.connection

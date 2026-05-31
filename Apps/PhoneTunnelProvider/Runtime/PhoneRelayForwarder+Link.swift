@@ -18,22 +18,41 @@ private let nanosecondsPerMillisecond = 1_000_000
 
 // MARK: - Mac-facing links: dial, prime, heartbeat, liveness, egress
 
-/// Keeps one warm link per reachable interface and selects the egress with the
+/// Keeps the policy's set of links open and selects the carrying link with the
 /// shared policy. The probe reports the interface set; this surface dials each
-/// new interface pinned to it, primes it so the agent adopts it, heartbeats every
-/// link to keep its liveness fresh, reaps a link that errors or misses its class
-/// deadline, and recomputes the cached egress pointer whenever the set or its
-/// liveness changes. Every method runs only on `PhoneRelayForwarder.queue`.
+/// interface the policy keeps open, pinned to it, primes it so the agent adopts
+/// it, sends a keepalive on every link, closes a link only when its connection
+/// errors, and recomputes the cached carrying pointer off the packet path
+/// whenever the set or its freshness changes. Every method runs only on
+/// `PhoneRelayForwarder.queue`.
 extension PhoneRelayForwarder {
     // MARK: - Reconcile
 
     func reconcileOnQueue(_ interfaces: [RelayMacInterface]) {
-        let discovered = Set(interfaces.map(\.interfaceName))
-        for interface in interfaces where macLinks[interface.interfaceName] == nil {
+        let now = nowMilliseconds()
+        let snapshots = interfaces.map { interface in
+            let silence =
+                macLinks[interface.interfaceName].map { link in
+                    now - link.lastHeardMilliseconds
+                } ?? 0
+            return RelayLinkSnapshot(
+                interfaceName: interface.interfaceName,
+                linkClass: interface.linkClass,
+                silenceMilliseconds: silence
+            )
+        }
+        let keepWarm = Set(RelayLinkPolicy.plan(for: snapshots).keepWarm)
+        for interface in interfaces {
+            guard keepWarm.contains(interface.interfaceName) else {
+                continue
+            }
+            guard macLinks[interface.interfaceName] == nil else {
+                continue
+            }
             dialLink(interface)
         }
-        for name in macLinks.keys where !discovered.contains(name) {
-            removeLink(interfaceName: name, reason: "no-longer-discovered")
+        for name in Array(macLinks.keys) where !keepWarm.contains(name) {
+            removeLink(interfaceName: name, reason: "not-kept-warm")
         }
         recomputeEgress()
     }
@@ -172,7 +191,7 @@ extension PhoneRelayForwarder {
         )
     }
 
-    // MARK: - Maintenance: heartbeat and liveness sweep
+    // MARK: - Maintenance: heartbeat and carrying refresh
 
     func startMaintenanceTimer() {
         linkMaintenanceTimer?.cancel()
@@ -194,7 +213,7 @@ extension PhoneRelayForwarder {
 
     private func maintenanceTick() {
         sendHeartbeats()
-        sweepDeadLinks()
+        recomputeEgress()
     }
 
     private func sendHeartbeats() {
@@ -211,59 +230,27 @@ extension PhoneRelayForwarder {
             link.connection.send(
                 content: Data(),
                 completion: .contentProcessed { _ in
-                    // Best-effort heartbeat: a send error surfaces as the link
-                    // missing its liveness deadline, which the sweep reaps.
+                    // Best-effort keepalive. A genuinely gone path surfaces as a
+                    // connection error, which closes the link; this send does not.
                 }
             )
         }
     }
 
-    private func sweepDeadLinks() {
-        let now = nowMilliseconds()
-        let dead = macLinks.values.filter { link in
-            guard link.isReady else {
-                return false
-            }
-            let liveness = RelayLinkLiveness(
-                linkClass: link.linkClass,
-                lastHeardMilliseconds: link.lastHeardMilliseconds
-            )
-            return !liveness.isAlive(atMilliseconds: now)
-        }
-        guard !dead.isEmpty else {
-            return
-        }
-        for link in dead {
-            logger.notice(
-                """
-                phone relay reaping dead link interface=\(link.interfaceName, privacy: .public) \
-                class=\(link.linkClass.rawValue, privacy: .public)
-                """
-            )
-            link.connection.cancel()
-            macLinks.removeValue(forKey: link.interfaceName)
-        }
-        recomputeEgress()
-    }
-
     // MARK: - Egress selection
 
-    /// Recomputes the cached egress pointer from the shared policy. The download
-    /// path reads one pointer per datagram; it is recomputed only here, when the
-    /// link set or liveness changes. A link counts as live only when its
-    /// connection is ready and within its class deadline.
+    /// Recomputes the cached carrying pointer from the policy off the packet path.
+    /// The download path reads one pointer per datagram; it is recomputed here, on
+    /// each tick and on a membership change, from each ready link's freshness. A
+    /// link that is not ready yet is not a carrying candidate. The carrying link is
+    /// empty only when no link is ready.
     func recomputeEgress() {
         let now = nowMilliseconds()
-        let snapshots = macLinks.values.map { link in
-            let liveness = RelayLinkLiveness(
-                linkClass: link.linkClass,
-                lastHeardMilliseconds: link.lastHeardMilliseconds
-            )
-            let isLive = link.isReady && liveness.isAlive(atMilliseconds: now)
-            return RelayLinkSnapshot(
+        let snapshots = macLinks.values.filter(\.isReady).map { link in
+            RelayLinkSnapshot(
                 interfaceName: link.interfaceName,
                 linkClass: link.linkClass,
-                isLive: isLive
+                silenceMilliseconds: now - link.lastHeardMilliseconds
             )
         }
         let plan = RelayLinkPolicy.plan(for: Array(snapshots))
