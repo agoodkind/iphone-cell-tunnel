@@ -18,8 +18,11 @@ import Foundation
 /// the static choice with an auto-probe that selects the fastest reachable path.
 public enum RelayDataPathPolicy {
     /// Whether the relay data plane may use Apple peer-to-peer links (AWDL).
-    /// Off keeps the data plane on the wired USB link and Wi-Fi LAN, which are
-    /// far faster than AWDL; on device, AWDL caps relay throughput to a small
-    /// fraction of the wired link. On adds AWDL as an additional candidate path.
+    /// Off keeps the data plane on the wired USB link and Wi-Fi LAN. AWDL is slow
+    /// only while the device is also joined to a Wi-Fi network, since the one
+    /// radio time-shares between the Wi-Fi channel and the AWDL channels; with no
+    /// Wi-Fi connection AWDL can be much faster, so the fastest path is
+    /// environment-dependent and the long-term answer is to auto-probe it rather
+    /// than fix this flag. On adds AWDL as an additional candidate path.
     public static let includesPeerToPeer = false
 }
