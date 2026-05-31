@@ -42,6 +42,7 @@ WireGuard is a transport tool, not a participant. Its handshake carries no proje
 - Backgrounding is the success bar. There is no foreground-only data path.
 - Routes stay scoped to the config's `AllowedIPs`. Never widened to all traffic (`0.0.0.0/0`, `::/0`).
 - iOS Personal Hotspot is never used. The cellular egress is pinned with `requiredInterfaceType = .cellular`.
+- The Mac-to-iPhone link is hosted by a normal process and dialed by the extensions. A listener inside a packet-tunnel extension does not receive inbound from the peer device over the local link, on either platform. The Mac agent hosts the control listener; the iPhone extension dials it.
 
 ## Why an iOS packet-tunnel extension
 

@@ -46,11 +46,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let relayMetrics: RelayMetrics
     private let relayTransport: RelayTransport
     private let wireGuardRuntime = WireGuardRuntime()
-    private var controlChannel: ControlChannel?
     private var wireGuardRelayBind: WireGuardRelayBind?
     private var throughputLogger: RelayThroughputLogger?
-    private var statusConsumerTask: Task<Void, Never>?
-    private let phoneCounters = Mutex<TunnelCounters?>(nil)
 
     override init() {
         let metrics = RelayMetrics()
@@ -101,13 +98,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         try relayTransport.connect(to: relayServiceEndpoint)
         logger.notice("relay transport connected")
 
-        let serverRelayEndpoint = try makeServerRelayEndpoint(from: parsedConfig.peer)
-        let channel = ControlChannel(serverEndpoint: serverRelayEndpoint)
-        controlChannel = channel
-        try await channel.start()
-        logger.notice("control channel listener started")
-        startPhoneCountersConsumer(channel: channel)
-
         let relayBind = WireGuardRelayBind(transport: relayTransport, metrics: relayMetrics)
         wireGuardRelayBind = relayBind
 
@@ -129,40 +119,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         logger.notice("tunnel start completion handler called success=true")
     }
 
-    // The iPhone pushes its relay counters on the control channel's Status message
-    // every few seconds. Keep the latest copy so `currentStatusSnapshot()` can
-    // report both ends. This runs off the datagram hot path.
-    private func startPhoneCountersConsumer(channel: ControlChannel) {
-        statusConsumerTask = Task { [weak self] in
-            for await status in channel.statusStream {
-                guard let self else {
-                    return
-                }
-                if let counters = status.counters {
-                    phoneCounters.withLock { $0 = counters }
-                }
-            }
-        }
-    }
-
     override func stopTunnel(with reason: NEProviderStopReason) async {
         logger.notice(
             "tunnel stop request received reason=\(String(describing: reason), privacy: .public)"
         )
         throughputLogger?.stop()
         throughputLogger = nil
-        statusConsumerTask?.cancel()
-        statusConsumerTask = nil
-        phoneCounters.withLock { $0 = nil }
 
         await wireGuardRuntime.stop()
         logger.notice("tunnel runtime stopped on shutdown")
-
-        if let channel = controlChannel {
-            await channel.stop()
-            controlChannel = nil
-        }
-        logger.notice("control channel stopped on shutdown")
 
         relayTransport.disconnect()
         logger.notice("relay transport disconnected on shutdown")
@@ -219,8 +184,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             running: running,
             routeState: running ? .installed : .notInstalled,
             peerState: running ? .wireGuardConfigured : .notSelected,
-            macCounters: relayMetrics.snapshot(),
-            phoneCounters: phoneCounters.withLock { $0 }
+            macCounters: relayMetrics.snapshot()
         )
     }
 
@@ -346,19 +310,5 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         }
         let resolved = try await discoveryManager.resolve(service.identifier)
         return (serviceEndpoint, resolved)
-    }
-
-    private func makeServerRelayEndpoint(
-        from peer: WireGuardPeerSection
-    ) throws -> RelayEndpoint {
-        guard let wgEndpoint = peer.endpoint else {
-            throw PacketTunnelProviderError.missingWireGuardConfig
-        }
-        let family: RelayAddressFamily = wgEndpoint.isIPv6Literal ? .ipv6 : .ipv4
-        return RelayEndpoint(
-            addressFamily: family,
-            host: wgEndpoint.host,
-            port: wgEndpoint.port
-        )
     }
 }

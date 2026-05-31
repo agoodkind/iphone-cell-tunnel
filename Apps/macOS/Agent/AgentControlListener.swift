@@ -1,8 +1,8 @@
 //
-//  ControlChannel.swift
-//  CellTunnelTunnelProvider
+//  AgentControlListener.swift
+//  CellTunnelAgent
 //
-//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-30.
 //  Copyright © 2026
 //
 
@@ -21,9 +21,8 @@ private let tcpKeepaliveRetryCount = 3
 
 // MARK: - Errors
 
-enum ControlChannelError: LocalizedError {
+enum AgentControlListenerError: LocalizedError {
     case acknowledgeMissing
-    case alreadyStarted
     case connectionFailed(String)
     case listenerFailed(String)
     case remoteError(RemoteErrorPayload)
@@ -36,63 +35,53 @@ enum ControlChannelError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .acknowledgeMissing:
-            return "control channel did not receive set-server-endpoint acknowledgement"
-        case .alreadyStarted:
-            return "control channel already started"
+            return "control listener did not receive set-server-endpoint acknowledgement"
         case .connectionFailed(let detail):
-            return "control channel connection failed: \(detail)"
+            return "control listener connection failed: \(detail)"
         case .listenerFailed(let detail):
-            return "control channel listener failed: \(detail)"
+            return "control listener failed: \(detail)"
         case .remoteError(let payload):
-            return "control channel remote error code=\(payload.code) message=\(payload.message)"
+            return "control listener remote error code=\(payload.code) message=\(payload.message)"
         }
     }
 }
 
-// MARK: - ControlChannel
+// MARK: - AgentControlListener
 
-/// Hosts the Mac side of the control link. The Mac advertises a Bonjour control
-/// service on the local link and listens for the iPhone to dial in. On each
-/// accepted connection it sends the WireGuard server endpoint, waits for the
-/// acknowledgement, then consumes the iPhone status stream. The iPhone owns the
-/// dial; the `set-server-endpoint` message still travels from Mac to iPhone.
-actor ControlChannel {
+/// Hosts the control link in the agent, a normal process that receives inbound
+/// from the iPhone over the local link. It advertises the control Bonjour
+/// service and listens for the iPhone to dial in. On each accepted connection it
+/// sends the WireGuard server endpoint, waits for the acknowledgement, then
+/// consumes the iPhone status pushes. The iPhone owns the dial; the
+/// `set-server-endpoint` message travels from agent to iPhone.
+actor AgentControlListener {
     private let serverEndpoint: RelayEndpoint
-    private let connectionQueue = DispatchQueue(label: "io.goodkind.celltunnel.controlChannel")
+    private let connectionQueue = DispatchQueue(label: "io.goodkind.celltunnel.agent.control")
     private var listener: NWListener?
     private var connection: NWConnection?
-    private var statusContinuation: AsyncStream<RelayControlMessage.Status>.Continuation?
     private var didStart = false
-
-    let statusStream: AsyncStream<RelayControlMessage.Status>
 
     init(serverEndpoint: RelayEndpoint) {
         self.serverEndpoint = serverEndpoint
-        var continuationCapture: AsyncStream<RelayControlMessage.Status>.Continuation?
-        self.statusStream = AsyncStream { continuation in
-            continuationCapture = continuation
-        }
-        self.statusContinuation = continuationCapture
     }
 
     // MARK: - Lifecycle
 
     func start() throws {
         guard !didStart else {
-            throw ControlChannelError.alreadyStarted
+            return
         }
         didStart = true
         try startListener()
     }
 
     func stop() {
-        statusContinuation?.finish()
-        statusContinuation = nil
         connection?.cancel()
         connection = nil
         listener?.cancel()
         listener = nil
-        logger.notice("control channel stopped")
+        didStart = false
+        logger.notice("agent control listener stopped")
     }
 
     // MARK: - Listener
@@ -116,12 +105,12 @@ actor ControlChannel {
         } catch {
             logger.error(
                 """
-                control channel listener create failed \
+                agent control listener create failed \
                 details=\(String(describing: error), privacy: .public) \
                 recovery=throw-listener-failed
                 """
             )
-            throw ControlChannelError.listenerFailed(error.localizedDescription)
+            throw AgentControlListenerError.listenerFailed(error.localizedDescription)
         }
 
         let serviceName = ProcessInfo.processInfo.hostName
@@ -139,7 +128,7 @@ actor ControlChannel {
         listener = nwListener
         logger.notice(
             """
-            control channel listener starting service=\(relayControlServiceType, privacy: .public) \
+            agent control listener starting service=\(relayControlServiceType, privacy: .public) \
             name=\(serviceName, privacy: .public) \
             port=\(relayControlListenerDefaultPort, privacy: .public)
             """
@@ -149,7 +138,7 @@ actor ControlChannel {
     private func acceptConnection(_ newConnection: NWConnection) async {
         logger.notice(
             """
-            control channel accepting connection \
+            agent control listener accepting connection \
             endpoint=\(String(describing: newConnection.endpoint), privacy: .public)
             """
         )
@@ -165,7 +154,7 @@ actor ControlChannel {
         } catch {
             logger.error(
                 """
-                control channel handshake failed \
+                agent control handshake failed \
                 error=\(error.localizedDescription, privacy: .public) \
                 recovery=await-next-connection
                 """
@@ -188,7 +177,7 @@ actor ControlChannel {
     private func sendSetServerEndpoint(on connection: NWConnection) async throws {
         logger.notice(
             """
-            control channel sending set-server-endpoint \
+            agent control sending set-server-endpoint \
             host=\(self.serverEndpoint.host, privacy: .public) \
             port=\(self.serverEndpoint.port, privacy: .public)
             """
@@ -226,7 +215,7 @@ actor ControlChannel {
         }
         logger.notice(
             """
-            control channel sent kind=\(message.kindLabel, privacy: .public) \
+            agent control sent kind=\(message.kindLabel, privacy: .public) \
             bytes=\(payload.count, privacy: .public)
             """
         )
@@ -241,13 +230,13 @@ actor ControlChannel {
         case .acknowledge(let payload) where payload.requestKind == requestKind:
             logger.notice(
                 """
-                control channel acknowledge received \
+                agent control acknowledge received \
                 requestKind=\(payload.requestKind, privacy: .public)
                 """
             )
         case .error(let failure):
-            throw ControlChannelError.remoteError(
-                ControlChannelError.RemoteErrorPayload(
+            throw AgentControlListenerError.remoteError(
+                AgentControlListenerError.RemoteErrorPayload(
                     code: failure.code,
                     message: failure.message
                 )
@@ -255,14 +244,13 @@ actor ControlChannel {
         case .status(let snapshot):
             logger.notice(
                 """
-                control channel received status before ack \
+                agent control received status before ack \
                 hasCellularPath=\(snapshot.hasCellularPath, privacy: .public)
                 """
             )
-            statusContinuation?.yield(snapshot)
             try await awaitAcknowledge(on: connection, requestKind: requestKind)
         default:
-            throw ControlChannelError.acknowledgeMissing
+            throw AgentControlListenerError.acknowledgeMissing
         }
     }
 
@@ -275,7 +263,9 @@ actor ControlChannel {
                 }
                 guard let data, !data.isEmpty else {
                     continuation.resume(
-                        throwing: ControlChannelError.connectionFailed("empty payload received")
+                        throwing: AgentControlListenerError.connectionFailed(
+                            "empty payload received"
+                        )
                     )
                     return
                 }
@@ -285,7 +275,7 @@ actor ControlChannel {
                 } catch {
                     logger.error(
                         """
-                        control channel decode failed during receive \
+                        agent control decode failed during receive \
                         error=\(error.localizedDescription, privacy: .public)
                         """
                     )
@@ -301,7 +291,7 @@ actor ControlChannel {
         connection.receiveMessage { [weak self] data, _, _, error in
             if let error {
                 logger.error(
-                    "control channel receive failed error=\(error.localizedDescription, privacy: .public)"
+                    "agent control receive failed error=\(error.localizedDescription, privacy: .public)"
                 )
                 return
             }
@@ -326,7 +316,7 @@ actor ControlChannel {
             message = try RelayControlMessageCodec.decode(data)
         } catch {
             logger.error(
-                "control channel decode failed error=\(error.localizedDescription, privacy: .public)"
+                "agent control decode failed error=\(error.localizedDescription, privacy: .public)"
             )
             return
         }
@@ -334,24 +324,23 @@ actor ControlChannel {
         case .status(let snapshot):
             logger.notice(
                 """
-                control channel status hasCellularPath=\(snapshot.hasCellularPath, privacy: .public) \
+                agent control status hasCellularPath=\(snapshot.hasCellularPath, privacy: .public) \
                 interface=\(snapshot.cellularInterface ?? "none", privacy: .public)
                 """
             )
-            statusContinuation?.yield(snapshot)
         case .error(let failure):
             logger.error(
                 """
-                control channel error from peer code=\(failure.code, privacy: .public) \
+                agent control error from peer code=\(failure.code, privacy: .public) \
                 message=\(failure.message, privacy: .public)
                 """
             )
         case .acknowledge(let payload):
             logger.debug(
-                "control channel late ack requestKind=\(payload.requestKind, privacy: .public)"
+                "agent control late ack requestKind=\(payload.requestKind, privacy: .public)"
             )
         case .setServerEndpoint:
-            logger.debug("control channel received unexpected set-server-endpoint from peer")
+            logger.debug("agent control received unexpected set-server-endpoint from peer")
         }
     }
 }
@@ -364,35 +353,35 @@ private func applyListenerState(_ state: NWListener.State) {
     switch state {
     case .ready:
         logger.notice(
-            "control channel listener ready port=\(relayControlListenerDefaultPort, privacy: .public)"
+            "agent control listener ready port=\(relayControlListenerDefaultPort, privacy: .public)"
         )
     case .failed(let error):
         logger.error(
-            "control channel listener failed error=\(error.localizedDescription, privacy: .public)"
+            "agent control listener failed error=\(error.localizedDescription, privacy: .public)"
         )
     case .cancelled:
-        logger.notice("control channel listener cancelled")
+        logger.notice("agent control listener cancelled")
     default:
         break
     }
 }
 
-/// Logs the accepted connection lifecycle so an iPhone dial that reaches the Mac
-/// is visible in the log.
+/// Logs the accepted connection lifecycle so an iPhone dial that reaches the
+/// agent is visible in the log.
 private func applyAcceptedConnectionState(_ state: NWConnection.State) {
     switch state {
     case .ready:
-        logger.notice("control channel connection ready")
+        logger.notice("agent control connection ready")
     case .waiting(let error):
         logger.error(
-            "control channel connection waiting error=\(error.localizedDescription, privacy: .public)"
+            "agent control connection waiting error=\(error.localizedDescription, privacy: .public)"
         )
     case .failed(let error):
         logger.error(
-            "control channel connection failed error=\(error.localizedDescription, privacy: .public)"
+            "agent control connection failed error=\(error.localizedDescription, privacy: .public)"
         )
     case .cancelled:
-        logger.notice("control channel connection cancelled")
+        logger.notice("agent control connection cancelled")
     default:
         break
     }

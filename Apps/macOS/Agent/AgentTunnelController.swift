@@ -2,6 +2,7 @@ import CellTunnelCore
 import CellTunnelLog
 import Foundation
 @preconcurrency import NetworkExtension
+import WireGuardKit
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 
@@ -26,6 +27,7 @@ actor AgentTunnelController {
     private var manager: NETunnelProviderManager?
     private var statusObserver: NSObjectProtocol?
     private var latestStatus: NEVPNStatus = .invalid
+    var controlListener: AgentControlListener?
     let relayBrowser = RelayDeviceBrowser()
 
     func handle(request: AgentControlRequest) async -> AgentControlResponse {
@@ -119,6 +121,7 @@ actor AgentTunnelController {
             applyConfiguration(to: manager, wireGuardConfig: configText)
             try await save(manager: manager)
             try await load(manager: manager)
+            try await startControlListener(wireGuardConfig: configText)
             observeStatus(on: manager)
             try startSession(on: manager)
             logger.notice("agent tunnel start requested")
@@ -140,6 +143,7 @@ actor AgentTunnelController {
         do {
             let manager = try await loadOrCreateManager()
             stopSession(on: manager)
+            await stopControlListener()
             logger.notice("agent tunnel stop requested")
             return AgentControlResponse(status: snapshot(from: manager))
         } catch {
@@ -161,6 +165,7 @@ actor AgentTunnelController {
                 stopSession(on: candidate)
                 try await remove(manager: candidate)
             }
+            await stopControlListener()
             manager = nil
             if let statusObserver {
                 NotificationCenter.default.removeObserver(statusObserver)
@@ -402,10 +407,13 @@ extension AgentTunnelController {
 }
 
 enum AgentTunnelControllerError: LocalizedError {
+    case missingServerEndpoint
     case sessionUnavailable
 
     var errorCode: TunnelControlErrorCode {
         switch self {
+        case .missingServerEndpoint:
+            return .missingWireGuardConfigPath
         case .sessionUnavailable:
             return .runtimeStartFailure
         }
@@ -413,6 +421,8 @@ enum AgentTunnelControllerError: LocalizedError {
 
     var message: String {
         switch self {
+        case .missingServerEndpoint:
+            return "wireguard config has no parseable peer Endpoint"
         case .sessionUnavailable:
             return "tunnel provider session is unavailable"
         }

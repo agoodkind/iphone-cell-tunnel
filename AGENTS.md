@@ -51,9 +51,9 @@ Components are named by target. The code is the source of truth for their intern
 | Component | Role |
 |---|---|
 | `celltunnelctl` | User-facing command-line client of the agent. |
-| `CellTunnelAgent` | macOS background agent. Owns the Mac VPN configuration, runs relay discovery, persists the selected device, and forwards control messages to the Mac tunnel extension. |
-| `CellTunnelTunnelProvider` | macOS packet-tunnel extension hosted by the agent app. Owns the Mac data path: WireGuard, the relay transport to the iPhone, and the control link the iPhone dials. |
-| `CellTunnelPhoneTunnel` | iOS packet-tunnel extension hosted by the iPhone app. Owns the always-on relay data plane: it dials the Mac control link to receive the WireGuard server endpoint, forwards datagrams to and from the cellular radio, observes the cellular path, and answers status requests. |
+| `CellTunnelAgent` | macOS background agent. Owns the Mac VPN configuration, runs relay discovery, persists the selected device, hosts the control link the iPhone dials, and sends the WireGuard server endpoint to the iPhone. |
+| `CellTunnelTunnelProvider` | macOS packet-tunnel extension hosted by the agent app. Owns the Mac data path: WireGuard and the relay transport to the iPhone. |
+| `CellTunnelPhoneTunnel` | iOS packet-tunnel extension hosted by the iPhone app. Owns the always-on relay data plane: it dials the Mac to receive the WireGuard server endpoint, forwards datagrams to and from the cellular radio, observes the cellular path, and answers status requests. |
 | `CellTunnelPhone` | iOS host app. Drives the extension with an on-demand rule, polls status, and shows a minimal first-party status screen. Holds no relay data plane itself. |
 | `CellTunnelCore` | Shared control wire protocol, framer, wire models, and shared keys. |
 | `CellTunnelLog` | Pinned logging subsystem and categories. |
