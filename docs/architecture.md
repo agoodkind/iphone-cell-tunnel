@@ -39,12 +39,12 @@ WireGuard is a transport tool, not a participant. Its handshake carries no proje
 
 ## Path selection
 
-The iPhone chooses which physical path the local link uses and changes it on its own, so the link uses the fastest reachable path without manual steps.
+The iPhone keeps a connection to the agent open over every reachable path at once and carries traffic on one of them, so a path loss moves traffic to an already-open path without a reconnect.
 
-- A probe watches the network interfaces. On every interface change it scores the reachable links and reports the ranking. Wired USB and Wi-Fi LAN outscore the Apple peer-to-peer link (AWDL), which is slower because it duty-cycles its radio.
-- A manager reads each ranking and switches the link only when a better path is available. The switch is make-before-break: it dials the new path, and only after that path is ready does it move the data plane onto it and drop the old one, so traffic is never stopped to measure or to switch.
-- A dropped link and a replugged cable are ordinary interface changes, so the iPhone redials after a drop and returns to the faster path when one reappears, both without a restart. The control channel redials on the same drop signal.
-- The probe scores from path attributes alone and sends no test traffic. The agent advertises the relay service on every path, so the iPhone reaches it over wired USB, Wi-Fi LAN, or AWDL, and the iPhone decides which to use.
+- One link is one UDP connection to the agent over one interface. The agent advertises the relay service on every path, the iPhone runs one Bonjour browse and reads the interfaces the agent is reachable on, and the iPhone dials one link per interface pinned to it (`requiredInterface`), so the USB CDC-NCM link, a USB-C Ethernet adapter, Wi-Fi LAN, and AWDL each become their own link. Each link is primed with one empty datagram so the agent adopts it; the relay forwards only non-empty datagrams, so the prime never reaches WireGuard.
+- One link carries traffic. Both ends pick it the same way from a preference order, USB over Wi-Fi LAN over AWDL, held as scores in `RelayLinkScorer`; an explicit interface override takes precedence when set. The choice is a pure function (`RelayLinkPolicy.chooseCarrying`) recomputed only when a link opens or closes, and the per-datagram path reads it as one cached pointer, so the decision never runs on the packet path.
+- A link closes only when its connection errors or a send on it fails. A send failure (no route to host when an interface goes away) is the reliable signal a UDP path is gone, since the connection state may not change. When the carrying link's send fails it is dropped and traffic moves to the next open link; a replugged interface is rediscovered and dialed again. Failover is driven by traffic, not a timer, so it is immediate under load and happens on the next packet when nearly idle.
+- The override is the seam a UI or a later selection algorithm uses to set the carrying link without touching discovery or the packet path.
 
 ## Hard constraints
 
