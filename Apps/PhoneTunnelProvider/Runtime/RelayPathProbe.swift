@@ -14,103 +14,130 @@ import Network
 // MARK: - Constants
 
 private let logger = CellTunnelLog.logger(category: .relay)
-private let awdlInterfaceNamePrefix = "awdl"
+private let relayServiceType = "_cellrelay._udp"
+private let infrastructureCandidateName = "infrastructure"
 
 // MARK: - RelayPathProbe
 
-/// Watches the iPhone network interfaces and, on every change, produces a scored
-/// evaluation of the links that could carry the relay to the Mac. It is the
-/// generic sensing half of path selection: it only looks and reports, and never
-/// dials or touches the live connection, so it cannot stop traffic in flight.
-/// The transport manager consumes each evaluation and decides whether to switch.
+/// Senses whether a fast wired or Wi-Fi LAN path to the Mac is available and
+/// reports it as a scored evaluation. It is the generic sensing half of path
+/// selection: it only looks and reports, never dials the data plane, so it cannot
+/// stop traffic in flight. The transport manager consumes each evaluation and
+/// decides whether to switch.
 ///
-/// The probe surfaces the infrastructure links it can see (wired USB and Wi-Fi
-/// LAN). The Apple peer-to-peer link (AWDL) does not appear in the interface
-/// list until a peer-to-peer connection already exists, so the probe does not
-/// invent it; the manager reads an empty or non-peer evaluation as the cue to
-/// dial with peer-to-peer allowed and let the system bring AWDL up on demand.
+/// Inside a packet-tunnel extension `NWPathMonitor` only sees the extension's own
+/// scoped paths, the cellular egress and the tunnel, and never the local link to
+/// the Mac. A Bonjour browse is the one mechanism that surfaces the Mac link from
+/// here. So the probe browses the relay service with peer-to-peer off: a result
+/// means the agent is reachable over the wired USB link or Wi-Fi LAN, the fast
+/// paths. No result means only the Apple peer-to-peer link (AWDL) is left, which
+/// the manager reads as the cue to dial with peer-to-peer allowed. The browse
+/// carries no data, so the probe never disturbs the live connection.
 ///
-/// The `@unchecked Sendable` contract: the monitor runs on `monitorQueue` and the
-/// only stored handler is read there, so there is no shared mutable state.
+/// The `@unchecked Sendable` contract: every stored property is read and written
+/// only on `queue`, and the browser starts with `.start(queue: queue)`.
 final class RelayPathProbe: @unchecked Sendable {
-    private let monitorQueue = DispatchQueue(label: "CellTunnelPhone.RelayPathProbe")
-    private let monitor = NWPathMonitor()
+    private let queue = DispatchQueue(label: "CellTunnelPhone.RelayPathProbe")
+    private var browser: NWBrowser?
+    private var hasInfrastructure = false
 
-    /// Called on every interface change with the freshly scored evaluation. Set
-    /// before `start()`. Fires on the probe queue; the manager hops as needed.
+    /// Called when wired or Wi-Fi LAN availability to the Mac changes, with the
+    /// freshly scored evaluation. Set before `start()`. Fires on the probe queue;
+    /// the manager hops as needed.
     var onEvaluation: (@Sendable (RelayPathEvaluation) -> Void)?
 
     // MARK: - Lifecycle
 
     func start() {
-        monitor.pathUpdateHandler = { [weak self] path in
-            self?.handle(path: path)
+        queue.async { [weak self] in
+            self?.startBrowseOnQueue()
         }
-        monitor.start(queue: monitorQueue)
-        logger.notice("relay path probe started")
     }
 
     func stop() {
-        monitor.cancel()
-        logger.notice("relay path probe stopped")
+        queue.async { [weak self] in
+            self?.browser?.cancel()
+            self?.browser = nil
+            logger.notice("relay path probe stopped")
+        }
+    }
+
+    // MARK: - Infrastructure browse
+
+    private func startBrowseOnQueue() {
+        let parameters = NWParameters()
+        // Peer-to-peer off so the browse only discovers the agent over the wired
+        // USB link and Wi-Fi LAN, never AWDL. Presence of a result is the wired
+        // availability signal.
+        parameters.includePeerToPeer = false
+        let descriptor = NWBrowser.Descriptor.bonjour(type: relayServiceType, domain: nil)
+        let nwBrowser = NWBrowser(for: descriptor, using: parameters)
+        nwBrowser.stateUpdateHandler = { [weak self] state in
+            self?.handleBrowserState(state)
+        }
+        nwBrowser.browseResultsChangedHandler = { [weak self] results, _ in
+            self?.handleResults(results)
+        }
+        nwBrowser.start(queue: queue)
+        browser = nwBrowser
+        logger.notice(
+            "relay path probe browsing infrastructure service=\(relayServiceType, privacy: .public)"
+        )
+        emitEvaluation()
+    }
+
+    private func handleBrowserState(_ state: NWBrowser.State) {
+        switch state {
+        case .ready:
+            logger.notice("relay path probe infrastructure browser ready")
+        case .failed(let error):
+            logger.error(
+                "relay path probe browser failed error=\(error.localizedDescription, privacy: .public)"
+            )
+            setInfrastructure(present: false)
+        default:
+            break
+        }
+    }
+
+    private func handleResults(_ results: Set<NWBrowser.Result>) {
+        let present = results.contains { result in
+            if case .service = result.endpoint {
+                return true
+            }
+            return false
+        }
+        setInfrastructure(present: present)
     }
 
     // MARK: - Evaluation
 
-    private func handle(path: NWPath) {
-        let candidates = path.availableInterfaces.compactMap { interface in
-            candidate(for: interface, path: path)
+    /// Emits only when availability changes, so a steady state does not churn the
+    /// manager. The manager re-decides on its own when a link drops.
+    private func setInfrastructure(present: Bool) {
+        guard present != hasInfrastructure else {
+            return
         }
-        let evaluation = RelayPathEvaluation(candidates: candidates)
-        let summary = evaluation.candidates
-            .map { "\($0.interfaceName):\($0.linkClass.rawValue):\($0.score)" }
-            .joined(separator: ",")
+        hasInfrastructure = present
         logger.notice(
-            """
-            relay path probe evaluation best=\(evaluation.best?.interfaceName ?? "none", privacy: .public) \
-            bestClass=\(evaluation.best?.linkClass.rawValue ?? "none", privacy: .public) \
-            candidates=\(summary, privacy: .public)
-            """
+            "relay path probe infrastructure availability changed present=\(present, privacy: .public)"
         )
-        onEvaluation?(evaluation)
+        emitEvaluation()
     }
 
-    private func candidate(for interface: NWInterface, path: NWPath) -> RelayLinkCandidate? {
-        let linkClass = Self.linkClass(for: interface)
-        guard linkClass.isMacLinkCapable else {
-            return nil
+    private func emitEvaluation() {
+        let candidates: [RelayLinkCandidate]
+        if hasInfrastructure {
+            let candidate = RelayLinkCandidate(
+                interfaceName: infrastructureCandidateName,
+                linkClass: .wired,
+                isExpensive: false,
+                isConstrained: false
+            )
+            candidates = [candidate]
+        } else {
+            candidates = []
         }
-        return RelayLinkCandidate(
-            interfaceName: interface.name,
-            linkClass: linkClass,
-            isExpensive: path.isExpensive,
-            isConstrained: path.isConstrained
-        )
-    }
-
-    // MARK: - Interface classification
-
-    /// Maps a network interface to a relay link class. AWDL rides the Wi-Fi radio
-    /// and surfaces with a `wifi` or `other` type, so the `awdl` name prefix is
-    /// the reliable signal that separates the peer-to-peer link from real Wi-Fi
-    /// LAN. The mapping is total so every interface lands in one class.
-    private static func linkClass(for interface: NWInterface) -> RelayLinkClass {
-        if interface.name.hasPrefix(awdlInterfaceNamePrefix) {
-            return .peerToPeer
-        }
-        switch interface.type {
-        case .wiredEthernet:
-            return .wired
-        case .wifi:
-            return .wifiLan
-        case .cellular:
-            return .cellular
-        case .loopback:
-            return .loopback
-        case .other:
-            return .other
-        @unknown default:
-            return .other
-        }
+        onEvaluation?(RelayPathEvaluation(candidates: candidates))
     }
 }
