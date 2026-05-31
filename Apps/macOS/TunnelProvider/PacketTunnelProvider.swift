@@ -105,7 +105,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let channel = ControlChannel(serverEndpoint: serverRelayEndpoint)
         controlChannel = channel
         try await channel.start()
-        logger.notice("control channel handshake done")
+        logger.notice("control channel listener started")
         startPhoneCountersConsumer(channel: channel)
 
         let relayBind = WireGuardRelayBind(transport: relayTransport, metrics: relayMetrics)

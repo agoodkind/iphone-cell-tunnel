@@ -14,23 +14,18 @@ import Network
 // MARK: - Constants
 
 private let logger = CellTunnelLog.logger(category: .daemon)
-// Bounded wait for the control Bonjour service to appear during discovery.
-private let controlServiceDiscoveryTimeoutSeconds: UInt64 = 10
-// Bounds the local TCP connect to the iPhone control listener. The WireGuard
-// server handshake keeps its own retry timing per the config and is not bounded
-// here; this only fails a control connect that never reaches the iPhone.
-private let controlConnectTimeoutSeconds: UInt64 = 10
 
 private let tcpKeepaliveIdleSeconds = 10
 private let tcpKeepaliveIntervalSeconds = 5
 private let tcpKeepaliveRetryCount = 3
 
+// MARK: - Errors
+
 enum ControlChannelError: LocalizedError {
     case acknowledgeMissing
     case alreadyStarted
     case connectionFailed(String)
-    case discoveryTimeout
-    case handshakeTimeout
+    case listenerFailed(String)
     case remoteError(RemoteErrorPayload)
 
     struct RemoteErrorPayload: Sendable, Equatable {
@@ -46,20 +41,25 @@ enum ControlChannelError: LocalizedError {
             return "control channel already started"
         case .connectionFailed(let detail):
             return "control channel connection failed: \(detail)"
-        case .discoveryTimeout:
-            return "control channel could not discover iPhone control listener"
-        case .handshakeTimeout:
-            return "control channel handshake timed out"
+        case .listenerFailed(let detail):
+            return "control channel listener failed: \(detail)"
         case .remoteError(let payload):
             return "control channel remote error code=\(payload.code) message=\(payload.message)"
         }
     }
 }
 
+// MARK: - ControlChannel
+
+/// Hosts the Mac side of the control link. The Mac advertises a Bonjour control
+/// service on the local link and listens for the iPhone to dial in. On each
+/// accepted connection it sends the WireGuard server endpoint, waits for the
+/// acknowledgement, then consumes the iPhone status stream. The iPhone owns the
+/// dial; the `set-server-endpoint` message still travels from Mac to iPhone.
 actor ControlChannel {
     private let serverEndpoint: RelayEndpoint
     private let connectionQueue = DispatchQueue(label: "io.goodkind.celltunnel.controlChannel")
-    private var browser: NWBrowser?
+    private var listener: NWListener?
     private var connection: NWConnection?
     private var statusContinuation: AsyncStream<RelayControlMessage.Status>.Continuation?
     private var didStart = false
@@ -75,14 +75,14 @@ actor ControlChannel {
         self.statusContinuation = continuationCapture
     }
 
-    func start() async throws {
+    // MARK: - Lifecycle
+
+    func start() throws {
         guard !didStart else {
             throw ControlChannelError.alreadyStarted
         }
         didStart = true
-
-        let endpoint = try await discoverEndpoint()
-        try await dialAndHandshake(to: endpoint)
+        try startListener()
     }
 
     func stop() {
@@ -90,85 +90,14 @@ actor ControlChannel {
         statusContinuation = nil
         connection?.cancel()
         connection = nil
-        browser?.cancel()
-        browser = nil
+        listener?.cancel()
+        listener = nil
         logger.notice("control channel stopped")
     }
 
-    private func discoverEndpoint() async throws -> NWEndpoint {
-        let parameters = NWParameters()
-        parameters.includePeerToPeer = true
-        let descriptor = NWBrowser.Descriptor.bonjour(
-            type: relayControlServiceType,
-            domain: nil
-        )
-        let nwBrowser = NWBrowser(for: descriptor, using: parameters)
-        self.browser = nwBrowser
+    // MARK: - Listener
 
-        let endpointHolder = BrowsedEndpointHolder()
-
-        return try await awaitDiscoveredEndpoint(
-            browser: nwBrowser,
-            endpointHolder: endpointHolder
-        )
-    }
-
-    private func awaitDiscoveredEndpoint(
-        browser nwBrowser: NWBrowser,
-        endpointHolder: BrowsedEndpointHolder
-    ) async throws -> NWEndpoint {
-        try await withCheckedThrowingContinuation { continuation in
-            nwBrowser.stateUpdateHandler = { state in
-                logger.notice(
-                    "control discovery browser state=\(String(describing: state), privacy: .public)"
-                )
-            }
-            nwBrowser.browseResultsChangedHandler = { results, _ in
-                for result in results {
-                    if case .service = result.endpoint {
-                        if endpointHolder.deliverIfNeeded(
-                            result.endpoint, continuation: continuation
-                        ) {
-                            return
-                        }
-                    }
-                }
-            }
-            nwBrowser.start(queue: connectionQueue)
-
-            scheduleDiscoveryTimeout(holder: endpointHolder, continuation: continuation)
-        }
-    }
-
-    private func scheduleDiscoveryTimeout(
-        holder: BrowsedEndpointHolder,
-        continuation: CheckedContinuation<NWEndpoint, Error>
-    ) {
-        connectionQueue.asyncAfter(
-            deadline: .now() + .seconds(Int(controlServiceDiscoveryTimeoutSeconds))
-        ) { [weak self] in
-            guard let self else {
-                return
-            }
-            if holder.deliverTimeout(continuation: continuation) {
-                Task { await self.cancelBrowser() }
-            }
-        }
-    }
-
-    private func cancelBrowser() {
-        logger.notice("control channel browser cancel requested")
-        browser?.cancel()
-        browser = nil
-    }
-
-    private func cancelConnection() {
-        logger.notice("control channel connection cancel requested")
-        connection?.cancel()
-        connection = nil
-    }
-
-    private func dialAndHandshake(to endpoint: NWEndpoint) async throws {
+    private func startListener() throws {
         let parameters = NWParameters(tls: nil, tcp: tcpOptions())
         parameters.allowLocalEndpointReuse = true
         parameters.includePeerToPeer = true
@@ -177,42 +106,71 @@ actor ControlChannel {
             at: 0
         )
 
-        logger.notice(
-            "control channel dialing endpoint=\(String(describing: endpoint), privacy: .public)"
-        )
-        let nwConnection = NWConnection(to: endpoint, using: parameters)
-        connection = nwConnection
-
-        let _: Void = try await withCheckedThrowingContinuation { continuation in
-            let resolver = ConnectionReadyResolver()
-            // Bounds the local TCP connect: a control endpoint that never becomes
-            // routable sits in .waiting forever, so fail the dial after the
-            // timeout instead of hanging the tunnel start. The handler and this
-            // timer both run on connectionQueue, so the cancel is race-free.
-            let timeoutItem = DispatchWorkItem { [weak self] in
-                let failure = ControlChannelError.connectionFailed(
-                    "control connect timed out after \(controlConnectTimeoutSeconds)s"
-                )
-                if resolver.resolveOnce(with: .failure(failure)) {
-                    logger.error(
-                        "control channel connect timed out seconds=\(controlConnectTimeoutSeconds, privacy: .public) recovery=fail-start"
-                    )
-                    Task { await self?.cancelConnection() }
-                }
+        let nwListener: NWListener
+        do {
+            if let port = NWEndpoint.Port(rawValue: relayControlListenerDefaultPort) {
+                nwListener = try NWListener(using: parameters, on: port)
+            } else {
+                nwListener = try NWListener(using: parameters)
             }
-            nwConnection.stateUpdateHandler = { state in
-                applyControlDialState(state, resolver: resolver)
-            }
-            resolver.bind(continuation: continuation)
-            nwConnection.start(queue: connectionQueue)
-            connectionQueue.asyncAfter(
-                deadline: .now() + .seconds(Int(controlConnectTimeoutSeconds)),
-                execute: timeoutItem
+        } catch {
+            logger.error(
+                """
+                control channel listener create failed \
+                details=\(String(describing: error), privacy: .public) \
+                recovery=throw-listener-failed
+                """
             )
+            throw ControlChannelError.listenerFailed(error.localizedDescription)
         }
 
-        try await sendSetServerEndpoint(on: nwConnection)
-        startReceiveLoop(on: nwConnection)
+        let serviceName = ProcessInfo.processInfo.hostName
+        nwListener.service = NWListener.Service(
+            name: serviceName,
+            type: relayControlServiceType
+        )
+        nwListener.stateUpdateHandler = { state in
+            applyListenerState(state)
+        }
+        nwListener.newConnectionHandler = { [weak self] connection in
+            Task { await self?.acceptConnection(connection) }
+        }
+        nwListener.start(queue: connectionQueue)
+        listener = nwListener
+        logger.notice(
+            """
+            control channel listener starting service=\(relayControlServiceType, privacy: .public) \
+            name=\(serviceName, privacy: .public) \
+            port=\(relayControlListenerDefaultPort, privacy: .public)
+            """
+        )
+    }
+
+    private func acceptConnection(_ newConnection: NWConnection) async {
+        logger.notice(
+            """
+            control channel accepting connection \
+            endpoint=\(String(describing: newConnection.endpoint), privacy: .public)
+            """
+        )
+        connection?.cancel()
+        connection = newConnection
+        newConnection.stateUpdateHandler = { state in
+            applyAcceptedConnectionState(state)
+        }
+        newConnection.start(queue: connectionQueue)
+        do {
+            try await sendSetServerEndpoint(on: newConnection)
+            startReceiveLoop(on: newConnection)
+        } catch {
+            logger.error(
+                """
+                control channel handshake failed \
+                error=\(error.localizedDescription, privacy: .public) \
+                recovery=await-next-connection
+                """
+            )
+        }
     }
 
     private func tcpOptions() -> NWProtocolTCP.Options {
@@ -225,9 +183,15 @@ actor ControlChannel {
         return options
     }
 
+    // MARK: - Handshake
+
     private func sendSetServerEndpoint(on connection: NWConnection) async throws {
         logger.notice(
-            "control channel sending set-server-endpoint host=\(self.serverEndpoint.host, privacy: .public) port=\(self.serverEndpoint.port, privacy: .public)"
+            """
+            control channel sending set-server-endpoint \
+            host=\(self.serverEndpoint.host, privacy: .public) \
+            port=\(self.serverEndpoint.port, privacy: .public)
+            """
         )
         let message = RelayControlMessage.setServerEndpoint(
             RelayControlMessage.SetServerEndpoint(endpoint: serverEndpoint)
@@ -261,7 +225,10 @@ actor ControlChannel {
             )
         }
         logger.notice(
-            "control channel sent kind=\(message.kindLabel, privacy: .public) bytes=\(payload.count, privacy: .public)"
+            """
+            control channel sent kind=\(message.kindLabel, privacy: .public) \
+            bytes=\(payload.count, privacy: .public)
+            """
         )
     }
 
@@ -273,7 +240,10 @@ actor ControlChannel {
         switch received {
         case .acknowledge(let payload) where payload.requestKind == requestKind:
             logger.notice(
-                "control channel acknowledge received requestKind=\(payload.requestKind, privacy: .public)"
+                """
+                control channel acknowledge received \
+                requestKind=\(payload.requestKind, privacy: .public)
+                """
             )
         case .error(let failure):
             throw ControlChannelError.remoteError(
@@ -284,7 +254,10 @@ actor ControlChannel {
             )
         case .status(let snapshot):
             logger.notice(
-                "control channel received status before ack hasCellularPath=\(snapshot.hasCellularPath, privacy: .public)"
+                """
+                control channel received status before ack \
+                hasCellularPath=\(snapshot.hasCellularPath, privacy: .public)
+                """
             )
             statusContinuation?.yield(snapshot)
             try await awaitAcknowledge(on: connection, requestKind: requestKind)
@@ -321,6 +294,8 @@ actor ControlChannel {
             }
         }
     }
+
+    // MARK: - Status receive loop
 
     private func startReceiveLoop(on connection: NWConnection) {
         connection.receiveMessage { [weak self] data, _, _, error in
@@ -366,7 +341,10 @@ actor ControlChannel {
             statusContinuation?.yield(snapshot)
         case .error(let failure):
             logger.error(
-                "control channel error from peer code=\(failure.code, privacy: .public) message=\(failure.message, privacy: .public)"
+                """
+                control channel error from peer code=\(failure.code, privacy: .public) \
+                message=\(failure.message, privacy: .public)
+                """
             )
         case .acknowledge(let payload):
             logger.debug(
@@ -378,96 +356,44 @@ actor ControlChannel {
     }
 }
 
-// MARK: - Dial state handling
+// MARK: - Listener and connection state handling
 
-// Resolves the control dial continuation from connection state changes. It runs
-// on the connection queue and logs a .waiting path error so an unroutable
-// endpoint is visible in the log. The connect timeout is left to fire on its
-// own: the resolver resolves exactly once, so a timeout after the connection
-// resolves is a no-op and never cancels a healthy connection.
-private func applyControlDialState(
-    _ state: NWConnection.State,
-    resolver: ConnectionReadyResolver
-) {
+/// Logs the control listener lifecycle. The listener binds the fixed control
+/// port and advertises the Bonjour service the iPhone dials.
+private func applyListenerState(_ state: NWListener.State) {
     switch state {
     case .ready:
-        if resolver.resolveOnce(with: .success(())) {
-            logger.notice("control channel connection ready")
-        }
-    case .waiting(let error):
-        logger.error(
-            "control channel connection waiting error=\(error.localizedDescription, privacy: .public)"
+        logger.notice(
+            "control channel listener ready port=\(relayControlListenerDefaultPort, privacy: .public)"
         )
     case .failed(let error):
-        if resolver.resolveOnce(
-            with: .failure(ControlChannelError.connectionFailed(error.localizedDescription))
-        ) {
-            logger.error(
-                "control channel failed error=\(error.localizedDescription, privacy: .public)"
-            )
-        }
-    case .cancelled:
-        _ = resolver.resolveOnce(
-            with: .failure(ControlChannelError.connectionFailed("connection cancelled"))
+        logger.error(
+            "control channel listener failed error=\(error.localizedDescription, privacy: .public)"
         )
+    case .cancelled:
+        logger.notice("control channel listener cancelled")
     default:
         break
     }
 }
 
-private final class BrowsedEndpointHolder: @unchecked Sendable {
-    private let lock = NSLock()
-    private var resolved = false
-
-    func deliverIfNeeded(
-        _ endpoint: NWEndpoint,
-        continuation: CheckedContinuation<NWEndpoint, Error>
-    ) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        if resolved {
-            return false
-        }
-        resolved = true
-        continuation.resume(returning: endpoint)
-        return true
-    }
-
-    func deliverTimeout(continuation: CheckedContinuation<NWEndpoint, Error>) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        if resolved {
-            return false
-        }
-        resolved = true
-        continuation.resume(throwing: ControlChannelError.discoveryTimeout)
-        return true
-    }
-}
-
-private final class ConnectionReadyResolver: @unchecked Sendable {
-    private let lock = NSLock()
-    private var continuation: CheckedContinuation<Void, Error>?
-
-    func bind(continuation: CheckedContinuation<Void, Error>) {
-        lock.lock()
-        defer { lock.unlock() }
-        self.continuation = continuation
-    }
-
-    func resolveOnce(with result: Result<Void, Error>) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard let captured = continuation else {
-            return false
-        }
-        continuation = nil
-        switch result {
-        case .success:
-            captured.resume()
-        case .failure(let error):
-            captured.resume(throwing: error)
-        }
-        return true
+/// Logs the accepted connection lifecycle so an iPhone dial that reaches the Mac
+/// is visible in the log.
+private func applyAcceptedConnectionState(_ state: NWConnection.State) {
+    switch state {
+    case .ready:
+        logger.notice("control channel connection ready")
+    case .waiting(let error):
+        logger.error(
+            "control channel connection waiting error=\(error.localizedDescription, privacy: .public)"
+        )
+    case .failed(let error):
+        logger.error(
+            "control channel connection failed error=\(error.localizedDescription, privacy: .public)"
+        )
+    case .cancelled:
+        logger.notice("control channel connection cancelled")
+    default:
+        break
     }
 }

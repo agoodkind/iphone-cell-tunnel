@@ -41,7 +41,7 @@ private struct RelayStatusState {
 // status path can read them from any thread.
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let forwarder = PhoneRelayForwarder()
-    private let controlListener = PhoneControlListener()
+    private let controlClient = PhoneControlClient()
     private let cellularObserver = CellularPathObserver()
     private let statusState = Mutex(RelayStatusState())
 
@@ -103,7 +103,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private func startRelayRuntime() {
         cellularObserver.start()
         configureForwarderCallbacks()
-        startControlListener()
+        startControlClient()
 
         let listenerPort = resolvedRelayListenerPort(
             defaults: UserDefaults(suiteName: cellTunnelAppGroupIdentifier) ?? .standard
@@ -142,21 +142,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         }
     }
 
-    private func startControlListener() {
-        let serviceName = resolvedRelayServiceName()
-        logger.notice(
-            "phone control listener starting serviceName=\(serviceName, privacy: .public)"
-        )
-        let controlListener = self.controlListener
+    private func startControlClient() {
+        logger.notice("phone control client starting")
+        let controlClient = self.controlClient
         let forwarder = self.forwarder
         let cellularObserver = self.cellularObserver
         // statusState is a non-copyable Mutex, so it cannot be hoisted into a
         // local; the status closure borrows it through a weak self instead.
         Task { @MainActor [weak self] in
-            controlListener.onSetServerEndpoint = { endpoint in
+            controlClient.onSetServerEndpoint = { endpoint in
                 forwarder.setServerEndpoint(endpoint)
             }
-            controlListener.statusProvider = {
+            controlClient.statusProvider = {
                 let lastError = self.flatMap { provider in
                     provider.statusState.withLock { $0.lastError }
                 }
@@ -168,7 +165,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                     counters: forwarder.metrics.snapshot()
                 )
             }
-            controlListener.start(preferredServiceName: serviceName)
+            controlClient.start()
         }
     }
 
@@ -185,9 +182,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     }
 
     private func teardownRelayRuntime() {
-        let controlListener = self.controlListener
+        let controlClient = self.controlClient
         Task { @MainActor in
-            controlListener.stop()
+            controlClient.stop()
         }
         forwarder.stop()
         cellularObserver.stop()

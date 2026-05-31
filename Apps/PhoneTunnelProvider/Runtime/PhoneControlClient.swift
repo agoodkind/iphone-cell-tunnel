@@ -1,165 +1,172 @@
+//
+//  PhoneControlClient.swift
+//  CellTunnelPhoneTunnel
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-30.
+//  Copyright © 2026
+//
+
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
 import Network
 
+// MARK: - Constants
+
 private let logger = CellTunnelLog.logger(category: .relay)
 private let statusPushIntervalSeconds: UInt64 = 5
 
+// MARK: - PhoneControlClient
+
+/// Runs the iPhone side of the control link by dialing the Mac. It browses for
+/// the Mac control Bonjour service over the local link, connects to it, receives
+/// the WireGuard server endpoint, applies it through `onSetServerEndpoint`,
+/// acknowledges, and pushes periodic status snapshots back to the Mac. The Mac
+/// hosts the listener; this dials out, which an iOS packet-tunnel extension is
+/// permitted to do.
 @MainActor
-final class PhoneControlListener {
+final class PhoneControlClient {
     typealias EndpointHandler = @MainActor (RelayEndpoint) -> Void
     typealias StatusProvider = @MainActor () -> RelayControlMessage.Status
 
-    private let queue = DispatchQueue(label: "io.goodkind.celltunnel.controlListener")
-    private var listener: NWListener?
-    private var currentConnection: NWConnection?
+    private let queue = DispatchQueue(label: "io.goodkind.celltunnel.controlClient")
+    private var browser: NWBrowser?
+    private var connection: NWConnection?
     private var statusTimer: DispatchSourceTimer?
 
     var onSetServerEndpoint: EndpointHandler?
     var statusProvider: StatusProvider?
-    private(set) var listenerPort: UInt16?
-    private(set) var advertisedServiceName: String?
     private(set) var lastError: String?
 
-    func start(preferredServiceName: String) {
+    // MARK: - Lifecycle
+
+    func start() {
         stop()
+        let parameters = NWParameters()
+        parameters.includePeerToPeer = true
+        let descriptor = NWBrowser.Descriptor.bonjour(
+            type: relayControlServiceType,
+            domain: nil
+        )
+        let nwBrowser = NWBrowser(for: descriptor, using: parameters)
+        nwBrowser.stateUpdateHandler = { [weak self] state in
+            Task { @MainActor [weak self] in
+                self?.handle(browserState: state)
+            }
+        }
+        nwBrowser.browseResultsChangedHandler = { [weak self] results, _ in
+            for result in results {
+                if case .service = result.endpoint {
+                    let endpoint = result.endpoint
+                    Task { @MainActor [weak self] in
+                        self?.connectIfNeeded(to: endpoint)
+                    }
+                    return
+                }
+            }
+        }
+        nwBrowser.start(queue: queue)
+        browser = nwBrowser
+        logger.notice(
+            "control client browsing service=\(relayControlServiceType, privacy: .public)"
+        )
+    }
+
+    func stop() {
+        statusTimer?.cancel()
+        statusTimer = nil
+        connection?.cancel()
+        connection = nil
+        browser?.cancel()
+        browser = nil
+        logger.notice("control client stopped")
+    }
+
+    // MARK: - Browse and dial
+
+    private func handle(browserState state: NWBrowser.State) {
+        switch state {
+        case .ready:
+            logger.notice("control client browser ready")
+        case .failed(let error):
+            lastError = error.localizedDescription
+            logger.error(
+                "control client browser failed error=\(error.localizedDescription, privacy: .public)"
+            )
+        default:
+            logger.debug("control client browser state changed")
+        }
+    }
+
+    private func connectIfNeeded(to endpoint: NWEndpoint) {
+        guard connection == nil else {
+            return
+        }
         let parameters = NWParameters(tls: nil, tcp: NWProtocolTCP.Options())
         parameters.allowLocalEndpointReuse = true
         parameters.includePeerToPeer = true
         let framerOptions = RelayControlFramerSupport.framerOptions()
         parameters.defaultProtocolStack.applicationProtocols.insert(framerOptions, at: 0)
 
-        let nwListener: NWListener
-        do {
-            if let bindPort = NWEndpoint.Port(rawValue: relayControlListenerDefaultPort) {
-                nwListener = try NWListener(using: parameters, on: bindPort)
-            } else {
-                nwListener = try NWListener(using: parameters)
-            }
-        } catch {
-            lastError = error.localizedDescription
-            logger.error(
-                "control listener create failed error=\(error.localizedDescription, privacy: .public)"
-            )
-            return
-        }
-
-        nwListener.service = NWListener.Service(
-            name: preferredServiceName,
-            type: relayControlServiceType
-        )
-        advertisedServiceName = preferredServiceName
-
-        nwListener.newConnectionHandler = { [weak self] connection in
-            Task { @MainActor [weak self] in
-                self?.accept(connection)
-            }
-        }
-        nwListener.stateUpdateHandler = { [weak self] state in
-            Task { @MainActor [weak self] in
-                self?.handle(listenerState: state)
-            }
-        }
-        nwListener.start(queue: queue)
-        listener = nwListener
-        logger.notice(
-            """
-            control listener starting service=\(relayControlServiceType, privacy: .public) \
-            name=\(preferredServiceName, privacy: .public) \
-            port=\(relayControlListenerDefaultPort, privacy: .public)
-            """
-        )
-        startStatusLoop()
-    }
-
-    func stop() {
-        statusTimer?.cancel()
-        statusTimer = nil
-        currentConnection?.cancel()
-        currentConnection = nil
-        listener?.cancel()
-        listener = nil
-        listenerPort = nil
-        advertisedServiceName = nil
-        logger.notice("control listener stopped")
-    }
-
-    private func handle(listenerState state: NWListener.State) {
-        switch state {
-        case .ready:
-            listenerPort = listener?.port?.rawValue
-            logger.notice(
-                "control listener ready port=\(self.listenerPort ?? 0, privacy: .public)"
-            )
-        case .failed(let error):
-            lastError = error.localizedDescription
-            logger.error(
-                "control listener failed error=\(error.localizedDescription, privacy: .public)"
-            )
-        case .cancelled:
-            listenerPort = nil
-            logger.notice("control listener cancelled")
-        default:
-            logger.debug("control listener state changed")
-        }
-    }
-
-    private func accept(_ connection: NWConnection) {
-        logger.notice(
-            """
-            control listener accepting connection \
-            endpoint=\(String(describing: connection.endpoint), privacy: .public)
-            """
-        )
-        if let existing = currentConnection {
-            logger.notice("control listener replacing previous control connection")
-            existing.cancel()
-        }
-        currentConnection = connection
-
-        connection.stateUpdateHandler = { [weak self, weak connection] state in
-            Task { @MainActor [weak self, weak connection] in
-                guard let connection else {
+        let nwConnection = NWConnection(to: endpoint, using: parameters)
+        connection = nwConnection
+        nwConnection.stateUpdateHandler = { [weak self, weak nwConnection] state in
+            Task { @MainActor [weak self, weak nwConnection] in
+                guard let nwConnection else {
                     return
                 }
-                self?.handle(connectionState: state, connection: connection)
+                self?.handle(connectionState: state, connection: nwConnection)
             }
         }
-        connection.start(queue: queue)
-        receive(on: connection)
+        nwConnection.start(queue: queue)
+        logger.notice(
+            "control client dialing endpoint=\(String(describing: endpoint), privacy: .public)"
+        )
     }
 
     private func handle(connectionState state: NWConnection.State, connection: NWConnection) {
         switch state {
-        case .failed(let error):
+        case .ready:
+            logger.notice("control client connection ready")
+            receive(on: connection)
+            startStatusLoop()
+        case .waiting(let error):
             logger.error(
-                "control connection failed error=\(error.localizedDescription, privacy: .public)"
+                "control client connection waiting error=\(error.localizedDescription, privacy: .public)"
             )
-            if currentConnection === connection {
-                currentConnection = nil
+        case .failed(let error):
+            lastError = error.localizedDescription
+            logger.error(
+                "control client connection failed error=\(error.localizedDescription, privacy: .public)"
+            )
+            if self.connection === connection {
+                self.connection = nil
             }
             connection.cancel()
         case .cancelled:
-            if currentConnection === connection {
-                currentConnection = nil
-                logger.notice("control connection cancelled")
+            if self.connection === connection {
+                self.connection = nil
+                logger.notice("control client connection cancelled")
             }
         default:
             break
         }
     }
 
+    // MARK: - Receive and decode
+
     private func receive(on connection: NWConnection) {
         connection.receiveMessage { [weak self, weak connection] data, _, isComplete, error in
             if let error {
                 logger.error(
-                    "control connection receive failed error=\(error.localizedDescription, privacy: .public)"
+                    "control client receive failed error=\(error.localizedDescription, privacy: .public)"
                 )
                 Task { @MainActor [weak self, weak connection] in
-                    guard let connection else { return }
-                    if self?.currentConnection === connection {
-                        self?.currentConnection = nil
+                    guard let connection else {
+                        return
+                    }
+                    if self?.connection === connection {
+                        self?.connection = nil
                     }
                     connection.cancel()
                 }
@@ -168,7 +175,9 @@ final class PhoneControlListener {
 
             if let data, !data.isEmpty {
                 Task { @MainActor [weak self, weak connection] in
-                    guard let connection else { return }
+                    guard let connection else {
+                        return
+                    }
                     self?.handlePayload(data, connection: connection)
                 }
             }
@@ -178,7 +187,9 @@ final class PhoneControlListener {
             }
 
             Task { @MainActor [weak self, weak connection] in
-                guard let connection else { return }
+                guard let connection else {
+                    return
+                }
                 self?.receive(on: connection)
             }
         }
@@ -232,10 +243,15 @@ final class PhoneControlListener {
             logger.debug("control received unexpected status from peer")
         case .error(let payload):
             logger.error(
-                "control received error from peer code=\(payload.code, privacy: .public) message=\(payload.message, privacy: .public)"
+                """
+                control received error from peer code=\(payload.code, privacy: .public) \
+                message=\(payload.message, privacy: .public)
+                """
             )
         }
     }
+
+    // MARK: - Send
 
     private func send(_ message: RelayControlMessage, on connection: NWConnection) {
         let payload: Data
@@ -243,7 +259,10 @@ final class PhoneControlListener {
             payload = try RelayControlMessageCodec.encode(message)
         } catch {
             logger.error(
-                "control encode failed kind=\(message.kindLabel, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                """
+                control encode failed kind=\(message.kindLabel, privacy: .public) \
+                error=\(error.localizedDescription, privacy: .public)
+                """
             )
             return
         }
@@ -257,9 +276,14 @@ final class PhoneControlListener {
             contentContext: context,
             isComplete: true,
             completion: .contentProcessed { error in
-                guard let error else { return }
+                guard let error else {
+                    return
+                }
                 logger.error(
-                    "control send failed kind=\(message.kindLabel, privacy: .public) error=\(error.localizedDescription, privacy: .public)"
+                    """
+                    control send failed kind=\(message.kindLabel, privacy: .public) \
+                    error=\(error.localizedDescription, privacy: .public)
+                    """
                 )
             }
         )
@@ -279,9 +303,11 @@ final class PhoneControlListener {
     }
 
     // A repeating dispatch timer fires the periodic status push instead of a
-    // sleep loop, satisfying the sleep_in_production rule. The timer fires on the
-    // listener queue, then hops to the MainActor to read state and send, since the
-    // connection and status provider are MainActor-isolated.
+    // sleep loop, satisfying the sleep_in_production rule. The handler is
+    // `@Sendable` so it stays nonisolated and runs on the client queue; without
+    // it the closure inherits MainActor isolation and dispatch firing it off the
+    // main thread traps. It hops to the MainActor through a Task for the
+    // connection and status-provider access.
     private func startStatusLoop() {
         statusTimer?.cancel()
         logger.notice(
@@ -292,15 +318,9 @@ final class PhoneControlListener {
             deadline: .now() + .seconds(Int(statusPushIntervalSeconds)),
             repeating: .seconds(Int(statusPushIntervalSeconds))
         )
-        // The handler is `@Sendable` so it stays nonisolated and runs on the
-        // listener queue. Without it the closure inherits the type's MainActor
-        // isolation, and dispatch firing it off the main thread traps with a
-        // "Block was expected to execute on queue [com.apple.main-thread]"
-        // assertion. It hops to the MainActor through a Task for the actual
-        // connection and status-provider access.
         timer.setEventHandler { @Sendable [weak self] in
             Task { @MainActor [weak self] in
-                guard let self, let connection = currentConnection else {
+                guard let self, let connection else {
                     return
                 }
                 sendStatusSnapshot(on: connection)
