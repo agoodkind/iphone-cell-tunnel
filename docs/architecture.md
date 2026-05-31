@@ -22,7 +22,7 @@ Terms:
 
 - "Packet-tunnel extension" = an `NEPacketTunnelProvider`, an app extension iOS keeps running in the background.
 - "Mac agent" = the user-land background process that hosts the link listeners and bridges the relay data plane between the Mac extension and the iPhone.
-- "Local link" = the Mac-to-iPhone interface, typically CDC-NCM Ethernet-over-USB with an IPv6 link-local address. The Network framework keeps the path transport-agnostic.
+- "Local link" = the Mac-to-iPhone interface, typically CDC-NCM Ethernet-over-USB with an IPv6 link-local address. The Network framework keeps the path transport-agnostic, and the iPhone auto-selects the fastest reachable path. See "Path selection".
 - "Control plane" = the one message that gives the iPhone the WireGuard server address.
 - "Data plane" = the per-packet relay of WireGuard UDP datagrams in both directions.
 
@@ -33,9 +33,18 @@ Each component handles only its own leg and knows nothing of the others.
 - Mac WireGuard: produces and consumes encrypted UDP datagrams. Knows nothing about the link.
 - Mac packet-tunnel extension: bridges WireGuard datagrams to and from the agent over loopback.
 - Mac agent: hosts the relay data listener, bridging datagrams between the Mac extension over loopback and the iPhone over the local link.
-- iPhone packet-tunnel extension: dials the agent, then bridges the link datagram channel to and from the cellular UDP socket to the WireGuard server.
+- iPhone packet-tunnel extension: dials the agent, then bridges the link datagram channel to and from the cellular UDP socket to the WireGuard server. It also chooses which path the local link uses and changes it on its own. See "Path selection".
 
 WireGuard is a transport tool, not a participant. Its handshake carries no project logic. The only WireGuard timing the project sets is `PersistentKeepalive = 25` from the config.
+
+## Path selection
+
+The iPhone chooses which physical path the local link uses and changes it on its own, so the link uses the fastest reachable path without manual steps.
+
+- A probe watches the network interfaces. On every interface change it scores the reachable links and reports the ranking. Wired USB and Wi-Fi LAN outscore the Apple peer-to-peer link (AWDL), which is slower because it duty-cycles its radio.
+- A manager reads each ranking and switches the link only when a better path is available. The switch is make-before-break: it dials the new path, and only after that path is ready does it move the data plane onto it and drop the old one, so traffic is never stopped to measure or to switch.
+- A dropped link and a replugged cable are ordinary interface changes, so the iPhone redials after a drop and returns to the faster path when one reappears, both without a restart. The control channel redials on the same drop signal.
+- The probe scores from path attributes alone and sends no test traffic. The agent advertises the relay service on every path, so the iPhone reaches it over wired USB, Wi-Fi LAN, or AWDL, and the iPhone decides which to use.
 
 ## Hard constraints
 

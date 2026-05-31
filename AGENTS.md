@@ -53,14 +53,14 @@ Components are named by target. The code is the source of truth for their intern
 | `celltunnelctl` | User-facing command-line client of the agent. |
 | `CellTunnelAgent` | macOS background agent. Owns the Mac VPN configuration, hosts the control link and the relay data listener the iPhone dials, sends the WireGuard server endpoint to the iPhone, and bridges relay datagrams between the Mac extension over loopback and the iPhone. |
 | `CellTunnelTunnelProvider` | macOS packet-tunnel extension hosted by the agent app. Runs WireGuard and dials the agent over loopback for the relay data plane. |
-| `CellTunnelPhoneTunnel` | iOS packet-tunnel extension hosted by the iPhone app. Owns the always-on relay data plane: it dials the Mac to receive the WireGuard server endpoint, forwards datagrams to and from the cellular radio, observes the cellular path, and answers status requests. |
+| `CellTunnelPhoneTunnel` | iOS packet-tunnel extension hosted by the iPhone app. Owns the always-on relay data plane: it dials the Mac to receive the WireGuard server endpoint, auto-selects the fastest local-link path and redials after a drop, forwards datagrams to and from the cellular radio, observes the cellular path, and answers status requests. |
 | `CellTunnelPhone` | iOS host app. Drives the extension with an on-demand rule, polls status, and shows a minimal first-party status screen. Holds no relay data plane itself. |
 | `CellTunnelCore` | Shared control wire protocol, framer, wire models, and shared keys. |
 | `CellTunnelLog` | Pinned logging subsystem and categories. |
 
 ## Transports
 
-The Network framework primitives in the provider make the Mac-to-iPhone path transport-agnostic. USB-C CDC-NCM, shared Wi-Fi LAN, and AWDL all work without code changes. The iPhone-to-server leg is cellular UDP, pinned to the cellular interface so it uses the regular cellular APN.
+The Network framework primitives in the provider make the Mac-to-iPhone path transport-agnostic. USB-C CDC-NCM, shared Wi-Fi LAN, and AWDL all work without code changes. The iPhone auto-selects the fastest reachable path on every interface change, preferring wired USB and Wi-Fi LAN and falling back to AWDL only when no faster path exists. The switch is make-before-break, so it changes paths and redials after a drop without stopping traffic. The iPhone-to-server leg is cellular UDP, pinned to the cellular interface so it uses the regular cellular APN.
 
 ## iPhone app behavior
 
