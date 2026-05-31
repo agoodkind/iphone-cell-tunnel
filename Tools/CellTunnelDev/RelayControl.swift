@@ -56,32 +56,15 @@ func runRelayDiscover(_ arguments: [String]) throws {
 
 // MARK: - relay-up
 
-/// Brings the relay tunnel up end to end in one agent session: starts discovery,
-/// waits for the relay device, selects it, starts the tunnel with the given
-/// WireGuard config, then polls status until the tunnel reports running or the
-/// connect timeout elapses. Replaces manually chaining start-discovery, select,
-/// and start across separate invocations, which races the agent idle timeout and
-/// the lazily started browser.
+/// Brings the relay tunnel up in one agent session: starts the tunnel with the
+/// given WireGuard config, then polls status until the tunnel reports running or
+/// the connect timeout elapses. The agent hosts the link and the extensions dial
+/// it, so no relay device discovery or selection is needed.
 func runRelayUp(_ arguments: [String]) throws {
     let options = try parseRelayUpOptions(arguments)
     relayControlLogger.notice("relay-up starting")
     printToolOutput("relay-up: config=\(options.configPath)")
     try runRelayCommand { client in
-        _ = try await client.startRelayDiscovery()
-        let discovered = try await waitForRelayServices(
-            client: client,
-            timeoutSeconds: options.discoverTimeoutSeconds,
-            preferredName: options.relayName)
-        guard
-            let device = selectRelayDevice(
-                from: discovered, preferredName: options.relayName)
-        else {
-            throw ToolError.failure(
-                "relay-up: no relay device discovered within \(Int(options.discoverTimeoutSeconds))s"
-            )
-        }
-        printToolOutput("relay-up: selecting \(device.serviceName) (\(device.id))")
-        _ = try await client.selectRelayService(serviceID: device.id)
         printToolOutput("relay-up: starting tunnel")
         let settings = TunnelStartSettings(wireGuardConfigPath: options.configPath)
         _ = try await client.startTunnel(settings: settings)
