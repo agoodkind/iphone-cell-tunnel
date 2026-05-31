@@ -97,13 +97,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     }
 
     // Brings up the relay data plane the provider owns: the cellular path
-    // observer, the forwarder callbacks wired into status state, and the control
-    // client that dials the Mac. When the control connection resolves the Mac
-    // host, the forwarder dials the agent relay listener at that host on the
-    // relay data port.
+    // observer, the forwarder callbacks wired into status state, the forwarder
+    // that browses for the agent relay service and dials it, and the control
+    // client that dials the agent for the WireGuard server endpoint.
     private func startRelayRuntime() {
         cellularObserver.start()
         configureForwarderCallbacks()
+        forwarder.start()
         startControlClient()
         statusState.withLock { $0.running = true }
         logger.notice("relay runtime started")
@@ -136,15 +136,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let cellularObserver = self.cellularObserver
         // statusState is a non-copyable Mutex, so it cannot be hoisted into a
         // local; the status closure borrows it through a weak self instead.
-        let relayDataPort = resolvedRelayListenerPort(
-            defaults: UserDefaults(suiteName: cellTunnelAppGroupIdentifier) ?? .standard
-        )
         Task { @MainActor [weak self] in
             controlClient.onSetServerEndpoint = { endpoint in
                 forwarder.setServerEndpoint(endpoint)
-            }
-            controlClient.onMacHost = { host in
-                forwarder.connectToMac(host: host, port: relayDataPort)
             }
             controlClient.statusProvider = {
                 let lastError = self.flatMap { provider in

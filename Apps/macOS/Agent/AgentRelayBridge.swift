@@ -14,18 +14,19 @@ import Network
 // MARK: - Constants
 
 private let logger = CellTunnelLog.logger(category: .daemon)
+private let relayDataServiceType = "_cellrelay._udp"
 
 // MARK: - AgentRelayBridge
 
 /// Hosts the relay data plane in the agent, a normal process that receives
-/// inbound from both peers over UDP. One listener binds the relay data port.
+/// inbound from both peers over UDP. One listener binds the relay data port and
+/// advertises the relay Bonjour service so the iPhone resolves the working path.
 /// Two parties dial it: the Mac tunnel extension over loopback, and the iPhone
-/// extension over the local link, which reaches the agent at the Mac host the
-/// iPhone learned from its control connection. The bridge classifies each
-/// accepted connection by remote host (loopback is the Mac, anything else is the
-/// iPhone) and forwards every datagram from one side to the other. Each datagram
-/// stays an independent UDP send with no added ordering or reliability;
-/// WireGuard owns end-to-end integrity.
+/// extension over the local link. The bridge classifies each accepted connection
+/// by remote host (loopback is the Mac, anything else is the iPhone) and forwards
+/// every datagram from one side to the other. Each datagram stays an independent
+/// UDP send with no added ordering or reliability; WireGuard owns end-to-end
+/// integrity.
 ///
 /// The `@unchecked Sendable` contract: every stored property is read and written
 /// only on `queue`. All Network objects start with `.start(queue: queue)` so
@@ -38,9 +39,9 @@ final class AgentRelayBridge: @unchecked Sendable {
 
     // MARK: - Lifecycle
 
-    func start() {
+    func start(serviceName: String) {
         queue.async { [weak self] in
-            self?.startOnQueue()
+            self?.startOnQueue(serviceName: serviceName)
         }
     }
 
@@ -50,7 +51,7 @@ final class AgentRelayBridge: @unchecked Sendable {
         }
     }
 
-    private func startOnQueue() {
+    private func startOnQueue(serviceName: String) {
         let port = resolvedRelayListenerPort()
         let parameters = NWParameters.udp
         parameters.allowLocalEndpointReuse = true
@@ -69,6 +70,7 @@ final class AgentRelayBridge: @unchecked Sendable {
             )
             return
         }
+        nwListener.service = NWListener.Service(name: serviceName, type: relayDataServiceType)
         nwListener.stateUpdateHandler = { state in
             applyRelayListenerState(state)
         }
@@ -78,7 +80,10 @@ final class AgentRelayBridge: @unchecked Sendable {
         nwListener.start(queue: queue)
         listener = nwListener
         logger.notice(
-            "agent relay bridge starting port=\(port.rawValue ?? 0, privacy: .public)"
+            """
+            agent relay bridge starting service=\(relayDataServiceType, privacy: .public) \
+            name=\(serviceName, privacy: .public) port=\(port.rawValue ?? 0, privacy: .public)
+            """
         )
     }
 

@@ -5,6 +5,7 @@ import Network
 import Synchronization
 
 private let logger = CellTunnelLog.logger(category: .relay)
+private let relayServiceType = "_cellrelay._udp"
 
 /// Owns the entire iPhone relay data plane on one serial queue: the Mac-facing
 /// NWConnection dialed to the agent, the cellular NWConnection to the WireGuard
@@ -25,6 +26,7 @@ final class PhoneRelayForwarder: @unchecked Sendable {
     let metrics = RelayMetrics()
 
     let queue = DispatchQueue(label: "CellTunnelPhone.RelayPlane")
+    var macBrowser: NWBrowser?
     var macConnection: NWConnection?
     var cellularConnection: NWConnection?
     var endpointFamily = RelayAddressFamily.ipv4
@@ -45,16 +47,10 @@ final class PhoneRelayForwarder: @unchecked Sendable {
 
     // MARK: - Public API (MainActor callers funnel onto the relay queue)
 
-    func connectToMac(host: NWEndpoint.Host, port: NWEndpoint.Port) {
-        logger.notice(
-            """
-            phone relay forwarder mac dial requested \
-            host=\(String(describing: host), privacy: .public) \
-            port=\(port.rawValue ?? 0, privacy: .public)
-            """
-        )
+    func start() {
+        logger.notice("phone relay forwarder browse requested")
         queue.async { [weak self] in
-            self?.connectToMacOnQueue(host: host, port: port)
+            self?.startBrowseOnQueue()
         }
     }
 
@@ -77,14 +73,49 @@ final class PhoneRelayForwarder: @unchecked Sendable {
         }
     }
 
-    // MARK: - Mac-facing connection (queue-only)
+    // MARK: - Mac-facing browse and connection (queue-only)
 
-    private func connectToMacOnQueue(host: NWEndpoint.Host, port: NWEndpoint.Port) {
-        macConnection?.cancel()
+    private func startBrowseOnQueue() {
+        macBrowser?.cancel()
+        let parameters = NWParameters()
+        parameters.includePeerToPeer = true
+        let descriptor = NWBrowser.Descriptor.bonjour(type: relayServiceType, domain: nil)
+        let browser = NWBrowser(for: descriptor, using: parameters)
+        browser.stateUpdateHandler = { state in
+            switch state {
+            case .ready:
+                logger.notice("phone relay browser ready")
+            case .failed(let error):
+                logger.error(
+                    "phone relay browser failed error=\(error.localizedDescription, privacy: .public)"
+                )
+            default:
+                break
+            }
+        }
+        browser.browseResultsChangedHandler = { [weak self] results, _ in
+            for result in results {
+                if case .service = result.endpoint {
+                    self?.connectToMacOnQueue(endpoint: result.endpoint)
+                    return
+                }
+            }
+        }
+        browser.start(queue: queue)
+        macBrowser = browser
+        logger.notice(
+            "phone relay forwarder browsing service=\(relayServiceType, privacy: .public)"
+        )
+    }
+
+    private func connectToMacOnQueue(endpoint: NWEndpoint) {
+        guard macConnection == nil else {
+            return
+        }
         let parameters = NWParameters.udp
         parameters.allowLocalEndpointReuse = true
         parameters.includePeerToPeer = true
-        let connection = NWConnection(host: host, port: port, using: parameters)
+        let connection = NWConnection(to: endpoint, using: parameters)
         macConnection = connection
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             guard let connection else {

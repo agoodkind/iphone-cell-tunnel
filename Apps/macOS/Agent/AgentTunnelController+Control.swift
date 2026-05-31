@@ -34,7 +34,7 @@ extension AgentTunnelController {
         let listener = AgentControlListener(serverEndpoint: endpoint)
         controlListener = listener
         try await listener.start()
-        relayBridge.start()
+        relayBridge.start(serviceName: ProcessInfo.processInfo.hostName)
         logger.notice(
             """
             agent control listener started host=\(endpoint.host, privacy: .public) \

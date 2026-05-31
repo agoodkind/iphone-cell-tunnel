@@ -264,6 +264,8 @@ extension PhoneRelayForwarder {
     }
 
     func stopOnQueue() {
+        macBrowser?.cancel()
+        macBrowser = nil
         macConnection?.cancel()
         macConnection = nil
         cellularConnection?.cancel()
