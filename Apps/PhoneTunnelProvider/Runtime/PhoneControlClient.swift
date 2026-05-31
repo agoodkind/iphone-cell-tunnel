@@ -29,10 +29,12 @@ final class PhoneControlClient {
     typealias EndpointHandler = @MainActor (RelayEndpoint) -> Void
     typealias StatusProvider = @MainActor () -> RelayControlMessage.Status
 
-    private let queue = DispatchQueue(label: "io.goodkind.celltunnel.controlClient")
+    let queue = DispatchQueue(label: "io.goodkind.celltunnel.controlClient")
     private var browser: NWBrowser?
     private var connection: NWConnection?
     private var statusTimer: DispatchSourceTimer?
+    var redialTimer: DispatchSourceTimer?
+    var isActive = false
 
     var onSetServerEndpoint: EndpointHandler?
     var statusProvider: StatusProvider?
@@ -42,6 +44,7 @@ final class PhoneControlClient {
 
     func start() {
         stop()
+        isActive = true
         let parameters = NWParameters()
         parameters.includePeerToPeer = true
         let descriptor = NWBrowser.Descriptor.bonjour(
@@ -73,6 +76,9 @@ final class PhoneControlClient {
     }
 
     func stop() {
+        isActive = false
+        redialTimer?.cancel()
+        redialTimer = nil
         statusTimer?.cancel()
         statusTimer = nil
         connection?.cancel()
@@ -93,6 +99,7 @@ final class PhoneControlClient {
             logger.error(
                 "control client browser failed error=\(error.localizedDescription, privacy: .public)"
             )
+            scheduleReconnect()
         default:
             logger.debug("control client browser state changed")
         }
@@ -143,11 +150,13 @@ final class PhoneControlClient {
                 self.connection = nil
             }
             connection.cancel()
+            scheduleReconnect()
         case .cancelled:
             if self.connection === connection {
                 self.connection = nil
                 logger.notice("control client connection cancelled")
             }
+            scheduleReconnect()
         default:
             break
         }

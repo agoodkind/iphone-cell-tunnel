@@ -43,12 +43,15 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let forwarder = PhoneRelayForwarder()
     private let controlClient = PhoneControlClient()
     private let cellularObserver = CellularPathObserver()
+    private let probe = RelayPathProbe()
+    private let manager: RelayTransportManager
     private let statusState = Mutex(RelayStatusState())
 
     // Held so the stop can complete after teardown finishes; invoked once.
     private var stopCompletion: (() -> Void)?
 
     override init() {
+        manager = RelayTransportManager(link: forwarder)
         super.init()
         logger.notice("PhoneTunnelProvider initialized")
     }
@@ -103,10 +106,34 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private func startRelayRuntime() {
         cellularObserver.start()
         configureForwarderCallbacks()
+        configureTransportSelection()
         forwarder.start()
         startControlClient()
         statusState.withLock { $0.running = true }
         logger.notice("relay runtime started")
+    }
+
+    // Wires the probe to the manager and the manager to the forwarder, then
+    // starts the probe. The probe emits a scored evaluation on every interface
+    // change, the manager decides whether to switch, and the forwarder performs
+    // the make-before-break dial and swap. Starting the probe last means the
+    // first evaluation arrives with every handler already in place.
+    private func configureTransportSelection() {
+        let manager = self.manager
+        forwarder.onCandidateReady = { strategy in
+            manager.candidateDidBecomeReady(strategy: strategy)
+        }
+        forwarder.onCandidateFailed = { strategy in
+            manager.candidateDidFail(strategy: strategy)
+        }
+        forwarder.onActiveDropped = {
+            manager.activeLinkDidDrop()
+        }
+        probe.onEvaluation = { evaluation in
+            manager.handle(evaluation: evaluation)
+        }
+        probe.start()
+        logger.notice("relay transport selection configured")
     }
 
     private func configureForwarderCallbacks() {
@@ -173,6 +200,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         Task { @MainActor in
             controlClient.stop()
         }
+        probe.stop()
+        manager.stop()
         forwarder.stop()
         cellularObserver.stop()
         statusState.withLock { state in

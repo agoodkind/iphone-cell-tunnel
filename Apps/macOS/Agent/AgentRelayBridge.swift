@@ -60,7 +60,10 @@ final class AgentRelayBridge: @unchecked Sendable {
         let port = resolvedRelayListenerPort()
         let parameters = NWParameters.udp
         parameters.allowLocalEndpointReuse = true
-        parameters.includePeerToPeer = RelayDataPathPolicy.includesPeerToPeer
+        // Advertise on every path, wired and peer-to-peer, so the relay service is
+        // reachable over the USB link, Wi-Fi LAN, and AWDL. The iPhone transport
+        // manager, not the agent, decides which path the data plane dials.
+        parameters.includePeerToPeer = true
 
         let nwListener: NWListener
         do {
