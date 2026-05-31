@@ -41,12 +41,29 @@ final class RelayTransport: @unchecked Sendable {
         parameters.includePeerToPeer = true
         let nwConnection = NWConnection(to: endpoint, using: parameters)
         nwConnection.stateUpdateHandler = { state in
-            logger.notice(
-                """
-                relay transport state=\(String(describing: state), privacy: .public) \
-                endpoint=\(String(describing: endpoint), privacy: .public)
-                """
-            )
+            switch state {
+            case .waiting(let error):
+                logger.error(
+                    """
+                    relay transport waiting error=\(error.localizedDescription, privacy: .public) \
+                    endpoint=\(String(describing: endpoint), privacy: .public)
+                    """
+                )
+            case .failed(let error):
+                logger.error(
+                    """
+                    relay transport failed error=\(error.localizedDescription, privacy: .public) \
+                    endpoint=\(String(describing: endpoint), privacy: .public)
+                    """
+                )
+            default:
+                logger.notice(
+                    """
+                    relay transport state=\(String(describing: state), privacy: .public) \
+                    endpoint=\(String(describing: endpoint), privacy: .public)
+                    """
+                )
+            }
         }
         nwConnection.start(queue: queue)
         connection = nwConnection

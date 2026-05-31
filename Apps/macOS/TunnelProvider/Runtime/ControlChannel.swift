@@ -14,11 +14,12 @@ import Network
 // MARK: - Constants
 
 private let logger = CellTunnelLog.logger(category: .daemon)
-// Bounded wait for the control Bonjour service to appear during discovery only.
-// The control connection itself is NOT bounded by an invented timer: it resolves
-// on the connection's real ready or failed state, and WireGuard owns its own
-// handshake timing per the config, so the provider never cuts a handshake short.
+// Bounded wait for the control Bonjour service to appear during discovery.
 private let controlServiceDiscoveryTimeoutSeconds: UInt64 = 10
+// Bounds the local TCP connect to the iPhone control listener. The WireGuard
+// server handshake keeps its own retry timing per the config and is not bounded
+// here; this only fails a control connect that never reaches the iPhone.
+private let controlConnectTimeoutSeconds: UInt64 = 10
 
 private let tcpKeepaliveIdleSeconds = 10
 private let tcpKeepaliveIntervalSeconds = 5
@@ -161,6 +162,12 @@ actor ControlChannel {
         browser = nil
     }
 
+    private func cancelConnection() {
+        logger.notice("control channel connection cancel requested")
+        connection?.cancel()
+        connection = nil
+    }
+
     private func dialAndHandshake(to endpoint: NWEndpoint) async throws {
         let parameters = NWParameters(tls: nil, tcp: tcpOptions())
         parameters.allowLocalEndpointReuse = true
@@ -170,43 +177,38 @@ actor ControlChannel {
             at: 0
         )
 
+        logger.notice(
+            "control channel dialing endpoint=\(String(describing: endpoint), privacy: .public)"
+        )
         let nwConnection = NWConnection(to: endpoint, using: parameters)
         connection = nwConnection
 
         let _: Void = try await withCheckedThrowingContinuation { continuation in
             let resolver = ConnectionReadyResolver()
-            nwConnection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    if resolver.resolveOnce(with: .success(())) {
-                        logger.notice("control channel connection ready")
-                    }
-                case .failed(let error):
-                    if resolver.resolveOnce(
-                        with: .failure(
-                            ControlChannelError.connectionFailed(error.localizedDescription)
-                        )
-                    ) {
-                        logger.error(
-                            "control channel failed error=\(error.localizedDescription, privacy: .public)"
-                        )
-                    }
-                case .cancelled:
-                    _ = resolver.resolveOnce(
-                        with: .failure(
-                            ControlChannelError.connectionFailed("connection cancelled")
-                        )
+            // Bounds the local TCP connect: a control endpoint that never becomes
+            // routable sits in .waiting forever, so fail the dial after the
+            // timeout instead of hanging the tunnel start. The handler and this
+            // timer both run on connectionQueue, so the cancel is race-free.
+            let timeoutItem = DispatchWorkItem { [weak self] in
+                let failure = ControlChannelError.connectionFailed(
+                    "control connect timed out after \(controlConnectTimeoutSeconds)s"
+                )
+                if resolver.resolveOnce(with: .failure(failure)) {
+                    logger.error(
+                        "control channel connect timed out seconds=\(controlConnectTimeoutSeconds, privacy: .public) recovery=fail-start"
                     )
-                default:
-                    break
+                    Task { await self?.cancelConnection() }
                 }
+            }
+            nwConnection.stateUpdateHandler = { state in
+                applyControlDialState(state, resolver: resolver)
             }
             resolver.bind(continuation: continuation)
             nwConnection.start(queue: connectionQueue)
-            // No invented handshake timer: the control connection resolves on its
-            // real .ready or .failed state. WireGuard owns its own handshake retry
-            // timing with the server per the config, so the provider must not fail
-            // the tunnel on a timeout WireGuard never asked for.
+            connectionQueue.asyncAfter(
+                deadline: .now() + .seconds(Int(controlConnectTimeoutSeconds)),
+                execute: timeoutItem
+            )
         }
 
         try await sendSetServerEndpoint(on: nwConnection)
@@ -373,6 +375,43 @@ actor ControlChannel {
         case .setServerEndpoint:
             logger.debug("control channel received unexpected set-server-endpoint from peer")
         }
+    }
+}
+
+// MARK: - Dial state handling
+
+// Resolves the control dial continuation from connection state changes. It runs
+// on the connection queue and logs a .waiting path error so an unroutable
+// endpoint is visible in the log. The connect timeout is left to fire on its
+// own: the resolver resolves exactly once, so a timeout after the connection
+// resolves is a no-op and never cancels a healthy connection.
+private func applyControlDialState(
+    _ state: NWConnection.State,
+    resolver: ConnectionReadyResolver
+) {
+    switch state {
+    case .ready:
+        if resolver.resolveOnce(with: .success(())) {
+            logger.notice("control channel connection ready")
+        }
+    case .waiting(let error):
+        logger.error(
+            "control channel connection waiting error=\(error.localizedDescription, privacy: .public)"
+        )
+    case .failed(let error):
+        if resolver.resolveOnce(
+            with: .failure(ControlChannelError.connectionFailed(error.localizedDescription))
+        ) {
+            logger.error(
+                "control channel failed error=\(error.localizedDescription, privacy: .public)"
+            )
+        }
+    case .cancelled:
+        _ = resolver.resolveOnce(
+            with: .failure(ControlChannelError.connectionFailed("connection cancelled"))
+        )
+    default:
+        break
     }
 }
 
