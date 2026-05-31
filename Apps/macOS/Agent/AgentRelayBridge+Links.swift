@@ -14,21 +14,19 @@ import Network
 // MARK: - Constants
 
 private let logger = CellTunnelLog.logger(category: .daemon)
-private let nanosecondsPerMillisecond = 1_000_000
 
-// MARK: - Phone link set, heartbeat, carrying selection
+// MARK: - Phone link set and carrying selection
 
-/// The multi-link half of the relay bridge: the set of phone links, the per-link
-/// keepalive that keeps each link's freshness current, and the policy that
-/// selects which link the upload path carries on. A link is removed only when its
-/// connection errors. Every method runs only on `AgentRelayBridge.queue`.
+/// The multi-link half of the relay bridge: the set of phone links and the
+/// chooser that selects which one the upload path carries on. A link is admitted
+/// on its first received datagram and removed only when its connection errors.
+/// Every method runs only on `AgentRelayBridge.queue`.
 extension AgentRelayBridge {
     // MARK: - Membership
 
-    /// Adds or replaces the phone link for the interface a ready connection
-    /// arrived on. A redial on the same interface replaces the old connection.
-    /// The first live link installs routes; the egress is recomputed every time
-    /// the set changes.
+    /// Adds or replaces the phone link for the interface a connection arrived on.
+    /// A redial on the same interface replaces the old connection. The first link
+    /// installs routes; the carrying link is recomputed every time the set changes.
     func addPhoneLink(for connection: NWConnection) {
         let resolved = phoneInterface(for: connection)
         let wasEmpty = phoneLinks.isEmpty
@@ -38,8 +36,7 @@ extension AgentRelayBridge {
         phoneLinks[resolved.name] = AgentPhoneLink(
             interfaceName: resolved.name,
             linkClass: resolved.linkClass,
-            connection: connection,
-            lastHeardMilliseconds: nowMilliseconds()
+            connection: connection
         )
         logger.notice(
             """
@@ -73,13 +70,11 @@ extension AgentRelayBridge {
         }
     }
 
-    /// Records inbound activity on a phone connection. The first datagram admits
-    /// the link, reading the interface from the now-populated path; every later
-    /// datagram refreshes its last-heard time, so a link carrying only heartbeats
-    /// is not declared dead.
+    /// Admits a phone link on the first datagram seen on its connection (the
+    /// iPhone's adoption prime). Later datagrams find the link already present and
+    /// do nothing here.
     func notePhoneActivity(on connection: NWConnection) {
-        if let name = interfaceName(of: connection) {
-            phoneLinks[name]?.lastHeardMilliseconds = nowMilliseconds()
+        if interfaceName(of: connection) != nil {
             return
         }
         addPhoneLink(for: connection)
@@ -92,92 +87,31 @@ extension AgentRelayBridge {
         return nil
     }
 
-    // MARK: - Maintenance: heartbeat and carrying refresh
+    // MARK: - Carrying selection
 
-    /// Starts the single repeating timer that, each tick, sends an empty keepalive
-    /// on every phone link and recomputes the carrying link from current
-    /// freshness. The tick never closes a link; a link closes only when its
-    /// connection errors.
-    func startMaintenanceTimer() {
-        maintenanceTimer?.cancel()
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        let interval = RelayTransportPolicy.heartbeatIntervalMilliseconds
-        timer.schedule(
-            deadline: .now() + .milliseconds(interval),
-            repeating: .milliseconds(interval)
-        )
-        timer.setEventHandler { @Sendable [weak self] in
-            self?.maintenanceTick()
-        }
-        timer.resume()
-        maintenanceTimer = timer
-        logger.notice(
-            "agent relay bridge maintenance armed intervalMs=\(interval, privacy: .public)"
-        )
-    }
-
-    private func maintenanceTick() {
-        sendHeartbeats()
-        recomputeEgress()
-    }
-
-    private func sendHeartbeats() {
-        guard !phoneLinks.isEmpty else {
-            return
-        }
-        if !didLogHeartbeat {
-            didLogHeartbeat = true
-            logger.notice(
-                "agent relay bridge heartbeat send path active links=\(self.phoneLinks.count, privacy: .public)"
-            )
-        }
-        for link in phoneLinks.values {
-            link.connection.send(
-                content: Data(),
-                completion: .contentProcessed { _ in
-                    // Best-effort keepalive. A genuinely gone path surfaces as a
-                    // connection error, which closes the link; this send does not.
-                }
-            )
-        }
-    }
-
-    // MARK: - Egress selection
-
-    /// Recomputes the cached carrying pointer from the policy off the packet path.
-    /// The upload path reads one pointer per datagram; it is recomputed here, on
-    /// each tick and on a membership change, from each link's freshness. Both ends
-    /// run the same policy over the same preference, so the agent carries upload on
-    /// the link the iPhone carries download on. The carrying link is empty only
-    /// when no link is open.
+    /// Recomputes the cached carrying pointer from the chooser off the packet path.
+    /// The upload path reads one pointer per datagram; it is recomputed here, on a
+    /// link being admitted or removed. The agent has no override yet, so it uses
+    /// the score order, the same order the iPhone uses, so both ends carry on the
+    /// same link.
     func recomputeEgress() {
-        let now = nowMilliseconds()
-        let snapshots = phoneLinks.values.map { link in
-            RelayLinkSnapshot(
-                interfaceName: link.interfaceName,
-                linkClass: link.linkClass,
-                silenceMilliseconds: now - link.lastHeardMilliseconds
-            )
+        let openLinks = phoneLinks.values.map { link in
+            RelayLinkSnapshot(interfaceName: link.interfaceName, linkClass: link.linkClass)
         }
-        let plan = RelayLinkPolicy.plan(for: Array(snapshots))
-        guard let egressName = plan.egressInterfaceName,
-            let link = phoneLinks[egressName]
-        else {
-            egressConnection = nil
-            return
-        }
-        if egressConnection !== link.connection {
+        let chosen = RelayLinkPolicy.chooseCarrying(preferred: nil, openLinks: Array(openLinks))
+        if chosen != egressInterfaceName {
             logger.notice(
-                "agent relay bridge carrying link interface=\(egressName, privacy: .public)"
+                "agent relay bridge carrying link interface=\(chosen ?? "none", privacy: .public)"
             )
         }
-        egressConnection = link.connection
+        egressInterfaceName = chosen
+        egressConnection = chosen.flatMap { phoneLinks[$0]?.connection }
     }
 
     // MARK: - Interface derivation
 
     /// Resolves the Mac-facing interface and link class a connection runs over.
-    /// The ready connection's path names the interface and its type; a link-local
+    /// The connection's path names the interface and its type; a link-local
     /// endpoint zone is the fallback when the path has no usable interface.
     private func phoneInterface(
         for connection: NWConnection
@@ -229,11 +163,5 @@ extension AgentRelayBridge {
             return nil
         }
         return String(description[description.index(after: percent)...])
-    }
-
-    // MARK: - Time
-
-    func nowMilliseconds() -> Int {
-        Int(DispatchTime.now().uptimeNanoseconds / UInt64(nanosecondsPerMillisecond))
     }
 }

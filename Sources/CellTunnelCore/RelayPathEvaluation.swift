@@ -149,144 +149,49 @@ public struct RelayPathEvaluation: Sendable, Equatable {
     }
 }
 
-// MARK: - RelayTransportPolicy
-
-/// The declared inputs the carrying-link algorithm reads. They are knobs, not
-/// thresholds that close links: the policy in force, the cadence of the keepalive
-/// the relay sends on every warm link, and the flap margin that keeps two links a
-/// hair apart from trading places. None of them ever closes a link; a link closes
-/// only when its connection errors.
-public enum RelayTransportPolicy {
-    /// The policy the relay runs. Changing behavior is this one value or a new
-    /// case in `RelayLinkPolicyKind`.
-    public static let activeLinkPolicy = RelayLinkPolicyKind.activeBackup
-
-    /// How often each side sends an empty keepalive on every warm link. The relay
-    /// forwards only non-empty datagrams, so a keepalive never reaches WireGuard;
-    /// it exists only to refresh the receiving side's freshness.
-    public static let heartbeatIntervalMilliseconds = 250
-
-    /// The floor on the relative freshness band. Two links whose last packet
-    /// arrived within this of each other are treated as equally fresh, so links a
-    /// cadence apart do not trade the carrying role. The band grows above this
-    /// floor with the freshest link's own silence, so the comparison stays
-    /// relative when every link is slow. This never closes a link.
-    public static let flapMarginFloorMilliseconds = 1_000
-}
-
 // MARK: - RelayLinkSnapshot
 
-/// One open link as the policy sees it: which interface it runs over, its scored
-/// preference, and its freshness, the time since a packet last arrived on it. The
-/// relay builds one per open link off the packet path and hands the set to the
-/// policy whenever the set or its freshness changes. It carries no Network object
-/// so the policy stays pure and testable.
+/// One open link as the carrying chooser sees it: the interface it runs over and
+/// its scored preference. The relay builds one per open link off the packet path.
+/// It carries no Network object so the chooser stays pure and testable.
 public struct RelayLinkSnapshot: Sendable, Equatable {
     public let interfaceName: String
     public let linkClass: RelayLinkClass
     public let score: Int
-    public let silenceMilliseconds: Int
 
-    public init(
-        interfaceName: String, linkClass: RelayLinkClass, silenceMilliseconds: Int
-    ) {
+    public init(interfaceName: String, linkClass: RelayLinkClass) {
         self.interfaceName = interfaceName
         self.linkClass = linkClass
         self.score = RelayLinkScorer.score(
             linkClass: linkClass, isExpensive: false, isConstrained: false
         )
-        self.silenceMilliseconds = silenceMilliseconds
     }
-}
-
-// MARK: - RelayLinkPlan
-
-/// What the policy decided. `keepWarm` lists the interfaces to dial and hold open,
-/// best first. `egressOrder` ranks the same links for carrying traffic, the links
-/// keeping up first in declared preference order, then any lagging links. The hot
-/// path carries on `egressInterfaceName`, recomputed off the packet path. The
-/// order is never empty while any link is open, so the carrying link never
-/// vanishes during a blackout.
-public struct RelayLinkPlan: Sendable, Equatable {
-    public let keepWarm: [String]
-    public let egressOrder: [String]
-
-    public init(keepWarm: [String], egressOrder: [String]) {
-        self.keepWarm = keepWarm
-        self.egressOrder = egressOrder
-    }
-
-    /// The interface the hot path carries traffic on, or nil when no link is open.
-    public var egressInterfaceName: String? {
-        egressOrder.first
-    }
-}
-
-// MARK: - RelayLinkPolicyKind
-
-/// The policies the relay can run. Each is a declared input to the same
-/// algorithm, swapped through `RelayTransportPolicy.activeLinkPolicy` with no
-/// change to discovery, keepalives, or the packet path. An outside controller and
-/// weighted load-balance are tracked under `OSS-73`.
-public enum RelayLinkPolicyKind: String, Sendable, CaseIterable {
-    /// Keep every reachable link open; carry on the preferred link keeping up.
-    case activeBackup
-    /// Keep only the top-preference link open; carry on it.
-    case batterySaver
 }
 
 // MARK: - RelayLinkPolicy
 
-/// The carrying-link algorithm and the keep-open decision, the one place link
-/// behavior is declared. It reads the declared preference (`RelayLinkScorer`), the
-/// flap margin, and each link's freshness, and returns which links to keep open
-/// and the order to carry traffic on. Nothing here is a fixed threshold or a
-/// frozen order: reorder the preference by editing the scorer, or change behavior
-/// by selecting another `RelayLinkPolicyKind`.
+/// Chooses which open link carries traffic. This is the one seam a UI or a future
+/// selection algorithm drives: pass an override to force a link, or pass nil to
+/// take the highest-scoring open link. The scores (`RelayLinkScorer`) are the only
+/// place the preference order lives, so reordering is one edit there. Pure: the
+/// same inputs always produce the same choice, recomputed off the packet path only
+/// when a link opens or closes.
 public enum RelayLinkPolicy {
-    /// Runs the policy in force from `RelayTransportPolicy.activeLinkPolicy`.
-    public static func plan(for links: [RelayLinkSnapshot]) -> RelayLinkPlan {
-        plan(for: links, kind: RelayTransportPolicy.activeLinkPolicy)
-    }
-
-    /// Runs a named policy. Pure: the same links always produce the same plan.
-    public static func plan(
-        for links: [RelayLinkSnapshot], kind: RelayLinkPolicyKind
-    ) -> RelayLinkPlan {
-        let byPreference = links.sorted { lhs, rhs in
+    /// Returns the interface to carry on. If `preferred` names an open link, it
+    /// wins. Otherwise the highest-scoring open link wins, ties broken by interface
+    /// name so both ends choose the same one. Returns nil when no link is open.
+    public static func chooseCarrying(
+        preferred: String?, openLinks: [RelayLinkSnapshot]
+    ) -> String? {
+        if let preferred, openLinks.contains(where: { $0.interfaceName == preferred }) {
+            return preferred
+        }
+        let ranked = openLinks.sorted { lhs, rhs in
             if lhs.score != rhs.score {
                 return lhs.score > rhs.score
             }
             return lhs.interfaceName < rhs.interfaceName
         }
-        let keepWarm: [String]
-        switch kind {
-        case .activeBackup:
-            keepWarm = byPreference.map(\.interfaceName)
-        case .batterySaver:
-            keepWarm = byPreference.first.map { [$0.interfaceName] } ?? []
-        }
-        return RelayLinkPlan(keepWarm: keepWarm, egressOrder: carryingOrder(byPreference))
-    }
-
-    /// Ranks links for carrying. A link keeps up when its silence is within the
-    /// flap margin of the freshest link; the margin is the larger of the declared
-    /// floor and the freshest link's own silence, so the test stays relative when
-    /// every link is slow and holds the whole set together during a blackout.
-    /// Links keeping up come first in declared preference order, then any lagging
-    /// links, so the carrying link is the preferred one keeping up and is never
-    /// empty while any link is open.
-    private static func carryingOrder(_ byPreference: [RelayLinkSnapshot]) -> [String] {
-        guard let bestSilence = byPreference.map(\.silenceMilliseconds).min() else {
-            return []
-        }
-        let margin = max(RelayTransportPolicy.flapMarginFloorMilliseconds, bestSilence)
-        let keepingUp = byPreference.filter { link in
-            link.silenceMilliseconds - bestSilence <= margin
-        }
-        let lagging = byPreference.filter { link in
-            link.silenceMilliseconds - bestSilence > margin
-        }
-        return keepingUp.map(\.interfaceName) + lagging.map(\.interfaceName)
+        return ranked.first?.interfaceName
     }
 }

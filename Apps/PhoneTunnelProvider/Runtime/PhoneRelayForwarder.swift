@@ -18,17 +18,14 @@ private let logger = CellTunnelLog.logger(category: .relay)
 
 // MARK: - PhoneMacLink
 
-/// One warm link to the Mac agent, keyed by the iPhone interface it runs over.
-/// The forwarder keeps one per reachable interface at once, so an abrupt loss of
-/// any link fails over to another without a redial. `lastHeardMilliseconds` is
-/// refreshed on every datagram, empty heartbeat or real data, and feeds the
-/// liveness check; `isReady` gates a link out of the egress set until its
-/// connection is up and primed.
+/// One open link to the Mac agent, keyed by the iPhone interface it runs over.
+/// The forwarder keeps one per reachable interface at once, so a loss of the
+/// carrying link moves traffic to another already-open link. `isReady` gates a
+/// link out of the carrying set until its connection is up and primed.
 struct PhoneMacLink {
     let interfaceName: String
     let linkClass: RelayLinkClass
     let connection: NWConnection
-    var lastHeardMilliseconds: Int
     var isReady: Bool
 }
 
@@ -41,14 +38,13 @@ struct PhoneMacLink {
 /// received, wrapped, and forwarded on this one queue with no per-packet actor
 /// hop, so throughput is not gated by the MainActor.
 ///
-/// Multi-link active-backup: the probe reports which interfaces the agent is
-/// reachable on, the forwarder dials one link per interface and keeps them all
-/// warm with a heartbeat, and the shared policy selects the single highest-scoring
-/// live link as the egress the download path sends on. An abrupt loss of the
-/// egress link is caught by a connection error or a missed liveness deadline, and
-/// the egress moves to the next live link with no redial. The dial, prime,
-/// heartbeat, and liveness live in `PhoneRelayForwarder+Link.swift`; the cellular
-/// and download halves live in `PhoneRelayForwarder+Cellular.swift`.
+/// Multi-link: the probe reports which interfaces the agent is reachable on, the
+/// forwarder dials one link per interface and keeps them all open, and the chooser
+/// picks the carrying link the download path sends on (the override if set, else
+/// the highest-scoring open link). A link closes only when its connection errors;
+/// the carrying link is recomputed on each open or close, never on a timer. The
+/// dial, prime, and carrying choice live in `PhoneRelayForwarder+Link.swift`; the
+/// cellular and download halves live in `PhoneRelayForwarder+Cellular.swift`.
 ///
 /// The `@unchecked Sendable` contract: every stored property is read and written
 /// only on `queue`. All Network objects and timers start with `queue`, so their
@@ -60,12 +56,15 @@ final class PhoneRelayForwarder: @unchecked Sendable {
 
     let queue = DispatchQueue(label: "CellTunnelPhone.RelayPlane")
 
-    // The warm Mac-facing links keyed by iPhone interface name, the cached egress
-    // pointer the download path reads per datagram, and the maintenance timer that
-    // sends heartbeats and reaps dead links. All touched only on `queue`.
+    // The open Mac-facing links keyed by iPhone interface name and the cached
+    // carrying pointer the download path reads per datagram. `egressInterfaceName`
+    // records which link is carrying so the chooser can keep it stable.
+    // `preferredInterface` is the override a UI or a future algorithm sets to force
+    // the carrying link; nil means use the score order. All touched only on `queue`.
     var macLinks: [String: PhoneMacLink] = [:]
     var egressConnection: NWConnection?
-    var linkMaintenanceTimer: DispatchSourceTimer?
+    var egressInterfaceName: String?
+    var preferredInterface: String?
     var hasLivePeer = false
 
     var cellularConnection: NWConnection?
@@ -84,7 +83,6 @@ final class PhoneRelayForwarder: @unchecked Sendable {
     // (satisfying the boundary-log audit) instead of logging per datagram.
     let didLogMacReceive = Atomic<Bool>(false)
     let didLogMacSend = Atomic<Bool>(false)
-    let didLogMacHeartbeat = Atomic<Bool>(false)
     let didLogCellularReceive = Atomic<Bool>(false)
     let didLogCellularSend = Atomic<Bool>(false)
 
@@ -95,10 +93,23 @@ final class PhoneRelayForwarder: @unchecked Sendable {
     // MARK: - Public API (MainActor callers funnel onto the relay queue)
 
     func start() {
-        queue.async { [weak self] in
-            self?.startMaintenanceTimer()
-        }
         logger.notice("phone relay forwarder ready, awaiting discovery")
+    }
+
+    /// Forces the carrying link to a specific interface, or returns to the score
+    /// order when `interfaceName` is nil. This is the switch primitive a UI or a
+    /// future selection algorithm calls; it recomputes the carrying link at once.
+    func setPreferredInterface(_ interfaceName: String?) {
+        queue.async { [weak self] in
+            guard let self else {
+                return
+            }
+            preferredInterface = interfaceName
+            logger.notice(
+                "phone relay preferred interface set to \(interfaceName ?? "auto", privacy: .public)"
+            )
+            recomputeEgress()
+        }
     }
 
     func setServerEndpoint(_ endpoint: RelayEndpoint) {
@@ -142,7 +153,7 @@ final class PhoneRelayForwarder: @unchecked Sendable {
     /// Receives upload datagrams on one Mac link. Every link runs its own loop, so
     /// the iPhone forwards the Mac's upload no matter which link the agent egresses
     /// on. An empty datagram is a heartbeat: it refreshes the link's liveness and
-    /// is not forwarded to the server.
+    /// is not forwarded to the server (it is only the agent's adoption prime).
     func receiveFromMac(on connection: NWConnection, interfaceName: String) {
         if didLogMacReceive.compareExchange(
             expected: false, desired: true, ordering: .relaxed
@@ -160,7 +171,6 @@ final class PhoneRelayForwarder: @unchecked Sendable {
                 handleLinkReceiveError(error, connection: connection, interfaceName: interfaceName)
                 return
             }
-            stampLastHeard(interfaceName: interfaceName)
             if let data, !data.isEmpty {
                 metrics.addBytesIn(UInt64(data.count))
                 metrics.addDatagramsFromMac()

@@ -18,15 +18,14 @@ private let relayDataServiceType = "_cellrelay._udp"
 
 // MARK: - AgentPhoneLink
 
-/// One warm link from the iPhone, keyed by the Mac-facing interface it arrived
-/// on. The agent keeps one per interface at once so an abrupt loss of any link
-/// fails over to another without a redial. `lastHeardMilliseconds` is refreshed
-/// on every datagram, empty heartbeat or real data, and feeds the liveness check.
+/// One open link from the iPhone, keyed by the Mac-facing interface it arrived
+/// on. The agent keeps one per interface at once so a loss of the carrying link
+/// moves traffic to another already-open link. A link is removed only when its
+/// connection errors.
 struct AgentPhoneLink {
     let interfaceName: String
     let linkClass: RelayLinkClass
     let connection: NWConnection
-    var lastHeardMilliseconds: Int
 }
 
 // MARK: - AgentRelayBridge
@@ -37,29 +36,25 @@ struct AgentPhoneLink {
 /// over the wired USB link, Wi-Fi LAN, and AWDL at once. The Mac tunnel extension
 /// dials it over loopback; the iPhone extension dials it once per interface, so
 /// the bridge holds one Mac connection and a set of phone links keyed by
-/// interface. Each datagram from the Mac goes out the egress phone link the
-/// shared policy selects; each datagram from any phone link goes to the Mac. Each
-/// send stays an independent UDP datagram with no added ordering or reliability;
+/// interface. Each datagram from the Mac goes out the carrying phone link the
+/// chooser selects; each datagram from any phone link goes to the Mac. Each send
+/// stays an independent UDP datagram with no added ordering or reliability;
 /// WireGuard owns end-to-end integrity and dedupes any duplicate.
 ///
 /// The `@unchecked Sendable` contract: every stored property is read and written
-/// only on `queue`. All Network objects and timers start with `queue`, so their
-/// callbacks fire on `queue`.
+/// only on `queue`. All Network objects start with `queue`, so their callbacks
+/// fire on `queue`.
 final class AgentRelayBridge: @unchecked Sendable {
     let queue = DispatchQueue(label: "io.goodkind.celltunnel.agent.relay")
     private var listener: NWListener?
     private var macConnection: NWConnection?
 
-    // The warm phone links keyed by Mac-facing interface name, the cached egress
-    // pointer the upload path reads per datagram, and the maintenance timer that
-    // sends heartbeats and reaps dead links. All touched only on `queue`.
+    // The open phone links keyed by Mac-facing interface name, the cached carrying
+    // pointer the upload path reads per datagram, and the interface it points at.
+    // All touched only on `queue`.
     var phoneLinks: [String: AgentPhoneLink] = [:]
     var egressConnection: NWConnection?
-    var maintenanceTimer: DispatchSourceTimer?
-
-    // Logs the heartbeat send path exactly once instead of per tick, so the
-    // network-send boundary is logged without flooding the log every interval.
-    var didLogHeartbeat = false
+    var egressInterfaceName: String?
 
     /// Fired when the first phone link goes live and when the last one drops, so
     /// the agent tells the Mac extension to install or withdraw routes with the
@@ -113,7 +108,6 @@ final class AgentRelayBridge: @unchecked Sendable {
         }
         nwListener.start(queue: queue)
         listener = nwListener
-        startMaintenanceTimer()
         logger.notice(
             """
             agent relay bridge starting service=\(relayDataServiceType, privacy: .public) \
@@ -125,13 +119,12 @@ final class AgentRelayBridge: @unchecked Sendable {
     private func stopOnQueue() {
         macConnection?.cancel()
         macConnection = nil
-        maintenanceTimer?.cancel()
-        maintenanceTimer = nil
         for link in phoneLinks.values {
             link.connection.cancel()
         }
         phoneLinks.removeAll()
         egressConnection = nil
+        egressInterfaceName = nil
         listener?.cancel()
         listener = nil
         logger.notice("agent relay bridge stopped")

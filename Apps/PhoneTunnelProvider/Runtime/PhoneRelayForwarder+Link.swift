@@ -14,45 +14,22 @@ import Network
 // MARK: - Constants
 
 private let logger = CellTunnelLog.logger(category: .relay)
-private let nanosecondsPerMillisecond = 1_000_000
 
-// MARK: - Mac-facing links: dial, prime, heartbeat, liveness, egress
+// MARK: - Mac-facing links: dial, prime, carry
 
-/// Keeps the policy's set of links open and selects the carrying link with the
-/// shared policy. The probe reports the interface set; this surface dials each
-/// interface the policy keeps open, pinned to it, primes it so the agent adopts
-/// it, sends a keepalive on every link, closes a link only when its connection
-/// errors, and recomputes the cached carrying pointer off the packet path
-/// whenever the set or its freshness changes. Every method runs only on
+/// Keeps one open link per discovered interface and chooses which one carries.
+/// The probe reports the interface set; this surface dials each new interface
+/// pinned to it and primes it once so the agent adopts it. A link is closed only
+/// when its connection errors; a browse that stops listing an interface does not
+/// close its link. The carrying link is the chooser's pick, recomputed on each
+/// open or close, never on a timer. Every method runs only on
 /// `PhoneRelayForwarder.queue`.
 extension PhoneRelayForwarder {
-    // MARK: - Reconcile
+    // MARK: - Reconcile (discovery only adds)
 
     func reconcileOnQueue(_ interfaces: [RelayMacInterface]) {
-        let now = nowMilliseconds()
-        let snapshots = interfaces.map { interface in
-            let silence =
-                macLinks[interface.interfaceName].map { link in
-                    now - link.lastHeardMilliseconds
-                } ?? 0
-            return RelayLinkSnapshot(
-                interfaceName: interface.interfaceName,
-                linkClass: interface.linkClass,
-                silenceMilliseconds: silence
-            )
-        }
-        let keepWarm = Set(RelayLinkPolicy.plan(for: snapshots).keepWarm)
-        for interface in interfaces {
-            guard keepWarm.contains(interface.interfaceName) else {
-                continue
-            }
-            guard macLinks[interface.interfaceName] == nil else {
-                continue
-            }
+        for interface in interfaces where macLinks[interface.interfaceName] == nil {
             dialLink(interface)
-        }
-        for name in Array(macLinks.keys) where !keepWarm.contains(name) {
-            removeLink(interfaceName: name, reason: "not-kept-warm")
         }
         recomputeEgress()
     }
@@ -67,6 +44,7 @@ extension PhoneRelayForwarder {
         }
         macLinks.removeAll()
         egressConnection = nil
+        egressInterfaceName = nil
         recomputeEgress()
     }
 
@@ -84,7 +62,6 @@ extension PhoneRelayForwarder {
             interfaceName: interface.interfaceName,
             linkClass: interface.linkClass,
             connection: connection,
-            lastHeardMilliseconds: nowMilliseconds(),
             isReady: false
         )
         connection.stateUpdateHandler = { [weak self, weak connection] state in
@@ -113,7 +90,6 @@ extension PhoneRelayForwarder {
         switch state {
         case .ready:
             macLinks[interfaceName]?.isReady = true
-            macLinks[interfaceName]?.lastHeardMilliseconds = nowMilliseconds()
             logger.notice(
                 "phone relay link ready interface=\(interfaceName, privacy: .public)"
             )
@@ -154,10 +130,6 @@ extension PhoneRelayForwarder {
         macLinks[interfaceName]?.connection === connection
     }
 
-    func stampLastHeard(interfaceName: String) {
-        macLinks[interfaceName]?.lastHeardMilliseconds = nowMilliseconds()
-    }
-
     private func removeLink(interfaceName: String, reason: String) {
         guard let link = macLinks.removeValue(forKey: interfaceName) else {
             return
@@ -174,9 +146,8 @@ extension PhoneRelayForwarder {
 
     // A UDP NWConnection has no peer until the first datagram is sent, so the
     // agent cannot learn the iPhone source endpoint to route replies. Send one
-    // empty datagram so the agent adopts this connection as a phone link. The
-    // relay forwards only non-empty datagrams, so the prime never reaches
-    // WireGuard.
+    // empty datagram so the agent adopts this connection as a link. The relay
+    // forwards only non-empty datagrams, so the prime never reaches WireGuard.
     private func primeLink(_ connection: NWConnection) {
         connection.send(
             content: Data(),
@@ -191,80 +162,28 @@ extension PhoneRelayForwarder {
         )
     }
 
-    // MARK: - Maintenance: heartbeat and carrying refresh
+    // MARK: - Carrying selection
 
-    func startMaintenanceTimer() {
-        linkMaintenanceTimer?.cancel()
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        let interval = RelayTransportPolicy.heartbeatIntervalMilliseconds
-        timer.schedule(
-            deadline: .now() + .milliseconds(interval),
-            repeating: .milliseconds(interval)
-        )
-        timer.setEventHandler { @Sendable [weak self] in
-            self?.maintenanceTick()
-        }
-        timer.resume()
-        linkMaintenanceTimer = timer
-        logger.notice(
-            "phone relay link maintenance armed intervalMs=\(interval, privacy: .public)"
-        )
-    }
-
-    private func maintenanceTick() {
-        sendHeartbeats()
-        recomputeEgress()
-    }
-
-    private func sendHeartbeats() {
-        let ready = macLinks.values.filter(\.isReady)
-        guard !ready.isEmpty else {
-            return
-        }
-        if didLogMacHeartbeat.compareExchange(
-            expected: false, desired: true, ordering: .relaxed
-        ).exchanged {
-            logger.notice("phone relay heartbeat send path active")
-        }
-        for link in ready {
-            link.connection.send(
-                content: Data(),
-                completion: .contentProcessed { _ in
-                    // Best-effort keepalive. A genuinely gone path surfaces as a
-                    // connection error, which closes the link; this send does not.
-                }
-            )
-        }
-    }
-
-    // MARK: - Egress selection
-
-    /// Recomputes the cached carrying pointer from the policy off the packet path.
+    /// Recomputes the cached carrying pointer from the chooser off the packet path.
     /// The download path reads one pointer per datagram; it is recomputed here, on
-    /// each tick and on a membership change, from each ready link's freshness. A
-    /// link that is not ready yet is not a carrying candidate. The carrying link is
-    /// empty only when no link is ready.
+    /// a link opening or closing or the override changing, never on a timer. Only
+    /// ready links are carrying candidates.
     func recomputeEgress() {
-        let now = nowMilliseconds()
-        let snapshots = macLinks.values.filter(\.isReady).map { link in
-            RelayLinkSnapshot(
-                interfaceName: link.interfaceName,
-                linkClass: link.linkClass,
-                silenceMilliseconds: now - link.lastHeardMilliseconds
+        let openReady = macLinks.values
+            .filter(\.isReady)
+            .map { link in
+                RelayLinkSnapshot(interfaceName: link.interfaceName, linkClass: link.linkClass)
+            }
+        let chosen = RelayLinkPolicy.chooseCarrying(
+            preferred: preferredInterface, openLinks: Array(openReady)
+        )
+        if chosen != egressInterfaceName {
+            logger.notice(
+                "phone relay carrying link interface=\(chosen ?? "none", privacy: .public)"
             )
         }
-        let plan = RelayLinkPolicy.plan(for: Array(snapshots))
-        let egressLink = plan.egressInterfaceName.flatMap { macLinks[$0] }
-        if let egressLink {
-            if egressConnection !== egressLink.connection {
-                logger.notice(
-                    "phone relay egress link interface=\(egressLink.interfaceName, privacy: .public)"
-                )
-            }
-            egressConnection = egressLink.connection
-        } else {
-            egressConnection = nil
-        }
+        egressInterfaceName = chosen
+        egressConnection = chosen.flatMap { macLinks[$0]?.connection }
         updatePeerState(hasEgress: egressConnection != nil)
     }
 
@@ -274,11 +193,5 @@ extension PhoneRelayForwarder {
         }
         hasLivePeer = hasEgress
         onPeerChange?(hasEgress ? "Mac" : nil)
-    }
-
-    // MARK: - Time
-
-    func nowMilliseconds() -> Int {
-        Int(DispatchTime.now().uptimeNanoseconds / UInt64(nanosecondsPerMillisecond))
     }
 }

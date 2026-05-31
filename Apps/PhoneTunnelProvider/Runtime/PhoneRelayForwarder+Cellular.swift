@@ -322,13 +322,13 @@ extension PhoneRelayForwarder {
     }
 
     func stopOnQueue() {
-        linkMaintenanceTimer?.cancel()
-        linkMaintenanceTimer = nil
         for link in macLinks.values {
             link.connection.cancel()
         }
         macLinks.removeAll()
         egressConnection = nil
+        egressInterfaceName = nil
+        preferredInterface = nil
         hasLivePeer = false
         cellularConnection?.cancel()
         cellularConnection = nil
