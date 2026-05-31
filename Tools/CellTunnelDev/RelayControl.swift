@@ -168,20 +168,6 @@ private func relaySnapshotSatisfies(
     }
 }
 
-/// Picks the relay device to select: the named one when present, otherwise the
-/// first discovered device.
-private func selectRelayDevice(
-    from snapshot: TunnelDiscoverySnapshot,
-    preferredName: String?
-) -> TunnelRelayService? {
-    if let preferredName {
-        return snapshot.services.first { service in
-            service.serviceName == preferredName
-        }
-    }
-    return snapshot.services.first
-}
-
 /// Suspends without `Task.sleep` by resuming off a dispatch queue after the
 /// interval, matching the polling cadence the rest of the project uses.
 private func relayPollDelay(seconds: Double) async {
