@@ -38,6 +38,10 @@ final class PhoneControlClient {
 
     var onSetServerEndpoint: EndpointHandler?
     var statusProvider: StatusProvider?
+    // Fired when the control connection drops, which is the reliable signal that
+    // the agent died or restarted. The data plane dials over UDP and does not
+    // surface a drop, so the provider uses this to reset the stale data link.
+    var onConnectionDropped: (@MainActor () -> Void)?
     private(set) var lastError: String?
 
     // MARK: - Lifecycle
@@ -150,16 +154,27 @@ final class PhoneControlClient {
                 self.connection = nil
             }
             connection.cancel()
+            notifyConnectionDropped()
             scheduleReconnect()
         case .cancelled:
             if self.connection === connection {
                 self.connection = nil
                 logger.notice("control client connection cancelled")
             }
+            notifyConnectionDropped()
             scheduleReconnect()
         default:
             break
         }
+    }
+
+    // Tells the provider the control link dropped so it can reset the stale data
+    // link. Gated on `isActive` so an intentional `stop` does not trigger it.
+    private func notifyConnectionDropped() {
+        guard isActive else {
+            return
+        }
+        onConnectionDropped?()
     }
 
     // MARK: - Receive and decode

@@ -167,6 +167,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             controlClient.onSetServerEndpoint = { endpoint in
                 forwarder.setServerEndpoint(endpoint)
             }
+            controlClient.onConnectionDropped = {
+                forwarder.dropActiveLink()
+            }
             controlClient.statusProvider = {
                 let lastError = self.flatMap { provider in
                     provider.statusState.withLock { $0.lastError }

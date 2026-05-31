@@ -1,3 +1,11 @@
+//
+//  main.swift
+//  CellTunnelAgent
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-27.
+//  Copyright © 2026
+//
+
 import CellTunnelCore
 import CellTunnelLog
 import Darwin
@@ -5,16 +13,23 @@ import Dispatch
 import Foundation
 import ServiceManagement
 
+// MARK: - Constants
+
 private let logger = CellTunnelLog.logger(category: .daemon)
 
 private let agentIdleTimeoutSeconds: Double = 60
+
+// MARK: - AgentRuntime
 
 final class AgentRuntime: @unchecked Sendable {
     private let listener = NSXPCListener(machServiceName: agentMachServiceName)
     private let controller = AgentTunnelController()
     private let idleQueue = DispatchQueue(label: "io.goodkind.celltunnel.agent.idle")
     private var idleTimer: DispatchSourceTimer?
+    private var relayActive = false
     private var server: AgentXPCServer?
+
+    // MARK: - Lifecycle
 
     func start() {
         registerLaunchAgentIfNeeded()
@@ -25,9 +40,23 @@ final class AgentRuntime: @unchecked Sendable {
         listener.delegate = server
         listener.resume()
         resetIdleTimer()
+        wireRelayActivityHold()
         logger.notice(
             "agent listener resumed machService=\(agentMachServiceName, privacy: .public)"
         )
+    }
+
+    // Hands the controller a hold so the agent does not idle-terminate while it
+    // hosts an active relay. The agent owns the relay bridge in memory, so exiting
+    // mid-relay would kill the bridge and strand the iPhone link.
+    private func wireRelayActivityHold() {
+        let controller = self.controller
+        let runtime = self
+        Task {
+            await controller.setRelayActiveHandler { [weak runtime] active in
+                runtime?.setRelayActive(active)
+            }
+        }
     }
 
     func shutdown(reason: String) {
@@ -86,22 +115,53 @@ final class AgentRuntime: @unchecked Sendable {
         }
     }
 
-    private func resetIdleTimer() {
+    // MARK: - Relay activity hold
+
+    /// Holds or releases the idle countdown. While the relay is active the agent
+    /// must not exit, so the timer is cancelled and not rescheduled; when the
+    /// relay stops the 60 second countdown resumes.
+    func setRelayActive(_ active: Bool) {
         idleQueue.async { [weak self] in
             guard let self else {
                 return
             }
-            idleTimer?.cancel()
-            let timer = DispatchSource.makeTimerSource(queue: idleQueue)
-            timer.schedule(deadline: .now() + agentIdleTimeoutSeconds)
-            timer.setEventHandler { [weak self] in
-                logger.notice("agent idle timeout reached, terminating")
-                self?.shutdown(reason: "idle-timeout")
-                exit(EXIT_SUCCESS)
+            relayActive = active
+            if active {
+                idleTimer?.cancel()
+                idleTimer = nil
+                logger.notice("agent idle timer held: relay active")
+            } else {
+                logger.notice("agent idle timer resumed: relay inactive")
+                scheduleIdleTimerOnQueue()
             }
-            timer.resume()
-            idleTimer = timer
         }
+    }
+
+    // MARK: - Idle timer
+
+    private func resetIdleTimer() {
+        idleQueue.async { [weak self] in
+            self?.scheduleIdleTimerOnQueue()
+        }
+    }
+
+    /// Runs only on `idleQueue`. Does nothing while the relay-active hold is set,
+    /// so the agent stays alive for the life of the relay.
+    private func scheduleIdleTimerOnQueue() {
+        idleTimer?.cancel()
+        guard !relayActive else {
+            idleTimer = nil
+            return
+        }
+        let timer = DispatchSource.makeTimerSource(queue: idleQueue)
+        timer.schedule(deadline: .now() + agentIdleTimeoutSeconds)
+        timer.setEventHandler { [weak self] in
+            logger.notice("agent idle timeout reached, terminating")
+            self?.shutdown(reason: "idle-timeout")
+            exit(EXIT_SUCCESS)
+        }
+        timer.resume()
+        idleTimer = timer
     }
 }
 

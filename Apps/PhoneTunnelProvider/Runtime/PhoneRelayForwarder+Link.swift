@@ -45,6 +45,21 @@ extension PhoneRelayForwarder {
         }
     }
 
+    /// Drops the live link so the transport manager re-establishes it. The
+    /// provider calls this when the control plane reports the agent died or
+    /// restarted, because the UDP data connection does not surface that drop on
+    /// its own. Cancelling the connection routes through `handleMacConnectionState`
+    /// and `clearActiveMacConnection`, which fires `onActiveDropped`.
+    func dropActiveLink() {
+        queue.async { [weak self] in
+            guard let self, let connection = macConnection else {
+                return
+            }
+            logger.notice("phone relay dropping active link on control drop")
+            connection.cancel()
+        }
+    }
+
     // MARK: - Candidate establishment (the make half)
 
     private func establishOnQueue(strategy: RelayDialStrategy) {

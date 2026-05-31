@@ -1,8 +1,18 @@
+//
+//  AgentTunnelController.swift
+//  CellTunnelAgent
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-27.
+//  Copyright © 2026
+//
+
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
 @preconcurrency import NetworkExtension
 import WireGuardKit
+
+// MARK: - Constants
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 
@@ -30,6 +40,18 @@ actor AgentTunnelController {
     var controlListener: AgentControlListener?
     let relayBridge = AgentRelayBridge()
     let relayBrowser = RelayDeviceBrowser()
+
+    /// Called when the relay goes active or inactive so the runtime can hold the
+    /// agent idle timer while it hosts the relay bridge. Set once at startup.
+    var onRelayActiveChange: (@Sendable (Bool) -> Void)?
+
+    // MARK: - Relay activity hold
+
+    func setRelayActiveHandler(_ handler: @escaping @Sendable (Bool) -> Void) {
+        onRelayActiveChange = handler
+    }
+
+    // MARK: - Request handling
 
     func handle(request: AgentControlRequest) async -> AgentControlResponse {
         switch request {

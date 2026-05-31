@@ -41,6 +41,7 @@ extension AgentTunnelController {
             Task { await self?.signalRouteState(false) }
         }
         relayBridge.start(serviceName: ProcessInfo.processInfo.hostName)
+        onRelayActiveChange?(true)
         logger.notice(
             """
             agent control listener started host=\(endpoint.host, privacy: .public) \
@@ -53,6 +54,7 @@ extension AgentTunnelController {
         await controlListener?.stop()
         controlListener = nil
         relayBridge.stop()
+        onRelayActiveChange?(false)
         logger.notice("agent control link cleared on tunnel stop")
     }
 
