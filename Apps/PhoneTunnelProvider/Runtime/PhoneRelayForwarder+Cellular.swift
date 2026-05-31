@@ -10,6 +10,25 @@ private let pendingWireGuardDatagramLimit = 64
 // uplink busy without letting the send buffer grow into multi-hundred-ms latency.
 private let maxOutstandingCellularSends = 256
 
+// Renders an interface type for diagnostics so the log shows which physical path
+// the relay used (cellular for egress, wiredEthernet/other for the Mac link).
+func describeInterfaceType(_ type: NWInterface.InterfaceType) -> String {
+    switch type {
+    case .other:
+        return "other"
+    case .wifi:
+        return "wifi"
+    case .cellular:
+        return "cellular"
+    case .wiredEthernet:
+        return "wiredEthernet"
+    case .loopback:
+        return "loopback"
+    @unknown default:
+        return "unknown"
+    }
+}
+
 func cellularWireGuardUDPState(for state: NWConnection.State) -> CellularWireGuardUDPState {
     switch state {
     case .setup, .preparing, .waiting:
@@ -171,6 +190,11 @@ extension PhoneRelayForwarder {
         endpointFamily = endpoint.addressFamily
 
         let parameters = NWParameters.udp
+        // bestEffort is the throughput-favoring default and the service class that
+        // enables cellular network slicing when no other class is set. The path is
+        // left able to use expensive and constrained networks (defaults), so the
+        // relay is never opted out of the user's "Allow More Data on 5G" data mode.
+        parameters.serviceClass = .bestEffort
         #if targetEnvironment(simulator)
             logger.notice(
                 "cellular relay simulator-mode: cellular gate skipped; egress uses host network"
@@ -208,9 +232,33 @@ extension PhoneRelayForwarder {
         logger.notice(
             "cellular relay state changed state=\(String(describing: nwState), privacy: .public)"
         )
+        if case .ready = nwState {
+            logCellularPath(connection)
+        }
         applyCellularState(
             cellularWireGuardUDPState(for: nwState),
             errorMessage: cellularWireGuardUDPErrorMessage(for: nwState)
+        )
+    }
+
+    // Logs the cellular path the relay egresses on, including whether the system
+    // marks it expensive or constrained. Constrained reflects the user's Data
+    // Mode choice ("Allow More Data on 5G" / Low Data Mode); a constrained path
+    // is the system signal that 5G throughput is being held back.
+    private func logCellularPath(_ connection: NWConnection) {
+        guard let path = connection.currentPath else {
+            logger.notice("cellular relay path unavailable")
+            return
+        }
+        let interfaces = path.availableInterfaces
+            .map { "\($0.name):\(describeInterfaceType($0.type))" }
+            .joined(separator: ",")
+        logger.notice(
+            """
+            cellular relay path expensive=\(path.isExpensive, privacy: .public) \
+            constrained=\(path.isConstrained, privacy: .public) \
+            interfaces=\(interfaces, privacy: .public)
+            """
         )
     }
 
