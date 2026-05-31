@@ -174,7 +174,10 @@ let project = Project(
             ],
             entitlements: .file(path: "Apps/macOS/Entitlements/Agent.entitlements"),
             scripts: [renderAgentLaunchdScript],
-            dependencies: appDependencies + [.target(name: "CellTunnelTunnelProvider")],
+            dependencies: appDependencies + [
+                .target(name: "CellTunnelTunnelProvider"),
+                .external(name: "WireGuardKit"),
+            ],
             settings: .settings(base: macHardenedRuntimeSettings)
         ),
         .target(
