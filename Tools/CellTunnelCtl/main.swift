@@ -53,6 +53,7 @@ private func printUsage() {
           start --config <path>        Start the tunnel using the given WireGuard config.
                                        Optional: --relay <host:port>.
           stop                         Stop the tunnel.
+          reset                        Remove the saved Mac VPN configuration.
           --help, -h                   Print this help text.
         """
     FileHandle.standardOutput.write(Data((usage + "\n").utf8))

@@ -38,6 +38,8 @@ actor AgentTunnelController {
             return await handleStartTunnel(settings: settings)
         case .stopTunnel:
             return await handleStopTunnel()
+        case .reset:
+            return await handleReset()
         case .startRelayDiscovery:
             return startDiscovery()
         case .stopRelayDiscovery:
@@ -152,6 +154,41 @@ actor AgentTunnelController {
         }
     }
 
+    private func handleReset() async -> AgentControlResponse {
+        do {
+            let managers = try await loadAllManagers()
+            for candidate in managers {
+                stopSession(on: candidate)
+                try await remove(manager: candidate)
+            }
+            manager = nil
+            if let statusObserver {
+                NotificationCenter.default.removeObserver(statusObserver)
+                self.statusObserver = nil
+            }
+            latestStatus = .invalid
+            logger.notice(
+                "agent tunnel reset removed managerCount=\(managers.count, privacy: .public)"
+            )
+            return AgentControlResponse(
+                status: TunnelDaemonStatusSnapshot(
+                    running: false,
+                    routeState: .notInstalled,
+                    peerState: .notSelected
+                )
+            )
+        } catch {
+            logger.error(
+                """
+                reset agent operation caught error \
+                details=\(String(describing: error), privacy: .public) \
+                recovery=return-failure-response
+                """
+            )
+            return failure(from: error)
+        }
+    }
+
     private func startDiscovery() -> AgentControlResponse {
         relayBrowser.start()
         logger.notice("agent relay discovery started from browser")
@@ -249,6 +286,12 @@ extension AgentTunnelController {
     private func load(manager: NETunnelProviderManager) async throws {
         try await resumeVoidContinuation { completion in
             manager.loadFromPreferences(completionHandler: completion)
+        }
+    }
+
+    private func remove(manager: NETunnelProviderManager) async throws {
+        try await resumeVoidContinuation { completion in
+            manager.removeFromPreferences(completionHandler: completion)
         }
     }
 
@@ -355,39 +398,6 @@ extension AgentTunnelController {
     private func readConfigText(at path: String) throws -> String {
         let expanded = (path as NSString).expandingTildeInPath
         return try String(contentsOf: URL(fileURLWithPath: expanded), encoding: .utf8)
-    }
-
-    private func statusDescription(_ status: NEVPNStatus) -> String {
-        switch status {
-        case .invalid:
-            return "invalid"
-        case .disconnected:
-            return "disconnected"
-        case .connecting:
-            return "connecting"
-        case .connected:
-            return "connected"
-        case .reasserting:
-            return "reasserting"
-        case .disconnecting:
-            return "disconnecting"
-        @unknown default:
-            return "unknown"
-        }
-    }
-
-    private func failure(from error: Error) -> AgentControlResponse {
-        if let controllerError = error as? AgentTunnelControllerError {
-            return failure(errorCode: controllerError.errorCode, message: controllerError.message)
-        }
-        return failure(errorCode: .internal, message: error.localizedDescription)
-    }
-
-    private func failure(
-        errorCode: TunnelControlErrorCode,
-        message: String
-    ) -> AgentControlResponse {
-        AgentControlResponse(failure: AgentControlFailure(errorCode: errorCode, message: message))
     }
 }
 

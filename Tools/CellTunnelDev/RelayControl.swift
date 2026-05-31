@@ -117,6 +117,20 @@ func runRelayDown(_ arguments: [String]) throws {
     }
 }
 
+// MARK: - reset-mac
+
+/// Removes the saved Mac VPN configuration through the agent and prints the
+/// resulting status snapshot, so a clean test starts with no leftover state.
+func runResetMac(_ arguments: [String]) throws {
+    _ = arguments
+    relayControlLogger.notice("reset-mac requested")
+    try runRelayCommand { client in
+        let status = try await client.reset()
+        printToolOutput(status.renderedOutput)
+        printToolOutput("reset-mac: saved VPN configuration removed")
+    }
+}
+
 // MARK: - Agent polling
 
 /// Polls the agent for discovered relay services until the preferred device (or

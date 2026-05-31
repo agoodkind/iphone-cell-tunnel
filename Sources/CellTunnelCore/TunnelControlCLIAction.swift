@@ -9,6 +9,7 @@ private let noRelayDevicesMessage = "no relay devices found"
 public enum TunnelControlCLIAction: Equatable, Sendable {
     case check
     case devices
+    case reset
     case select(reference: String)
     case start(TunnelStartSettings)
     case startDiscovery
@@ -38,6 +39,8 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
             return try .select(reference: parseSelect(arguments: Array(arguments.dropFirst())))
         case "stop":
             return .stop
+        case "reset":
+            return .reset
         case "start":
             return .start(try parseStart(arguments: Array(arguments.dropFirst())))
         default:
@@ -122,6 +125,9 @@ public struct TunnelControlCLIExecutor: Sendable {
             return status.renderedOutput
         case .stop:
             let status = try await client.stopTunnel()
+            return status.renderedOutput
+        case .reset:
+            let status = try await client.reset()
             return status.renderedOutput
         }
     }

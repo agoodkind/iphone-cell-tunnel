@@ -6,7 +6,7 @@ enum InstallActions {}
 
 private let installLogger = CellTunnelLog.logger(category: .build)
 
-private let defaultInstallParentDirectory = "/Applications/CellTunnel"
+let defaultInstallParentDirectory = "/Applications/CellTunnel"
 private let installAppOptionName = "--app"
 private let installConfigOptionName = "--config"
 private let installDestinationOptionName = "--destination"

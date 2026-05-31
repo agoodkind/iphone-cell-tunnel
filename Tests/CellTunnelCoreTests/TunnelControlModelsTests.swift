@@ -268,6 +268,12 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
         return TunnelDaemonStatusSnapshot()
     }
 
+    func reset() async -> TunnelDaemonStatusSnapshot {
+        await Task.yield()
+        events.append("reset")
+        return TunnelDaemonStatusSnapshot()
+    }
+
     func startRelayDiscovery() async -> TunnelDiscoverySnapshot {
         await Task.yield()
         events.append("startRelayDiscovery")

@@ -59,7 +59,12 @@ func printHelp() {
           relay-status
                       Print the current tunnel daemon status snapshot.
           relay-down  Stop the relay tunnel.
+          reset-mac   Remove the saved Mac VPN configuration through the agent.
           clean       Remove build and product outputs.
+          clean-reinstall
+                      Stop the agent, rebuild both apps, reinstall and relaunch the
+                      agent, run reset-mac, then reinstall and launch the iPhone app.
+                      Optional positional configuration: [Debug|Release] (default Debug).
         """
     FileHandle.standardOutput.write(Data((helpText + "\n").utf8))
 }
@@ -209,6 +214,9 @@ func runCoreCommand(_ command: String) throws -> Bool {
     case "clean":
         try cleanProject()
         return true
+    case "clean-reinstall":
+        try runCleanReinstall(command)
+        return true
     default:
         return false
     }
@@ -268,6 +276,9 @@ func runDiagnosticCommand(_ command: String) throws -> Bool {
         return true
     case "relay-down":
         try runRelayDown(arguments)
+        return true
+    case "reset-mac":
+        try runResetMac(arguments)
         return true
     default:
         return false

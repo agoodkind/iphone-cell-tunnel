@@ -57,6 +57,12 @@ import Foundation
             return try requireStatus(from: response, operationName: "stopTunnel")
         }
 
+        public func reset() async throws -> TunnelDaemonStatusSnapshot {
+            logger.notice("agent client invoked rpc=reset")
+            let response = try await send(request: .reset, operationName: "reset")
+            return try requireStatus(from: response, operationName: "reset")
+        }
+
         public func startRelayDiscovery() async throws -> TunnelDiscoverySnapshot {
             logger.notice("agent client invoked rpc=start-relay-discovery")
             let response = try await send(
