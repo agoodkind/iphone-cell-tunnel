@@ -111,6 +111,17 @@ extension PhoneRelayForwarder {
         }
     }
 
+    /// Drops the link a failed send was bound to. A send error on the carrying
+    /// link (no route to host when its interface goes away) is the reliable signal
+    /// the path is gone, since the connection state may never reach .failed. The
+    /// cellular download path calls this so the carrying choice moves at once.
+    func failMacSend(on connection: NWConnection) {
+        for (name, link) in macLinks where link.connection === connection {
+            removeLink(interfaceName: name, reason: "send-error")
+            return
+        }
+    }
+
     func handleLinkReceiveError(
         _ error: NWError, connection: NWConnection, interfaceName: String
     ) {

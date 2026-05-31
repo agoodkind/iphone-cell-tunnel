@@ -220,7 +220,7 @@ final class AgentRelayBridge: @unchecked Sendable {
         }
         target.send(
             content: data,
-            completion: .contentProcessed { error in
+            completion: .contentProcessed { [weak self, weak target] error in
                 guard let error else {
                     return
                 }
@@ -230,6 +230,15 @@ final class AgentRelayBridge: @unchecked Sendable {
                     error=\(error.localizedDescription, privacy: .public)
                     """
                 )
+                // A send failure on the carrying phone link (interface gone, no
+                // route to host) is the reliable signal that a UDP path went away,
+                // since the connection state may never reach .failed. Drop the link
+                // so the carrying choice moves to another open link at once.
+                guard fromMac, let self, let target else {
+                    return
+                }
+                target.cancel()
+                removePhoneLink(for: target)
             }
         )
     }

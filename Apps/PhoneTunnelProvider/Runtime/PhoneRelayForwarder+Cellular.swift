@@ -114,12 +114,18 @@ extension PhoneRelayForwarder {
         let bytesOut = UInt64(data.count)
         mac.send(
             content: data,
-            completion: .contentProcessed { error in
+            completion: .contentProcessed { [weak self, weak mac] error in
                 if let error {
                     metrics.addDropped()
                     logger.error(
                         "phone relay datagram to mac failed error=\(error.localizedDescription, privacy: .public)"
                     )
+                    // A send failure on the carrying link is the reliable signal a
+                    // UDP path went away, since the connection state may never reach
+                    // .failed. Drop the link so the carrying choice moves at once.
+                    if let self, let mac {
+                        failMacSend(on: mac)
+                    }
                     return
                 }
                 metrics.addBytesOut(bytesOut)
