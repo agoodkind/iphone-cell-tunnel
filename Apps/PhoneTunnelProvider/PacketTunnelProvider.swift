@@ -44,14 +44,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let controlClient = PhoneControlClient()
     private let cellularObserver = CellularPathObserver()
     private let probe = RelayPathProbe()
-    private let manager: RelayTransportManager
     private let statusState = Mutex(RelayStatusState())
 
     // Held so the stop can complete after teardown finishes; invoked once.
     private var stopCompletion: (() -> Void)?
 
     override init() {
-        manager = RelayTransportManager(link: forwarder)
         super.init()
         logger.notice("PhoneTunnelProvider initialized")
     }
@@ -106,31 +104,22 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private func startRelayRuntime() {
         cellularObserver.start()
         configureForwarderCallbacks()
-        configureTransportSelection()
         forwarder.start()
+        configureTransportSelection()
         startControlClient()
         statusState.withLock { $0.running = true }
         logger.notice("relay runtime started")
     }
 
-    // Wires the probe to the manager and the manager to the forwarder, then
-    // starts the probe. The probe emits a scored evaluation on every interface
-    // change, the manager decides whether to switch, and the forwarder performs
-    // the make-before-break dial and swap. Starting the probe last means the
-    // first evaluation arrives with every handler already in place.
+    // Wires the discovery probe to the forwarder, then starts it. The probe
+    // reports the set of interfaces the agent is reachable on whenever it
+    // changes; the forwarder keeps one warm link per interface and selects the
+    // egress with the shared policy. Starting the probe last means the first
+    // discovery arrives with the forwarder already running.
     private func configureTransportSelection() {
-        let manager = self.manager
-        forwarder.onCandidateReady = { strategy in
-            manager.candidateDidBecomeReady(strategy: strategy)
-        }
-        forwarder.onCandidateFailed = { strategy in
-            manager.candidateDidFail(strategy: strategy)
-        }
-        forwarder.onActiveDropped = {
-            manager.activeLinkDidDrop()
-        }
-        probe.onEvaluation = { evaluation in
-            manager.handle(evaluation: evaluation)
+        let forwarder = self.forwarder
+        probe.onDiscover = { interfaces in
+            forwarder.reconcileLinks(interfaces)
         }
         probe.start()
         logger.notice("relay transport selection configured")
@@ -168,7 +157,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 forwarder.setServerEndpoint(endpoint)
             }
             controlClient.onConnectionDropped = {
-                forwarder.dropActiveLink()
+                forwarder.resetLinks()
             }
             controlClient.statusProvider = {
                 let lastError = self.flatMap { provider in
@@ -204,7 +193,6 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             controlClient.stop()
         }
         probe.stop()
-        manager.stop()
         forwarder.stop()
         cellularObserver.stop()
         statusState.withLock { state in

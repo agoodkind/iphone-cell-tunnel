@@ -100,9 +100,9 @@ extension PhoneRelayForwarder {
     }
 
     private func sendToMac(_ data: Data) {
-        guard let mac = macConnection else {
+        guard let mac = egressConnection else {
             metrics.addDropped()
-            logger.error("phone relay datagram to mac dropped error=no-current-mac-endpoint")
+            logger.error("phone relay datagram to mac dropped error=no-live-egress-link")
             return
         }
         if didLogMacSend.compareExchange(
@@ -322,9 +322,14 @@ extension PhoneRelayForwarder {
     }
 
     func stopOnQueue() {
-        cancelPendingEstablishOnQueue()
-        macConnection?.cancel()
-        macConnection = nil
+        linkMaintenanceTimer?.cancel()
+        linkMaintenanceTimer = nil
+        for link in macLinks.values {
+            link.connection.cancel()
+        }
+        macLinks.removeAll()
+        egressConnection = nil
+        hasLivePeer = false
         cellularConnection?.cancel()
         cellularConnection = nil
         pendingDatagrams.removeAll(keepingCapacity: false)

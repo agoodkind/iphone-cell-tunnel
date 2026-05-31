@@ -14,236 +14,151 @@ import Network
 // MARK: - Constants
 
 private let logger = CellTunnelLog.logger(category: .relay)
-private let relayServiceType = "_cellrelay._udp"
+private let nanosecondsPerMillisecond = 1_000_000
 
-// MARK: - Mac-facing link, make-before-break
+// MARK: - Mac-facing links: dial, prime, heartbeat, liveness, egress
 
-/// The transport manager drives this surface to switch the Mac-facing link
-/// without stopping traffic. `establishCandidate` dials a candidate to the agent
-/// over the chosen path class but does not prime or read it, so the agent does
-/// not adopt it and the old link keeps carrying. `promotePendingToActive` swaps
-/// the ready candidate in, primes it so the agent adopts it, and drops the old
-/// one. Every method runs only on `PhoneRelayForwarder.queue`.
+/// Keeps one warm link per reachable interface and selects the egress with the
+/// shared policy. The probe reports the interface set; this surface dials each
+/// new interface pinned to it, primes it so the agent adopts it, heartbeats every
+/// link to keep its liveness fresh, reaps a link that errors or misses its class
+/// deadline, and recomputes the cached egress pointer whenever the set or its
+/// liveness changes. Every method runs only on `PhoneRelayForwarder.queue`.
 extension PhoneRelayForwarder {
-    // MARK: - Manager entry points (hop onto the relay queue)
+    // MARK: - Reconcile
 
-    func establishCandidate(strategy: RelayDialStrategy) {
-        queue.async { [weak self] in
-            self?.establishOnQueue(strategy: strategy)
+    func reconcileOnQueue(_ interfaces: [RelayMacInterface]) {
+        let discovered = Set(interfaces.map(\.interfaceName))
+        for interface in interfaces where macLinks[interface.interfaceName] == nil {
+            dialLink(interface)
         }
+        for name in macLinks.keys where !discovered.contains(name) {
+            removeLink(interfaceName: name, reason: "no-longer-discovered")
+        }
+        recomputeEgress()
     }
 
-    func promotePendingToActive() {
-        queue.async { [weak self] in
-            self?.promoteOnQueue()
-        }
-    }
-
-    func cancelPendingEstablish() {
-        queue.async { [weak self] in
-            self?.cancelPendingEstablishOnQueue()
-        }
-    }
-
-    /// Drops the live link so the transport manager re-establishes it. The
-    /// provider calls this when the control plane reports the agent died or
-    /// restarted, because the UDP data connection does not surface that drop on
-    /// its own. Cancelling the connection routes through `handleMacConnectionState`
-    /// and `clearActiveMacConnection`, which fires `onActiveDropped`.
-    func dropActiveLink() {
-        queue.async { [weak self] in
-            guard let self, let connection = macConnection else {
-                return
-            }
-            logger.notice("phone relay dropping active link on control drop")
-            connection.cancel()
-        }
-    }
-
-    // MARK: - Candidate establishment (the make half)
-
-    private func establishOnQueue(strategy: RelayDialStrategy) {
-        cancelPendingEstablishOnQueue()
-        pendingStrategy = strategy
-        let parameters = NWParameters()
-        parameters.includePeerToPeer = strategy == .peerToPeer
-        let descriptor = NWBrowser.Descriptor.bonjour(type: relayServiceType, domain: nil)
-        let browser = NWBrowser(for: descriptor, using: parameters)
-        browser.stateUpdateHandler = { [weak self] state in
-            self?.handleBrowserState(state, strategy: strategy)
-        }
-        browser.browseResultsChangedHandler = { [weak self] results, _ in
-            self?.handleBrowseResults(results, strategy: strategy)
-        }
-        browser.start(queue: queue)
-        pendingBrowser = browser
-        logger.notice(
-            """
-            phone relay establishing candidate strategy=\(strategy.rawValue, privacy: .public) \
-            service=\(relayServiceType, privacy: .public)
-            """
-        )
-    }
-
-    private func handleBrowserState(_ state: NWBrowser.State, strategy: RelayDialStrategy) {
-        switch state {
-        case .ready:
-            logger.notice(
-                "phone relay candidate browser ready strategy=\(strategy.rawValue, privacy: .public)"
-            )
-        case .failed(let error):
-            logger.error(
-                """
-                phone relay candidate browser failed \
-                strategy=\(strategy.rawValue, privacy: .public) \
-                error=\(error.localizedDescription, privacy: .public)
-                """
-            )
-            failPending(strategy: strategy)
-        default:
-            break
-        }
-    }
-
-    private func handleBrowseResults(
-        _ results: Set<NWBrowser.Result>, strategy: RelayDialStrategy
-    ) {
-        guard pendingStrategy == strategy, pendingConnection == nil else {
+    func resetLinksOnQueue() {
+        guard !macLinks.isEmpty else {
             return
         }
-        for result in results {
-            if case .service = result.endpoint {
-                dialPendingOnQueue(endpoint: result.endpoint, strategy: strategy)
-                return
-            }
+        logger.notice("phone relay resetting all links on control drop")
+        for link in macLinks.values {
+            link.connection.cancel()
         }
+        macLinks.removeAll()
+        egressConnection = nil
+        recomputeEgress()
     }
 
-    private func dialPendingOnQueue(endpoint: NWEndpoint, strategy: RelayDialStrategy) {
+    // MARK: - Dial (one link per interface)
+
+    private func dialLink(_ interface: RelayMacInterface) {
         let parameters = NWParameters.udp
         parameters.allowLocalEndpointReuse = true
-        parameters.includePeerToPeer = strategy == .peerToPeer
-        let connection = NWConnection(to: endpoint, using: parameters)
-        pendingConnection = connection
+        parameters.includePeerToPeer = interface.linkClass == .peerToPeer
+        // Pin the connection to the discovered interface, so each interface
+        // becomes its own link instead of the system collapsing them onto one.
+        parameters.requiredInterface = interface.interface
+        let connection = NWConnection(to: interface.endpoint, using: parameters)
+        macLinks[interface.interfaceName] = PhoneMacLink(
+            interfaceName: interface.interfaceName,
+            linkClass: interface.linkClass,
+            connection: connection,
+            lastHeardMilliseconds: nowMilliseconds(),
+            isReady: false
+        )
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             guard let connection else {
                 return
             }
-            self?.handlePendingState(state, connection: connection, strategy: strategy)
+            self?.handleLinkState(
+                state, connection: connection, interfaceName: interface.interfaceName
+            )
         }
         connection.start(queue: queue)
-        startEstablishTimer(strategy: strategy)
         logger.notice(
             """
-            phone relay dialing candidate strategy=\(strategy.rawValue, privacy: .public) \
-            endpoint=\(String(describing: connection.endpoint), privacy: .public)
+            phone relay dialing link interface=\(interface.interfaceName, privacy: .public) \
+            class=\(interface.linkClass.rawValue, privacy: .public)
             """
         )
     }
 
-    private func handlePendingState(
-        _ state: NWConnection.State, connection: NWConnection, strategy: RelayDialStrategy
+    private func handleLinkState(
+        _ state: NWConnection.State, connection: NWConnection, interfaceName: String
     ) {
-        guard pendingConnection === connection else {
+        guard isCurrentLink(connection, interfaceName: interfaceName) else {
             return
         }
         switch state {
         case .ready:
-            establishTimer?.cancel()
-            establishTimer = nil
-            pendingBrowser?.cancel()
-            pendingBrowser = nil
+            macLinks[interfaceName]?.isReady = true
+            macLinks[interfaceName]?.lastHeardMilliseconds = nowMilliseconds()
             logger.notice(
-                "phone relay candidate ready strategy=\(strategy.rawValue, privacy: .public)"
+                "phone relay link ready interface=\(interfaceName, privacy: .public)"
             )
-            onCandidateReady?(strategy)
+            primeLink(connection)
+            receiveFromMac(on: connection, interfaceName: interfaceName)
+            recomputeEgress()
         case .failed(let error):
             logger.error(
                 """
-                phone relay candidate failed strategy=\(strategy.rawValue, privacy: .public) \
+                phone relay link failed interface=\(interfaceName, privacy: .public) \
                 error=\(error.localizedDescription, privacy: .public)
                 """
             )
-            failPending(strategy: strategy)
+            removeLink(interfaceName: interfaceName, reason: "failed")
+        case .cancelled:
+            removeLink(interfaceName: interfaceName, reason: "cancelled")
         default:
             break
         }
     }
 
-    private func startEstablishTimer(strategy: RelayDialStrategy) {
-        establishTimer?.cancel()
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(
-            deadline: .now() + .seconds(RelayTransportPolicy.candidateEstablishTimeoutSeconds)
+    func handleLinkReceiveError(
+        _ error: NWError, connection: NWConnection, interfaceName: String
+    ) {
+        logger.error(
+            """
+            phone relay link receive failed interface=\(interfaceName, privacy: .public) \
+            error=\(error.localizedDescription, privacy: .public)
+            """
         )
-        timer.setEventHandler { @Sendable [weak self] in
-            guard let self else {
-                return
-            }
-            logger.error(
-                "phone relay candidate timed out strategy=\(strategy.rawValue, privacy: .public)"
-            )
-            failPending(strategy: strategy)
-        }
-        timer.resume()
-        establishTimer = timer
+        connection.cancel()
+        removeLink(interfaceName: interfaceName, reason: "receive-error")
     }
 
-    private func failPending(strategy: RelayDialStrategy) {
-        cancelPendingEstablishOnQueue()
-        onCandidateFailed?(strategy)
+    // MARK: - Membership helpers
+
+    func isCurrentLink(_ connection: NWConnection, interfaceName: String) -> Bool {
+        macLinks[interfaceName]?.connection === connection
     }
 
-    func cancelPendingEstablishOnQueue() {
-        let hadPending = pendingBrowser != nil || pendingConnection != nil
-        establishTimer?.cancel()
-        establishTimer = nil
-        pendingBrowser?.cancel()
-        pendingBrowser = nil
-        pendingConnection?.cancel()
-        pendingConnection = nil
-        pendingStrategy = nil
-        if hadPending {
-            logger.notice("phone relay candidate establishment cancelled")
-        }
+    func stampLastHeard(interfaceName: String) {
+        macLinks[interfaceName]?.lastHeardMilliseconds = nowMilliseconds()
     }
 
-    // MARK: - Promotion (the break half)
-
-    private func promoteOnQueue() {
-        guard let promoted = pendingConnection else {
-            logger.error("phone relay promote requested with no pending candidate")
+    private func removeLink(interfaceName: String, reason: String) {
+        guard let link = macLinks.removeValue(forKey: interfaceName) else {
             return
         }
-        establishTimer?.cancel()
-        establishTimer = nil
-        pendingBrowser?.cancel()
-        pendingBrowser = nil
-        pendingConnection = nil
-        pendingStrategy = nil
-
-        let previous = macConnection
-        macConnection = promoted
-        promoted.stateUpdateHandler = { [weak self, weak promoted] state in
-            guard let promoted else {
-                return
-            }
-            self?.handleMacConnectionState(state, connection: promoted)
-        }
-        previous?.cancel()
-        onPeerChange?("Mac")
-        logger.notice("phone relay promoted candidate to active link")
-        receiveFromMac(on: promoted)
-        primeMacConnection(promoted)
+        link.connection.cancel()
+        logger.notice(
+            """
+            phone relay dropped link interface=\(interfaceName, privacy: .public) \
+            reason=\(reason, privacy: .public) links=\(self.macLinks.count, privacy: .public)
+            """
+        )
+        recomputeEgress()
     }
 
     // A UDP NWConnection has no peer until the first datagram is sent, so the
     // agent cannot learn the iPhone source endpoint to route replies. Send one
-    // empty datagram on promotion so the agent adopts this connection as the
-    // phone side. Priming only on promotion is what keeps make-before-break safe:
-    // an un-primed candidate is invisible to the agent, so the old link keeps
-    // carrying until the new one takes over here.
-    private func primeMacConnection(_ connection: NWConnection) {
+    // empty datagram so the agent adopts this connection as a phone link. The
+    // relay forwards only non-empty datagrams, so the prime never reaches
+    // WireGuard.
+    private func primeLink(_ connection: NWConnection) {
         connection.send(
             content: Data(),
             completion: .contentProcessed { error in
@@ -251,9 +166,132 @@ extension PhoneRelayForwarder {
                     return
                 }
                 logger.error(
-                    "phone relay mac prime failed error=\(error.localizedDescription, privacy: .public)"
+                    "phone relay link prime failed error=\(error.localizedDescription, privacy: .public)"
                 )
             }
         )
+    }
+
+    // MARK: - Maintenance: heartbeat and liveness sweep
+
+    func startMaintenanceTimer() {
+        linkMaintenanceTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        let interval = RelayTransportPolicy.heartbeatIntervalMilliseconds
+        timer.schedule(
+            deadline: .now() + .milliseconds(interval),
+            repeating: .milliseconds(interval)
+        )
+        timer.setEventHandler { @Sendable [weak self] in
+            self?.maintenanceTick()
+        }
+        timer.resume()
+        linkMaintenanceTimer = timer
+        logger.notice(
+            "phone relay link maintenance armed intervalMs=\(interval, privacy: .public)"
+        )
+    }
+
+    private func maintenanceTick() {
+        sendHeartbeats()
+        sweepDeadLinks()
+    }
+
+    private func sendHeartbeats() {
+        let ready = macLinks.values.filter(\.isReady)
+        guard !ready.isEmpty else {
+            return
+        }
+        if didLogMacHeartbeat.compareExchange(
+            expected: false, desired: true, ordering: .relaxed
+        ).exchanged {
+            logger.notice("phone relay heartbeat send path active")
+        }
+        for link in ready {
+            link.connection.send(
+                content: Data(),
+                completion: .contentProcessed { _ in
+                    // Best-effort heartbeat: a send error surfaces as the link
+                    // missing its liveness deadline, which the sweep reaps.
+                }
+            )
+        }
+    }
+
+    private func sweepDeadLinks() {
+        let now = nowMilliseconds()
+        let dead = macLinks.values.filter { link in
+            guard link.isReady else {
+                return false
+            }
+            let liveness = RelayLinkLiveness(
+                linkClass: link.linkClass,
+                lastHeardMilliseconds: link.lastHeardMilliseconds
+            )
+            return !liveness.isAlive(atMilliseconds: now)
+        }
+        guard !dead.isEmpty else {
+            return
+        }
+        for link in dead {
+            logger.notice(
+                """
+                phone relay reaping dead link interface=\(link.interfaceName, privacy: .public) \
+                class=\(link.linkClass.rawValue, privacy: .public)
+                """
+            )
+            link.connection.cancel()
+            macLinks.removeValue(forKey: link.interfaceName)
+        }
+        recomputeEgress()
+    }
+
+    // MARK: - Egress selection
+
+    /// Recomputes the cached egress pointer from the shared policy. The download
+    /// path reads one pointer per datagram; it is recomputed only here, when the
+    /// link set or liveness changes. A link counts as live only when its
+    /// connection is ready and within its class deadline.
+    func recomputeEgress() {
+        let now = nowMilliseconds()
+        let snapshots = macLinks.values.map { link in
+            let liveness = RelayLinkLiveness(
+                linkClass: link.linkClass,
+                lastHeardMilliseconds: link.lastHeardMilliseconds
+            )
+            let isLive = link.isReady && liveness.isAlive(atMilliseconds: now)
+            return RelayLinkSnapshot(
+                interfaceName: link.interfaceName,
+                linkClass: link.linkClass,
+                isLive: isLive
+            )
+        }
+        let plan = RelayLinkPolicy.plan(for: Array(snapshots))
+        let egressLink = plan.egressInterfaceName.flatMap { macLinks[$0] }
+        if let egressLink {
+            if egressConnection !== egressLink.connection {
+                logger.notice(
+                    "phone relay egress link interface=\(egressLink.interfaceName, privacy: .public)"
+                )
+            }
+            egressConnection = egressLink.connection
+        } else {
+            egressConnection = nil
+        }
+        updatePeerState(hasEgress: egressConnection != nil)
+    }
+
+    private func updatePeerState(hasEgress: Bool) {
+        guard hasEgress != hasLivePeer else {
+            return
+        }
+        hasLivePeer = hasEgress
+        onPeerChange?(hasEgress ? "Mac" : nil)
+    }
+
+    // MARK: - Time
+
+    func nowMilliseconds() -> Int {
+        Int(DispatchTime.now().uptimeNanoseconds / UInt64(nanosecondsPerMillisecond))
     }
 }

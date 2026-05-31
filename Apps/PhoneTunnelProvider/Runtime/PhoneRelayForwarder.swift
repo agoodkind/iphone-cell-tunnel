@@ -16,45 +16,63 @@ import Synchronization
 
 private let logger = CellTunnelLog.logger(category: .relay)
 
+// MARK: - PhoneMacLink
+
+/// One warm link to the Mac agent, keyed by the iPhone interface it runs over.
+/// The forwarder keeps one per reachable interface at once, so an abrupt loss of
+/// any link fails over to another without a redial. `lastHeardMilliseconds` is
+/// refreshed on every datagram, empty heartbeat or real data, and feeds the
+/// liveness check; `isReady` gates a link out of the egress set until its
+/// connection is up and primed.
+struct PhoneMacLink {
+    let interfaceName: String
+    let linkClass: RelayLinkClass
+    let connection: NWConnection
+    var lastHeardMilliseconds: Int
+    var isReady: Bool
+}
+
 // MARK: - PhoneRelayForwarder
 
-/// Owns the entire iPhone relay data plane on one serial queue: the Mac-facing
-/// NWConnection dialed to the agent, the cellular NWConnection to the WireGuard
-/// server, the connecting/ready state machine with its pending buffer, and the
-/// lock-free `RelayMetrics`. Every datagram in both directions is received,
-/// wrapped, and forwarded on this one queue with no per-packet actor hop, so
-/// throughput is not gated by the MainActor. The queue serializes only code
-/// execution for race-free shared state; the datagrams stay independent UDP
-/// sends with no added ordering or reliability.
+/// Owns the entire iPhone relay data plane on one serial queue: the set of warm
+/// Mac-facing links keyed by interface, the cellular NWConnection to the
+/// WireGuard server, the connecting/ready state machine with its pending buffer,
+/// and the lock-free `RelayMetrics`. Every datagram in both directions is
+/// received, wrapped, and forwarded on this one queue with no per-packet actor
+/// hop, so throughput is not gated by the MainActor.
 ///
-/// The transport manager chooses the Mac-facing link, not this class. The
-/// make-before-break dial and swap live in `PhoneRelayForwarder+Link.swift`, and
-/// the cellular and download halves live in `PhoneRelayForwarder+Cellular.swift`.
+/// Multi-link active-backup: the probe reports which interfaces the agent is
+/// reachable on, the forwarder dials one link per interface and keeps them all
+/// warm with a heartbeat, and the shared policy selects the single highest-scoring
+/// live link as the egress the download path sends on. An abrupt loss of the
+/// egress link is caught by a connection error or a missed liveness deadline, and
+/// the egress moves to the next live link with no redial. The dial, prime,
+/// heartbeat, and liveness live in `PhoneRelayForwarder+Link.swift`; the cellular
+/// and download halves live in `PhoneRelayForwarder+Cellular.swift`.
 ///
 /// The `@unchecked Sendable` contract: every stored property is read and written
-/// only on `queue`. All Network objects start with `.start(queue: queue)` so
-/// their callbacks fire on `queue`, and the public API funnels through
-/// `queue.async`. Lifecycle transitions are pushed to the MainActor UI through
-/// the `@Sendable` callbacks; nothing on the per-packet path touches MainActor.
+/// only on `queue`. All Network objects and timers start with `queue`, so their
+/// callbacks fire on `queue`, and the public API funnels through `queue.async`.
+/// Lifecycle transitions are pushed to the MainActor UI through the `@Sendable`
+/// callbacks; nothing on the per-packet path touches MainActor.
 final class PhoneRelayForwarder: @unchecked Sendable {
     let metrics = RelayMetrics()
 
     let queue = DispatchQueue(label: "CellTunnelPhone.RelayPlane")
-    var macConnection: NWConnection?
+
+    // The warm Mac-facing links keyed by iPhone interface name, the cached egress
+    // pointer the download path reads per datagram, and the maintenance timer that
+    // sends heartbeats and reaps dead links. All touched only on `queue`.
+    var macLinks: [String: PhoneMacLink] = [:]
+    var egressConnection: NWConnection?
+    var linkMaintenanceTimer: DispatchSourceTimer?
+    var hasLivePeer = false
+
     var cellularConnection: NWConnection?
     var endpointFamily = RelayAddressFamily.ipv4
     var state = WireGuardDatagramRelayState.stopped
     var pendingDatagrams: [WireGuardDatagram] = []
     var configuredEndpoint: RelayEndpoint?
-
-    // The in-flight candidate dial the manager asked for. The browser discovers
-    // the agent on the chosen path class and the connection is the make half of
-    // make-before-break; neither becomes the live link until promotion. Touched
-    // only on `queue`, shared with `PhoneRelayForwarder+Link.swift`.
-    var pendingBrowser: NWBrowser?
-    var pendingConnection: NWConnection?
-    var pendingStrategy: RelayDialStrategy?
-    var establishTimer: DispatchSourceTimer?
 
     // Bounds the datagrams handed to the cellular socket but not yet accepted, so
     // an upload faster than the cellular uplink cannot balloon the OS send buffer.
@@ -66,6 +84,7 @@ final class PhoneRelayForwarder: @unchecked Sendable {
     // (satisfying the boundary-log audit) instead of logging per datagram.
     let didLogMacReceive = Atomic<Bool>(false)
     let didLogMacSend = Atomic<Bool>(false)
+    let didLogMacHeartbeat = Atomic<Bool>(false)
     let didLogCellularReceive = Atomic<Bool>(false)
     let didLogCellularSend = Atomic<Bool>(false)
 
@@ -73,16 +92,13 @@ final class PhoneRelayForwarder: @unchecked Sendable {
     var onError: (@Sendable (String) -> Void)?
     var onPeerChange: (@Sendable (String?) -> Void)?
 
-    // The transport manager wires these to learn when a candidate is ready to
-    // promote, when a candidate dial gave up, and when the active link dropped.
-    var onCandidateReady: (@Sendable (RelayDialStrategy) -> Void)?
-    var onCandidateFailed: (@Sendable (RelayDialStrategy) -> Void)?
-    var onActiveDropped: (@Sendable () -> Void)?
-
     // MARK: - Public API (MainActor callers funnel onto the relay queue)
 
     func start() {
-        logger.notice("phone relay forwarder ready, awaiting transport manager")
+        queue.async { [weak self] in
+            self?.startMaintenanceTimer()
+        }
+        logger.notice("phone relay forwarder ready, awaiting discovery")
     }
 
     func setServerEndpoint(_ endpoint: RelayEndpoint) {
@@ -97,6 +113,23 @@ final class PhoneRelayForwarder: @unchecked Sendable {
         }
     }
 
+    /// Receives the current set of reachable Mac interfaces from the probe and
+    /// keeps the link set in step: dial any new interface, drop any that vanished.
+    func reconcileLinks(_ interfaces: [RelayMacInterface]) {
+        queue.async { [weak self] in
+            self?.reconcileOnQueue(interfaces)
+        }
+    }
+
+    /// Drops every link so they re-establish from the next discovery. The provider
+    /// calls this when the control plane reports the agent died or restarted,
+    /// because a UDP data link does not surface that drop on its own.
+    func resetLinks() {
+        queue.async { [weak self] in
+            self?.resetLinksOnQueue()
+        }
+    }
+
     func stop() {
         logger.notice("phone relay forwarder stop requested")
         queue.async { [weak self] in
@@ -104,46 +137,13 @@ final class PhoneRelayForwarder: @unchecked Sendable {
         }
     }
 
-    // MARK: - Active link drop handling (queue-only)
-
-    func handleMacConnectionState(_ state: NWConnection.State, connection: NWConnection) {
-        switch state {
-        case .failed(let error):
-            logger.error(
-                "phone relay mac connection failed error=\(error.localizedDescription, privacy: .public)"
-            )
-            onError?(error.localizedDescription)
-            connection.cancel()
-            clearActiveMacConnection(connection)
-        case .cancelled:
-            clearActiveMacConnection(connection)
-        default:
-            break
-        }
-    }
-
-    private func handleMacReceiveError(_ error: NWError, connection: NWConnection) {
-        logger.error(
-            "phone relay mac receive failed error=\(error.localizedDescription, privacy: .public)"
-        )
-        onError?(error.localizedDescription)
-        connection.cancel()
-        clearActiveMacConnection(connection)
-    }
-
-    private func clearActiveMacConnection(_ connection: NWConnection) {
-        guard macConnection === connection else {
-            return
-        }
-        macConnection = nil
-        onPeerChange?(nil)
-        logger.notice("phone relay active link cleared")
-        onActiveDropped?()
-    }
-
     // MARK: - Upload hot path (Mac -> server), queue-only, no actor hop
 
-    func receiveFromMac(on connection: NWConnection) {
+    /// Receives upload datagrams on one Mac link. Every link runs its own loop, so
+    /// the iPhone forwards the Mac's upload no matter which link the agent egresses
+    /// on. An empty datagram is a heartbeat: it refreshes the link's liveness and
+    /// is not forwarded to the server.
+    func receiveFromMac(on connection: NWConnection, interfaceName: String) {
         if didLogMacReceive.compareExchange(
             expected: false, desired: true, ordering: .relaxed
         ).exchanged {
@@ -153,19 +153,20 @@ final class PhoneRelayForwarder: @unchecked Sendable {
             guard let self, let connection else {
                 return
             }
-            guard macConnection === connection else {
+            guard isCurrentLink(connection, interfaceName: interfaceName) else {
                 return
             }
             if let error {
-                handleMacReceiveError(error, connection: connection)
+                handleLinkReceiveError(error, connection: connection, interfaceName: interfaceName)
                 return
             }
+            stampLastHeard(interfaceName: interfaceName)
             if let data, !data.isEmpty {
                 metrics.addBytesIn(UInt64(data.count))
                 metrics.addDatagramsFromMac()
                 sendToServer(data)
             }
-            receiveFromMac(on: connection)
+            receiveFromMac(on: connection, interfaceName: interfaceName)
         }
     }
 
