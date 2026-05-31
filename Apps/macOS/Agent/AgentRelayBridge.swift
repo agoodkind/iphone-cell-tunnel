@@ -16,29 +16,55 @@ import Network
 private let logger = CellTunnelLog.logger(category: .daemon)
 private let relayDataServiceType = "_cellrelay._udp"
 
+// MARK: - AgentPhoneLink
+
+/// One warm link from the iPhone, keyed by the Mac-facing interface it arrived
+/// on. The agent keeps one per interface at once so an abrupt loss of any link
+/// fails over to another without a redial. `lastHeardMilliseconds` is refreshed
+/// on every datagram, empty heartbeat or real data, and feeds the liveness check.
+struct AgentPhoneLink {
+    let interfaceName: String
+    let linkClass: RelayLinkClass
+    let connection: NWConnection
+    var lastHeardMilliseconds: Int
+}
+
 // MARK: - AgentRelayBridge
 
 /// Hosts the relay data plane in the agent, a normal process that receives
 /// inbound from both peers over UDP. One listener binds the relay data port and
-/// advertises the relay Bonjour service so the iPhone resolves the working path.
-/// Two parties dial it: the Mac tunnel extension over loopback, and the iPhone
-/// extension over the local link. The bridge classifies each accepted connection
-/// by remote host (loopback is the Mac, anything else is the iPhone) and forwards
-/// every datagram from one side to the other. Each datagram stays an independent
-/// UDP send with no added ordering or reliability; WireGuard owns end-to-end
-/// integrity.
+/// advertises the relay Bonjour service on every path, so the iPhone reaches it
+/// over the wired USB link, Wi-Fi LAN, and AWDL at once. The Mac tunnel extension
+/// dials it over loopback; the iPhone extension dials it once per interface, so
+/// the bridge holds one Mac connection and a set of phone links keyed by
+/// interface. Each datagram from the Mac goes out the egress phone link the
+/// shared policy selects; each datagram from any phone link goes to the Mac. Each
+/// send stays an independent UDP datagram with no added ordering or reliability;
+/// WireGuard owns end-to-end integrity and dedupes any duplicate.
 ///
 /// The `@unchecked Sendable` contract: every stored property is read and written
-/// only on `queue`. All Network objects start with `.start(queue: queue)` so
-/// their callbacks fire on `queue`.
+/// only on `queue`. All Network objects and timers start with `queue`, so their
+/// callbacks fire on `queue`.
 final class AgentRelayBridge: @unchecked Sendable {
-    private let queue = DispatchQueue(label: "io.goodkind.celltunnel.agent.relay")
+    let queue = DispatchQueue(label: "io.goodkind.celltunnel.agent.relay")
     private var listener: NWListener?
     private var macConnection: NWConnection?
-    private var phoneConnection: NWConnection?
 
-    /// Fired when the iPhone relay connection is adopted or dropped, so the agent
-    /// can tell the Mac extension to install or withdraw routes with the link.
+    // The warm phone links keyed by Mac-facing interface name, the cached egress
+    // pointer the upload path reads per datagram, and the maintenance timer that
+    // sends heartbeats and reaps dead links. All touched only on `queue`.
+    var phoneLinks: [String: AgentPhoneLink] = [:]
+    var egressConnection: NWConnection?
+    var maintenanceTimer: DispatchSourceTimer?
+
+    // Logs the heartbeat send path exactly once instead of per tick, so the
+    // network-send boundary is logged without flooding the log every interval.
+    var didLogHeartbeat = false
+
+    /// Fired when the first phone link goes live and when the last one drops, so
+    /// the agent tells the Mac extension to install or withdraw routes with the
+    /// link set. Route gating is any-link-up: routes install on the 0-to-one
+    /// transition and withdraw on the one-to-0 transition.
     var onPhoneConnected: (@Sendable () -> Void)?
     var onPhoneDisconnected: (@Sendable () -> Void)?
 
@@ -61,8 +87,8 @@ final class AgentRelayBridge: @unchecked Sendable {
         let parameters = NWParameters.udp
         parameters.allowLocalEndpointReuse = true
         // Advertise on every path, wired and peer-to-peer, so the relay service is
-        // reachable over the USB link, Wi-Fi LAN, and AWDL. The iPhone transport
-        // manager, not the agent, decides which path the data plane dials.
+        // reachable over the USB link, Wi-Fi LAN, and AWDL. The iPhone dials one
+        // link per interface; the agent keeps them all warm.
         parameters.includePeerToPeer = true
 
         let nwListener: NWListener
@@ -87,6 +113,7 @@ final class AgentRelayBridge: @unchecked Sendable {
         }
         nwListener.start(queue: queue)
         listener = nwListener
+        startMaintenanceTimer()
         logger.notice(
             """
             agent relay bridge starting service=\(relayDataServiceType, privacy: .public) \
@@ -98,8 +125,13 @@ final class AgentRelayBridge: @unchecked Sendable {
     private func stopOnQueue() {
         macConnection?.cancel()
         macConnection = nil
-        phoneConnection?.cancel()
-        phoneConnection = nil
+        maintenanceTimer?.cancel()
+        maintenanceTimer = nil
+        for link in phoneLinks.values {
+            link.connection.cancel()
+        }
+        phoneLinks.removeAll()
+        egressConnection = nil
         listener?.cancel()
         listener = nil
         logger.notice("agent relay bridge stopped")
@@ -118,16 +150,6 @@ final class AgentRelayBridge: @unchecked Sendable {
                 endpoint=\(String(describing: connection.endpoint), privacy: .public)
                 """
             )
-        } else {
-            phoneConnection?.cancel()
-            phoneConnection = connection
-            logger.notice(
-                """
-                agent relay bridge adopted phone connection \
-                endpoint=\(String(describing: connection.endpoint), privacy: .public)
-                """
-            )
-            onPhoneConnected?()
         }
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             guard let connection else {
@@ -141,6 +163,10 @@ final class AgentRelayBridge: @unchecked Sendable {
 
     private func handle(state: NWConnection.State, connection: NWConnection, isLoopback: Bool) {
         switch state {
+        case .ready:
+            if !isLoopback {
+                addPhoneLink(for: connection)
+            }
         case .failed(let error):
             logger.error(
                 """
@@ -158,11 +184,12 @@ final class AgentRelayBridge: @unchecked Sendable {
     }
 
     private func clearIfCurrent(_ connection: NWConnection, isLoopback: Bool) {
-        if isLoopback, macConnection === connection {
-            macConnection = nil
-        } else if !isLoopback, phoneConnection === connection {
-            phoneConnection = nil
-            onPhoneDisconnected?()
+        if isLoopback {
+            if macConnection === connection {
+                macConnection = nil
+            }
+        } else {
+            removePhoneLink(for: connection)
         }
     }
 
@@ -184,6 +211,11 @@ final class AgentRelayBridge: @unchecked Sendable {
                 clearIfCurrent(connection, isLoopback: fromMac)
                 return
             }
+            if !fromMac {
+                // Any datagram, empty heartbeat or real data, refreshes the link's
+                // liveness so a quiet but working link is not reaped.
+                stampLastHeard(for: connection)
+            }
             if let data, !data.isEmpty {
                 forward(data, fromMac: fromMac)
             }
@@ -192,7 +224,7 @@ final class AgentRelayBridge: @unchecked Sendable {
     }
 
     private func forward(_ data: Data, fromMac: Bool) {
-        let target = fromMac ? phoneConnection : macConnection
+        let target = fromMac ? egressConnection : macConnection
         guard let target else {
             return
         }
