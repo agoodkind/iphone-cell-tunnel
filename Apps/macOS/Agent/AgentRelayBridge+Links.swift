@@ -73,13 +73,16 @@ extension AgentRelayBridge {
         }
     }
 
-    /// Refreshes the link's last-heard time when any datagram arrives on its
-    /// connection, so a link carrying only heartbeats is not declared dead.
-    func stampLastHeard(for connection: NWConnection) {
-        guard let name = interfaceName(of: connection) else {
+    /// Records inbound activity on a phone connection. The first datagram admits
+    /// the link, reading the interface from the now-populated path; every later
+    /// datagram refreshes its last-heard time, so a link carrying only heartbeats
+    /// is not declared dead.
+    func notePhoneActivity(on connection: NWConnection) {
+        if let name = interfaceName(of: connection) {
+            phoneLinks[name]?.lastHeardMilliseconds = nowMilliseconds()
             return
         }
-        phoneLinks[name]?.lastHeardMilliseconds = nowMilliseconds()
+        addPhoneLink(for: connection)
     }
 
     private func interfaceName(of connection: NWConnection) -> String? {

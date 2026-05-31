@@ -163,10 +163,6 @@ final class AgentRelayBridge: @unchecked Sendable {
 
     private func handle(state: NWConnection.State, connection: NWConnection, isLoopback: Bool) {
         switch state {
-        case .ready:
-            if !isLoopback {
-                addPhoneLink(for: connection)
-            }
         case .failed(let error):
             logger.error(
                 """
@@ -212,9 +208,10 @@ final class AgentRelayBridge: @unchecked Sendable {
                 return
             }
             if !fromMac {
-                // Any datagram, empty heartbeat or real data, refreshes the link's
-                // liveness so a quiet but working link is not reaped.
-                stampLastHeard(for: connection)
+                // The first datagram on a phone connection (the prime) admits the
+                // link; every later datagram, empty heartbeat or real data,
+                // refreshes its liveness so a quiet but working link is not reaped.
+                notePhoneActivity(on: connection)
             }
             if let data, !data.isEmpty {
                 forward(data, fromMac: fromMac)
