@@ -60,7 +60,7 @@ final class AgentRelayBridge: @unchecked Sendable {
         let port = resolvedRelayListenerPort()
         let parameters = NWParameters.udp
         parameters.allowLocalEndpointReuse = true
-        parameters.includePeerToPeer = true
+        parameters.includePeerToPeer = RelayDataPathPolicy.includesPeerToPeer
 
         let nwListener: NWListener
         do {

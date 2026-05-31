@@ -78,7 +78,7 @@ final class PhoneRelayForwarder: @unchecked Sendable {
     private func startBrowseOnQueue() {
         macBrowser?.cancel()
         let parameters = NWParameters()
-        parameters.includePeerToPeer = true
+        parameters.includePeerToPeer = RelayDataPathPolicy.includesPeerToPeer
         let descriptor = NWBrowser.Descriptor.bonjour(type: relayServiceType, domain: nil)
         let browser = NWBrowser(for: descriptor, using: parameters)
         browser.stateUpdateHandler = { state in
@@ -114,7 +114,7 @@ final class PhoneRelayForwarder: @unchecked Sendable {
         }
         let parameters = NWParameters.udp
         parameters.allowLocalEndpointReuse = true
-        parameters.includePeerToPeer = true
+        parameters.includePeerToPeer = RelayDataPathPolicy.includesPeerToPeer
         let connection = NWConnection(to: endpoint, using: parameters)
         macConnection = connection
         connection.stateUpdateHandler = { [weak self, weak connection] state in
