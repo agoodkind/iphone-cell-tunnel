@@ -268,13 +268,10 @@ extension PhoneRelayForwarder {
         macConnection = nil
         cellularConnection?.cancel()
         cellularConnection = nil
-        listener?.cancel()
-        listener = nil
         pendingDatagrams.removeAll(keepingCapacity: false)
         configuredEndpoint = nil
         state = .stopped
         onPeerChange?(nil)
-        onListenerReady?(nil)
         onStateChange?(state)
         logger.notice("phone relay forwarder stopped")
     }

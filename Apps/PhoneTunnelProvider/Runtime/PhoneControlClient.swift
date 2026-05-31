@@ -35,6 +35,7 @@ final class PhoneControlClient {
     private var statusTimer: DispatchSourceTimer?
 
     var onSetServerEndpoint: EndpointHandler?
+    var onMacHost: (@MainActor (NWEndpoint.Host) -> Void)?
     var statusProvider: StatusProvider?
     private(set) var lastError: String?
 
@@ -128,6 +129,7 @@ final class PhoneControlClient {
         switch state {
         case .ready:
             logger.notice("control client connection ready")
+            reportMacHost(from: connection)
             receive(on: connection)
             startStatusLoop()
         case .waiting(let error):
@@ -151,6 +153,22 @@ final class PhoneControlClient {
         default:
             break
         }
+    }
+
+    // The data plane dials the same Mac host the control connection resolved to,
+    // on the known relay data port, so the iPhone reaches the agent's relay
+    // listener without a separate browse.
+    private func reportMacHost(from connection: NWConnection) {
+        guard case .hostPort(let host, _) = connection.currentPath?.remoteEndpoint else {
+            logger.error(
+                "control client could not read mac host from path recovery=skip-data-dial"
+            )
+            return
+        }
+        logger.notice(
+            "control client resolved mac host=\(String(describing: host), privacy: .public)"
+        )
+        onMacHost?(host)
     }
 
     // MARK: - Receive and decode

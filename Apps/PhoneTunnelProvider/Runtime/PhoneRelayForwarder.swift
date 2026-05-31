@@ -5,17 +5,16 @@ import Network
 import Synchronization
 
 private let logger = CellTunnelLog.logger(category: .relay)
-private let relayServiceType = "_cellrelay._udp"
 
 /// Owns the entire iPhone relay data plane on one serial queue: the Mac-facing
-/// NWListener and accepted connection, the cellular NWConnection to the
-/// WireGuard server, the connecting/ready state machine with its pending
-/// buffer, and the lock-free `RelayMetrics`. Every datagram in both directions
-/// is received, wrapped, and forwarded on this one queue with no per-packet
-/// actor hop, so throughput is not gated by the MainActor. The queue serializes
-/// only code execution for race-free shared state; the datagrams stay
-/// independent UDP sends with no added ordering or reliability. The cellular and
-/// download halves live in `PhoneRelayForwarder+Cellular.swift`.
+/// NWConnection dialed to the agent, the cellular NWConnection to the WireGuard
+/// server, the connecting/ready state machine with its pending buffer, and the
+/// lock-free `RelayMetrics`. Every datagram in both directions is received,
+/// wrapped, and forwarded on this one queue with no per-packet actor hop, so
+/// throughput is not gated by the MainActor. The queue serializes only code
+/// execution for race-free shared state; the datagrams stay independent UDP
+/// sends with no added ordering or reliability. The cellular and download halves
+/// live in `PhoneRelayForwarder+Cellular.swift`.
 ///
 /// The `@unchecked Sendable` contract: every stored property is read and written
 /// only on `queue`. All Network objects start with `.start(queue: queue)` so
@@ -26,7 +25,6 @@ final class PhoneRelayForwarder: @unchecked Sendable {
     let metrics = RelayMetrics()
 
     let queue = DispatchQueue(label: "CellTunnelPhone.RelayPlane")
-    var listener: NWListener?
     var macConnection: NWConnection?
     var cellularConnection: NWConnection?
     var endpointFamily = RelayAddressFamily.ipv4
@@ -44,16 +42,19 @@ final class PhoneRelayForwarder: @unchecked Sendable {
     var onStateChange: (@Sendable (WireGuardDatagramRelayState) -> Void)?
     var onError: (@Sendable (String) -> Void)?
     var onPeerChange: (@Sendable (String?) -> Void)?
-    var onListenerReady: (@Sendable (UInt16?) -> Void)?
 
     // MARK: - Public API (MainActor callers funnel onto the relay queue)
 
-    func startListener(port: NWEndpoint.Port, serviceName: String) {
+    func connectToMac(host: NWEndpoint.Host, port: NWEndpoint.Port) {
         logger.notice(
-            "phone relay forwarder listener requested service=\(relayServiceType, privacy: .public)"
+            """
+            phone relay forwarder mac dial requested \
+            host=\(String(describing: host), privacy: .public) \
+            port=\(port.rawValue ?? 0, privacy: .public)
+            """
         )
         queue.async { [weak self] in
-            self?.startListenerOnQueue(port: port, serviceName: serviceName)
+            self?.connectToMacOnQueue(host: host, port: port)
         }
     }
 
@@ -76,65 +77,14 @@ final class PhoneRelayForwarder: @unchecked Sendable {
         }
     }
 
-    // MARK: - Listener (queue-only)
-
-    private func startListenerOnQueue(port: NWEndpoint.Port, serviceName: String) {
-        do {
-            let parameters = NWParameters.udp
-            parameters.allowLocalEndpointReuse = true
-            parameters.includePeerToPeer = true
-            let listener = try NWListener(using: parameters, on: port)
-            listener.service = NWListener.Service(name: serviceName, type: relayServiceType)
-            listener.newConnectionHandler = { [weak self] connection in
-                self?.adoptMacConnection(connection)
-            }
-            listener.stateUpdateHandler = { [weak self] state in
-                self?.handleListenerState(state)
-            }
-            listener.start(queue: queue)
-            self.listener = listener
-            logger.notice(
-                """
-                phone relay listener started service=\(relayServiceType, privacy: .public) \
-                name=\(serviceName, privacy: .public)
-                """
-            )
-        } catch {
-            logger.error(
-                "phone relay listener failed error=\(error.localizedDescription, privacy: .public)"
-            )
-            onError?(error.localizedDescription)
-            onListenerReady?(nil)
-        }
-    }
-
-    private func handleListenerState(_ state: NWListener.State) {
-        switch state {
-        case .ready:
-            let port = listener?.port?.rawValue
-            logger.notice("phone relay listener ready port=\(port ?? 0, privacy: .public)")
-            onListenerReady?(port)
-        case .failed(let error):
-            logger.error(
-                "phone relay listener state failed error=\(error.localizedDescription, privacy: .public)"
-            )
-            onError?(error.localizedDescription)
-            onListenerReady?(nil)
-        case .cancelled:
-            logger.notice("phone relay listener cancelled")
-            onListenerReady?(nil)
-        default:
-            logger.debug("phone relay listener state changed")
-        }
-    }
-
     // MARK: - Mac-facing connection (queue-only)
 
-    private func adoptMacConnection(_ connection: NWConnection) {
-        if let existing = macConnection, existing !== connection {
-            logger.notice("phone relay replacing previous mac connection")
-            existing.cancel()
-        }
+    private func connectToMacOnQueue(host: NWEndpoint.Host, port: NWEndpoint.Port) {
+        macConnection?.cancel()
+        let parameters = NWParameters.udp
+        parameters.allowLocalEndpointReuse = true
+        parameters.includePeerToPeer = true
+        let connection = NWConnection(host: host, port: port, using: parameters)
         macConnection = connection
         connection.stateUpdateHandler = { [weak self, weak connection] state in
             guard let connection else {
@@ -145,9 +95,31 @@ final class PhoneRelayForwarder: @unchecked Sendable {
         connection.start(queue: queue)
         onPeerChange?("Mac")
         logger.notice(
-            "phone relay accepting mac connection endpoint=\(String(describing: connection.endpoint), privacy: .public)"
+            """
+            phone relay dialing mac \
+            endpoint=\(String(describing: connection.endpoint), privacy: .public)
+            """
         )
         receiveFromMac(on: connection)
+        primeMacConnection(connection)
+    }
+
+    // A UDP NWConnection has no peer until the first datagram is sent, so the
+    // agent cannot learn the iPhone source endpoint to route replies. Send one
+    // empty datagram on connect so the agent adopts this connection as the phone
+    // side before any WireGuard handshake reply arrives.
+    private func primeMacConnection(_ connection: NWConnection) {
+        connection.send(
+            content: Data(),
+            completion: .contentProcessed { error in
+                guard let error else {
+                    return
+                }
+                logger.error(
+                    "phone relay mac prime failed error=\(error.localizedDescription, privacy: .public)"
+                )
+            }
+        )
     }
 
     private func handleMacConnectionState(_ state: NWConnection.State, connection: NWConnection) {
@@ -204,16 +176,9 @@ final class PhoneRelayForwarder: @unchecked Sendable {
             if let data, !data.isEmpty {
                 metrics.addBytesIn(UInt64(data.count))
                 metrics.addDatagramsFromMac()
-                adoptMacConnectionIfNeeded(connection)
                 sendToServer(data)
             }
             receiveFromMac(on: connection)
-        }
-    }
-
-    private func adoptMacConnectionIfNeeded(_ connection: NWConnection) {
-        if macConnection !== connection {
-            adoptMacConnection(connection)
         }
     }
 
