@@ -75,9 +75,12 @@ final class PhoneRelayForwarder: @unchecked Sendable {
 
     // Bounds the datagrams handed to the cellular socket but not yet accepted, so
     // an upload faster than the cellular uplink cannot balloon the OS send buffer.
-    // Without this cap the buffer grows under upload load, inflating latency and
-    // throttling the upload; dropping past the cap lets WireGuard pace itself.
-    let outstandingCellularSends = Atomic<Int>(0)
+    // The window sizes the bound from the measured send-buffer wait to hold loaded
+    // upload latency low; the counter is the datagrams currently in flight against
+    // it. Both are read and written only on `queue`, so neither needs an atomic.
+    var cellularSendWindow = CellularSendWindow()
+    var outstandingCellularSends = 0
+    var loggedSendAllowance = 0
 
     // Once-only flags so each boundary function logs context exactly once
     // (satisfying the boundary-log audit) instead of logging per datagram.

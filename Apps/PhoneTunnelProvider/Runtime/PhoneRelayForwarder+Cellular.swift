@@ -5,10 +5,10 @@ import Network
 
 private let logger = CellTunnelLog.logger(category: .relay)
 private let pendingWireGuardDatagramLimit = 64
-// Cap on datagrams handed to the cellular socket but not yet accepted. Roughly
-// two to three times the upload bandwidth-delay product, enough to keep the
-// uplink busy without letting the send buffer grow into multi-hundred-ms latency.
-private let maxOutstandingCellularSends = 256
+private let nanosecondsPerMillisecond = 1_000_000.0
+// The allowance is logged only when it crosses this multiple from the last logged
+// value, so a steadily adjusting controller does not log per datagram.
+private let allowanceLogBand = 2
 
 // Renders an interface type for diagnostics so the log shows which physical path
 // the relay used (cellular for egress, wiredEthernet/other for the Mac link).
@@ -145,16 +145,20 @@ extension PhoneRelayForwarder {
         ).exchanged {
             logger.notice("cellular relay send path active")
         }
-        if outstandingCellularSends.load(ordering: .relaxed) >= maxOutstandingCellularSends {
+        if outstandingCellularSends >= cellularSendWindow.allowance {
             metrics.addDropped()
             return
         }
-        outstandingCellularSends.wrappingAdd(1, ordering: .relaxed)
+        outstandingCellularSends += 1
+        let sentAtNanoseconds = DispatchTime.now().uptimeNanoseconds
         let metrics = self.metrics
         connection.send(
             content: datagram.data,
             completion: .contentProcessed { [weak self] error in
-                self?.outstandingCellularSends.wrappingSubtract(1, ordering: .relaxed)
+                guard let self else {
+                    return
+                }
+                outstandingCellularSends -= 1
                 if let error {
                     metrics.addDropped()
                     logger.error(
@@ -162,8 +166,31 @@ extension PhoneRelayForwarder {
                     )
                     return
                 }
+                let waitNanoseconds = DispatchTime.now().uptimeNanoseconds - sentAtNanoseconds
+                recordCellularSendWait(Double(waitNanoseconds) / nanosecondsPerMillisecond)
                 metrics.addDatagramsToServer()
             }
+        )
+    }
+
+    // Folds the measured send-buffer wait into the window that sizes the in-flight
+    // allowance, and logs the allowance only when it crosses a doubling band from
+    // the last logged value, so the controller is observable without a per-datagram
+    // log flood.
+    private func recordCellularSendWait(_ milliseconds: Double) {
+        cellularSendWindow.recordWait(milliseconds: milliseconds)
+        let allowance = cellularSendWindow.allowance
+        let grewPastBand = allowance >= loggedSendAllowance * allowanceLogBand
+        let shrankPastBand = allowance * allowanceLogBand <= loggedSendAllowance
+        guard loggedSendAllowance == 0 || grewPastBand || shrankPastBand else {
+            return
+        }
+        loggedSendAllowance = allowance
+        logger.notice(
+            """
+            cellular send window allowance=\(allowance, privacy: .public) \
+            smoothedWaitMs=\(Int(self.cellularSendWindow.smoothedWaitMilliseconds), privacy: .public)
+            """
         )
     }
 
@@ -339,7 +366,9 @@ extension PhoneRelayForwarder {
         cellularConnection?.cancel()
         cellularConnection = nil
         pendingDatagrams.removeAll(keepingCapacity: false)
-        outstandingCellularSends.store(0, ordering: .relaxed)
+        outstandingCellularSends = 0
+        cellularSendWindow = CellularSendWindow()
+        loggedSendAllowance = 0
         configuredEndpoint = nil
         state = .stopped
         onPeerChange?(nil)
