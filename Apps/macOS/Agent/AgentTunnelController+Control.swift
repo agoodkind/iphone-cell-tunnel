@@ -34,6 +34,7 @@ extension AgentTunnelController {
         let listener = AgentControlListener(serverEndpoint: endpoint)
         controlListener = listener
         try await listener.start()
+        relayBridge.start()
         logger.notice(
             """
             agent control listener started host=\(endpoint.host, privacy: .public) \
@@ -45,7 +46,8 @@ extension AgentTunnelController {
     func stopControlListener() async {
         await controlListener?.stop()
         controlListener = nil
-        logger.notice("agent control listener cleared on tunnel stop")
+        relayBridge.stop()
+        logger.notice("agent control link cleared on tunnel stop")
     }
 
     // MARK: - Endpoint parsing
