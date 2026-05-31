@@ -5,6 +5,10 @@ import Network
 
 private let logger = CellTunnelLog.logger(category: .relay)
 private let pendingWireGuardDatagramLimit = 64
+// Cap on datagrams handed to the cellular socket but not yet accepted. Roughly
+// two to three times the upload bandwidth-delay product, enough to keep the
+// uplink busy without letting the send buffer grow into multi-hundred-ms latency.
+private let maxOutstandingCellularSends = 256
 
 func cellularWireGuardUDPState(for state: NWConnection.State) -> CellularWireGuardUDPState {
     switch state {
@@ -116,10 +120,16 @@ extension PhoneRelayForwarder {
         ).exchanged {
             logger.notice("cellular relay send path active")
         }
+        if outstandingCellularSends.load(ordering: .relaxed) >= maxOutstandingCellularSends {
+            metrics.addDropped()
+            return
+        }
+        outstandingCellularSends.wrappingAdd(1, ordering: .relaxed)
         let metrics = self.metrics
         connection.send(
             content: datagram.data,
-            completion: .contentProcessed { error in
+            completion: .contentProcessed { [weak self] error in
+                self?.outstandingCellularSends.wrappingSubtract(1, ordering: .relaxed)
                 if let error {
                     metrics.addDropped()
                     logger.error(
@@ -271,6 +281,7 @@ extension PhoneRelayForwarder {
         cellularConnection?.cancel()
         cellularConnection = nil
         pendingDatagrams.removeAll(keepingCapacity: false)
+        outstandingCellularSends.store(0, ordering: .relaxed)
         configuredEndpoint = nil
         state = .stopped
         onPeerChange?(nil)

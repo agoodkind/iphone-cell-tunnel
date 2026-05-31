@@ -34,6 +34,12 @@ final class PhoneRelayForwarder: @unchecked Sendable {
     var pendingDatagrams: [WireGuardDatagram] = []
     var configuredEndpoint: RelayEndpoint?
 
+    // Bounds the datagrams handed to the cellular socket but not yet accepted, so
+    // an upload faster than the cellular uplink cannot balloon the OS send buffer.
+    // Without this cap the buffer grows under upload load, inflating latency and
+    // throttling the upload; dropping past the cap lets WireGuard pace itself.
+    let outstandingCellularSends = Atomic<Int>(0)
+
     // Once-only flags so each boundary function logs context exactly once
     // (satisfying the boundary-log audit) instead of logging per datagram.
     let didLogMacReceive = Atomic<Bool>(false)
