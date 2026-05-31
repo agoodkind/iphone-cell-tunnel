@@ -33,7 +33,7 @@ Each component handles only its own leg and knows nothing of the others.
 - Mac WireGuard: produces and consumes encrypted UDP datagrams. Knows nothing about the link.
 - Mac packet-tunnel extension: bridges WireGuard datagrams to and from the agent over loopback.
 - Mac agent: hosts the relay data listener, bridging datagrams between the Mac extension over loopback and the iPhone over the local link.
-- iPhone packet-tunnel extension: dials the agent, then bridges the link datagram channel to and from the cellular UDP socket to the WireGuard server. It also chooses which path the local link uses and changes it on its own. See "Path selection".
+- iPhone packet-tunnel extension: dials the agent, then bridges the link datagram channel to and from the cellular UDP socket to the WireGuard server. It also chooses which path the local link uses and changes it on its own. See "Path selection". It limits how many datagrams sit in the cellular socket at once and sizes that limit from the time each datagram waits for the socket to accept it, so the local send buffer stays short and upload latency under load stays low.
 
 WireGuard is a transport tool, not a participant. Its handshake carries no project logic. The only WireGuard timing the project sets is `PersistentKeepalive = 25` from the config.
 
