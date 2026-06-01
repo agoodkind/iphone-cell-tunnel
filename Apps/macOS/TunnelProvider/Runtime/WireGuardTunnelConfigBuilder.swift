@@ -10,6 +10,12 @@ import WireGuardKit
 // pointless server-name DNS lookup at tunnel start.
 private let relayPlaceholderPeerHost = "::1"
 
+// WireGuard cryptokey routing must accept every captured packet for the single
+// relay peer, so the peer's allowed IPs span all addresses. The route gate
+// decides the operating-system routes the tunnel captures separately from these
+// values, so this breadth never widens the captured route set.
+private let cryptoAllowedIPRepresentations = ["0.0.0.0/0", "::/0"]
+
 enum WireGuardTunnelConfigBuildError: LocalizedError {
     case invalidEndpointPort(String)
     case invalidInterfaceAddress(String)
@@ -56,7 +62,9 @@ enum WireGuardTunnelConfigBuilder {
             throw WireGuardTunnelConfigBuildError.invalidPrivateKey
         }
         var interfaceConfig = InterfaceConfiguration(privateKey: privateKey)
-        interfaceConfig.addresses = try section.addresses.map { try ipAddressRange(from: $0) }
+        interfaceConfig.addresses = try section.addresses.map { prefix in
+            try interfaceAddressRange(from: prefix)
+        }
         interfaceConfig.listenPort = section.listenPort
         if let mtu = section.mtu {
             interfaceConfig.mtu = UInt16(clamping: mtu)
@@ -78,8 +86,11 @@ enum WireGuardTunnelConfigBuilder {
             }
             peerConfig.preSharedKey = presharedKey
         }
-        peerConfig.allowedIPs = try section.allowedIPs.map { prefix in
-            try ipAddressRange(from: prefix, asPeerAllowedIP: true)
+        peerConfig.allowedIPs = try cryptoAllowedIPRepresentations.map { representation in
+            guard let range = IPAddressRange(from: representation) else {
+                throw WireGuardTunnelConfigBuildError.invalidPeerAllowedIP(representation)
+            }
+            return range
         }
         if let parsedEndpoint = section.endpoint {
             peerConfig.endpoint = try endpoint(from: parsedEndpoint)
@@ -88,15 +99,11 @@ enum WireGuardTunnelConfigBuilder {
         return peerConfig
     }
 
-    private static func ipAddressRange(
-        from prefix: AddressPrefix,
-        asPeerAllowedIP: Bool = false
+    private static func interfaceAddressRange(
+        from prefix: AddressPrefix
     ) throws -> IPAddressRange {
         let representation = "\(prefix.address)/\(prefix.prefixLength)"
         guard let range = IPAddressRange(from: representation) else {
-            if asPeerAllowedIP {
-                throw WireGuardTunnelConfigBuildError.invalidPeerAllowedIP(representation)
-            }
             throw WireGuardTunnelConfigBuildError.invalidInterfaceAddress(representation)
         }
         return range

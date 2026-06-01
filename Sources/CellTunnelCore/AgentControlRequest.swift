@@ -17,6 +17,7 @@ public protocol TunnelControlClientProtocol: Sendable {
 public enum AgentControlRequest: Codable, Sendable {
     case check
     case listRelayServices
+    case reloadTunnel(TunnelStartSettings)
     case reset
     case selectRelayService(serviceID: String)
     case startRelayDiscovery
@@ -27,6 +28,7 @@ public enum AgentControlRequest: Codable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case kind
+        case reloadSettings
         case serviceID
         case startSettings
     }
@@ -34,6 +36,7 @@ public enum AgentControlRequest: Codable, Sendable {
     private enum Kind: String, Codable {
         case check
         case listRelayServices
+        case reloadTunnel
         case reset
         case selectRelayService
         case startRelayDiscovery
@@ -51,6 +54,9 @@ public enum AgentControlRequest: Codable, Sendable {
             self = .check
         case .listRelayServices:
             self = .listRelayServices
+        case .reloadTunnel:
+            let settings = try container.decode(TunnelStartSettings.self, forKey: .reloadSettings)
+            self = .reloadTunnel(settings)
         case .reset:
             self = .reset
         case .selectRelayService:
@@ -77,6 +83,9 @@ public enum AgentControlRequest: Codable, Sendable {
             try container.encode(Kind.check, forKey: .kind)
         case .listRelayServices:
             try container.encode(Kind.listRelayServices, forKey: .kind)
+        case .reloadTunnel(let settings):
+            try container.encode(Kind.reloadTunnel, forKey: .kind)
+            try container.encode(settings, forKey: .reloadSettings)
         case .reset:
             try container.encode(Kind.reset, forKey: .kind)
         case .selectRelayService(let serviceID):

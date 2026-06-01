@@ -59,6 +59,28 @@ actor WireGuardRuntime {
         logger.notice("tunnel runtime start completed")
     }
 
+    /// Reconfigures the running tunnel in place with a new configuration, without
+    /// a stop and start. The adapter reapplies network settings and pushes the new
+    /// config to the backend while preserving the relay bind, so the relay keeps
+    /// carrying datagrams. No effect when the tunnel is not started.
+    func update(tunnelConfiguration: TunnelConfiguration) async {
+        guard let adapter else {
+            logger.notice("tunnel runtime update skipped, adapter not started")
+            return
+        }
+        await withCheckedContinuation { continuation in
+            adapter.update(tunnelConfiguration: tunnelConfiguration) { updateError in
+                if let updateError {
+                    logger.error(
+                        "tunnel runtime update returned errorDetail=\(String(describing: updateError), privacy: .public)"
+                    )
+                }
+                continuation.resume()
+            }
+        }
+        logger.notice("tunnel runtime update completed")
+    }
+
     func stop() async {
         guard let adapter else {
             return

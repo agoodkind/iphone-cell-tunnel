@@ -61,6 +61,8 @@ actor AgentTunnelController {
             return await handleCheck()
         case .startTunnel(let settings):
             return await handleStartTunnel(settings: settings)
+        case .reloadTunnel(let settings):
+            return await handleReloadTunnel(settings: settings)
         case .stopTunnel:
             return await handleStopTunnel()
         case .reset:
@@ -265,7 +267,7 @@ actor AgentTunnelController {
         return AgentControlResponse(discovery: snapshot)
     }
 
-    private func forwardStatus(
+    func forwardStatus(
         on manager: NETunnelProviderManager
     ) async throws -> AgentControlResponse {
         let response = try await forward(request: .status, on: manager, operationName: "status")
@@ -277,7 +279,7 @@ actor AgentTunnelController {
 }
 
 extension AgentTunnelController {
-    private func loadOrCreateManager() async throws -> NETunnelProviderManager {
+    func loadOrCreateManager() async throws -> NETunnelProviderManager {
         if let manager {
             return manager
         }
@@ -337,7 +339,7 @@ extension AgentTunnelController {
         session.stopTunnel()
     }
 
-    private func isSessionActive(on manager: NETunnelProviderManager) -> Bool {
+    func isSessionActive(on manager: NETunnelProviderManager) -> Bool {
         switch manager.connection.status {
         case .connected, .connecting, .reasserting:
             return true
@@ -393,7 +395,7 @@ extension AgentTunnelController {
         }
     }
 
-    private func forward(
+    func forward(
         request: ProviderControlRequest,
         on manager: NETunnelProviderManager,
         operationName: String
@@ -448,7 +450,7 @@ extension AgentTunnelController {
         )
     }
 
-    private func readConfigText(at path: String) throws -> String {
+    func readConfigText(at path: String) throws -> String {
         let expanded = (path as NSString).expandingTildeInPath
         return try String(contentsOf: URL(fileURLWithPath: expanded), encoding: .utf8)
     }

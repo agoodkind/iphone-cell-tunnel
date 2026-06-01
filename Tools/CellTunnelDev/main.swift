@@ -56,6 +56,10 @@ func printHelp() {
                       start, wait for connected). Required: --config <path>.
                       Options: --relay <name>, --discover-timeout <s>,
                       --connect-timeout <s>.
+          relay-reload
+                      Apply an edited WireGuard config to the running tunnel in
+                      place, with no restart and no VPN profile save. Required:
+                      --config <path>.
           relay-status
                       Print the current tunnel daemon status snapshot.
           relay-down  Stop the relay tunnel.
@@ -270,6 +274,9 @@ func runDiagnosticCommand(_ command: String) throws -> Bool {
         return true
     case "relay-up":
         try runRelayUp(arguments)
+        return true
+    case "relay-reload":
+        try runRelayReload(arguments)
         return true
     case "relay-status":
         try runRelayStatus(arguments)

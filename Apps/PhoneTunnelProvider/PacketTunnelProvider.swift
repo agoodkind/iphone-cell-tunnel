@@ -15,6 +15,12 @@ private let tunnelRemoteAddress = "127.0.0.1"
 private let tunnelLocalAddress = "10.7.0.2"
 private let tunnelLocalSubnetMask = "255.255.255.255"
 
+// A unique-local IPv6 address for the tunnel interface so iOS reports a VPN IPv6
+// address. It is a host address with no included routes, matching the IPv4
+// address, so the provider still captures none of the phone's traffic.
+private let tunnelLocalAddressIPv6 = "fd00::2"
+private let tunnelLocalIPv6PrefixLength: NSNumber = 128
+
 // The completion handler arrives from Objective-C without a Sendable marking;
 // box it so the start Task can call it across the concurrency boundary.
 private struct UncheckedSendableBox<Value>: @unchecked Sendable {
@@ -67,10 +73,16 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             addresses: [tunnelLocalAddress],
             subnetMasks: [tunnelLocalSubnetMask]
         )
-        // No includedRoutes: the provider must capture neither the phone's
-        // traffic nor the relay's own cellular socket, so the relay can egress.
+        let ipv6Settings = NEIPv6Settings(
+            addresses: [tunnelLocalAddressIPv6],
+            networkPrefixLengths: [tunnelLocalIPv6PrefixLength]
+        )
+        // No includedRoutes on either family: the provider must capture neither
+        // the phone's traffic nor the relay's own cellular socket, so the relay
+        // can egress.
         let settings = NEPacketTunnelNetworkSettings(tunnelRemoteAddress: tunnelRemoteAddress)
         settings.ipv4Settings = ipv4Settings
+        settings.ipv6Settings = ipv6Settings
 
         logger.notice(
             """
@@ -240,6 +252,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     ) -> ProviderControlResponse {
         switch request {
         case .status:
+            return ProviderControlResponse(status: currentStatusSnapshot())
+        case .reloadConfig:
+            // WireGuard runs on the Mac; the iPhone relay holds no config to reload.
             return ProviderControlResponse(status: currentStatusSnapshot())
         case .setRouteState:
             // Route gating is a Mac-side concern; the iPhone relay ignores it.

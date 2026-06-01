@@ -81,6 +81,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let configText = try extractWireGuardConfigText()
         let parsedConfig = try WireGuardConfigParser.parse(configText)
 
+        // Seed the captured route set from the config's AllowedIPs before
+        // WireGuard applies settings, so the gate installs the scoped routes and
+        // never the wide routes WireGuard derives from the broad cryptokey
+        // allowed IPs.
+        let programRoutes = ProgramRouteSet.routes(from: parsedConfig.peer.allowedIPs)
+        _ = routeGate.setProgramRoutes(ipv4: programRoutes.ipv4, ipv6: programRoutes.ipv6)
+
         let agentEndpoint = Self.agentRelayEndpoint()
         try relayTransport.connect(to: agentEndpoint)
         logger.notice(
@@ -157,12 +164,66 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         switch request {
         case .status:
             return ProviderControlResponse(status: currentStatusSnapshot())
+        case .reloadConfig(let text):
+            return reloadConfig(text)
         case .setRouteState(let installed):
             applyRouteState(installed)
             return ProviderControlResponse(status: currentStatusSnapshot())
         case .discoverySnapshot:
             // Discovery is owned by the agent; the extension holds no browser.
             return ProviderControlResponse(discovery: TunnelDiscoverySnapshot())
+        }
+    }
+
+    // Applies an edited config to the running tunnel in place. It re-seeds the
+    // captured route set and applies it immediately, then reconfigures WireGuard
+    // with the new config, with no session restart and no VPN profile save. The
+    // WireGuard update preserves the relay bind, so the relay keeps carrying
+    // datagrams across the change.
+    private func reloadConfig(_ text: String) -> ProviderControlResponse {
+        do {
+            let parsedConfig = try WireGuardConfigParser.parse(text)
+            let programRoutes = ProgramRouteSet.routes(from: parsedConfig.peer.allowedIPs)
+            if let settings = routeGate.setProgramRoutes(
+                ipv4: programRoutes.ipv4,
+                ipv6: programRoutes.ipv6
+            ) {
+                super.setTunnelNetworkSettings(settings, completionHandler: nil)
+            }
+            // The parsed config is Sendable; the WireGuard configuration it builds
+            // is not, so build it inside the task and hand it straight to the
+            // runtime, keeping the non-Sendable value from crossing a concurrency
+            // boundary.
+            let runtime = wireGuardRuntime
+            let configForUpdate = parsedConfig
+            Task {
+                do {
+                    let tunnelConfiguration = try WireGuardTunnelConfigBuilder.build(
+                        from: configForUpdate,
+                        name: "CellTunnel"
+                    )
+                    await runtime.update(tunnelConfiguration: tunnelConfiguration)
+                } catch {
+                    logger.error(
+                        """
+                        tunnel config reload update failed \
+                        details=\(String(describing: error), privacy: .public) recovery=keep-running
+                        """
+                    )
+                }
+            }
+            logger.notice("tunnel config reload applied")
+            return ProviderControlResponse(status: currentStatusSnapshot())
+        } catch {
+            logger.error(
+                """
+                tunnel config reload failed \
+                details=\(String(describing: error), privacy: .public) recovery=keep-running
+                """
+            )
+            return ProviderControlResponse(
+                failureMessage: "reload failed: \(error.localizedDescription)"
+            )
         }
     }
 
@@ -207,10 +268,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     private func currentStatusSnapshot() -> TunnelDaemonStatusSnapshot {
         let running = wireGuardRelayBind != nil
+        let addresses = routeGate.recordedAddresses()
         return TunnelDaemonStatusSnapshot(
             running: running,
             routeState: routeGate.isInstalled ? .installed : .notInstalled,
             peerState: running ? .wireGuardConfigured : .notSelected,
+            ipv4Address: addresses.ipv4,
+            ipv6Address: addresses.ipv6,
             macCounters: relayMetrics.snapshot()
         )
     }

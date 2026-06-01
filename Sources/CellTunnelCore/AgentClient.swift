@@ -51,6 +51,17 @@ import Foundation
             return try requireStatus(from: response, operationName: "startTunnel")
         }
 
+        public func reloadTunnel(
+            settings: TunnelStartSettings
+        ) async throws -> TunnelDaemonStatusSnapshot {
+            logger.notice("agent client invoked rpc=reload-tunnel")
+            let response = try await send(
+                request: .reloadTunnel(settings),
+                operationName: "reloadTunnel"
+            )
+            return try requireStatus(from: response, operationName: "reloadTunnel")
+        }
+
         public func stopTunnel() async throws -> TunnelDaemonStatusSnapshot {
             logger.notice("agent client invoked rpc=stop-tunnel")
             let response = try await send(request: .stopTunnel, operationName: "stopTunnel")

@@ -77,6 +77,23 @@ func runRelayUp(_ arguments: [String]) throws {
     }
 }
 
+// MARK: - relay-reload
+
+/// Applies an edited WireGuard config to the already-running tunnel without a
+/// restart or a VPN profile save. It reads the config file and asks the agent to
+/// reload it in place, then prints the resulting status snapshot.
+func runRelayReload(_ arguments: [String]) throws {
+    let configPath = try parseRelayReloadConfigPath(arguments)
+    relayControlLogger.notice("relay-reload starting")
+    printToolOutput("relay-reload: config=\(configPath)")
+    try runRelayCommand { client in
+        let settings = TunnelStartSettings(wireGuardConfigPath: configPath)
+        let status = try await client.reloadTunnel(settings: settings)
+        printToolOutput(status.renderedOutput)
+        printToolOutput("relay-reload: applied")
+    }
+}
+
 // MARK: - relay-status / relay-down
 
 /// Prints the current tunnel daemon status snapshot from the agent.
@@ -276,6 +293,27 @@ private func parseRelayUpOptions(_ arguments: [String]) throws -> RelayUpOptions
         relayName: relayName,
         discoverTimeoutSeconds: discoverTimeoutSeconds,
         connectTimeoutSeconds: connectTimeoutSeconds)
+}
+
+/// Parses `relay-reload` options: required `--config <path>`.
+private func parseRelayReloadConfigPath(_ arguments: [String]) throws -> String {
+    var configPath: String?
+    var index = arguments.startIndex
+    while index < arguments.endIndex {
+        let argument = arguments[index]
+        let value = relayOptionValue(arguments, after: index)
+        switch argument {
+        case relayConfigOptionName:
+            configPath = try requireRelayOptionValue(value, optionName: relayConfigOptionName)
+        default:
+            throw ToolError.usage("relay-reload: unknown argument \(argument)")
+        }
+        index = arguments.index(index, offsetBy: relayOptionStride)
+    }
+    guard let resolvedConfigPath = configPath else {
+        throw ToolError.usage("relay-reload requires \(relayConfigOptionName) <path>")
+    }
+    return (resolvedConfigPath as NSString).expandingTildeInPath
 }
 
 /// Parses an optional `<optionName> <seconds>` pair, falling back to the default
