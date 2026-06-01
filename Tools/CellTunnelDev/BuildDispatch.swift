@@ -11,6 +11,7 @@ enum BuildTarget: String, CaseIterable {
     case iphoneDevice = "iphone-device"
     case iphoneSimulator = "iphone-simulator"
     case mac
+    case macCatalyst = "mac-catalyst"
 }
 
 let buildTargetUsage = BuildTarget.allCases.map(\.rawValue).joined(separator: "|")
@@ -25,6 +26,9 @@ func buildProject(target: BuildTarget, configuration: String) throws {
     case .mac:
         try buildMacAgent(configuration: configuration)
         try buildMacTunnelProvider(configuration: configuration)
+    case .macCatalyst:
+        let team = try developmentTeamFromEnvironment()
+        try buildMacCatalyst(configuration: configuration, developmentTeam: team)
     case .iphoneSimulator:
         try buildIPhoneSimulator(configuration: configuration)
     case .iphoneDevice:
@@ -95,6 +99,29 @@ private func buildIPhoneSimulator(configuration: String) throws {
         destination: ProcessInfo.processInfo.environment["IOS_SIMULATOR_DESTINATION"]
             ?? "generic/platform=iOS Simulator",
         platformName: iOSSimulatorPlatformName
+    )
+}
+
+// Builds the iPhone app target as a Mac Catalyst product. The same
+// CellTunnelPhone scheme yields the iPhone app and the Mac app; the destination
+// variant selects the Mac Catalyst slice, and the Mac build reads the agent over
+// XPC rather than hosting a tunnel. The Catalyst entitlements require a
+// development certificate, so signing is supplied the way the iPhone device build
+// supplies it.
+private func buildMacCatalyst(configuration: String, developmentTeam: String) throws {
+    buildDispatchLogger.notice(
+        "building CellTunnelPhone Mac Catalyst configuration=\(configuration, privacy: .public)"
+    )
+    try buildScheme(
+        scheme: "CellTunnelPhone",
+        configuration: configuration,
+        destination: "generic/platform=macOS,variant=Mac Catalyst",
+        platformName: macCatalystPlatformName,
+        xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments(),
+        buildSettings: [
+            "CODE_SIGN_STYLE": "Automatic",
+            "DEVELOPMENT_TEAM": developmentTeam,
+        ]
     )
 }
 

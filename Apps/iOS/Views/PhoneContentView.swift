@@ -16,7 +16,7 @@ private let readyStateText = "Ready"
 // MARK: - Status screen
 
 struct PhoneContentView: View {
-    @Bindable var relayController: PhoneRelayController
+    @Bindable var relayController: RelayController
     @State private var isPresentingDebugConsole = false
 
     var body: some View {
@@ -108,7 +108,7 @@ extension View {
     #if DEBUG
         @ViewBuilder func debugConsoleToolbar(
             isPresented: Binding<Bool>,
-            relayController: PhoneRelayController
+            relayController: RelayController
         ) -> some View {
             toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -126,7 +126,7 @@ extension View {
     #else
         func debugConsoleToolbar(
             isPresented _: Binding<Bool>,
-            relayController _: PhoneRelayController
+            relayController _: RelayController
         ) -> some View {
             self
         }
@@ -134,5 +134,9 @@ extension View {
 }
 
 #Preview {
-    PhoneContentView(relayController: PhoneRelayController())
+    #if targetEnvironment(macCatalyst)
+        PhoneContentView(relayController: RelayController(backend: AgentRelayBackend()))
+    #else
+        PhoneContentView(relayController: RelayController(backend: PhoneRelayBackend()))
+    #endif
 }

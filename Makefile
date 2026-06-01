@@ -10,7 +10,7 @@
 CONFIG ?= Debug
 CELL_TUNNEL_DEV := swift Tools/cell-tunnel-dev.swift
 ACTIVATION_TARGET_USAGE := mac|iphone|iphone-simulator
-BUILD_TARGET_USAGE := daemon|mac|iphone-simulator|iphone-device|all
+BUILD_TARGET_USAGE := daemon|mac|mac-catalyst|iphone-simulator|iphone-device|all
 
 SWIFT_MK_MODULES := swift-build.mk xcconfig.mk
 
@@ -28,6 +28,7 @@ XCCONFIG_EXPORTED_VARS := \
 	PROVIDER_BUNDLE_ID \
 	PHONE_BUNDLE_ID \
 	AGENT_MACH_SERVICE_NAME \
+	AGENT_XPC_SESSION_SERVICE_NAME \
 	AGENT_LAUNCH_AGENT_PLIST_NAME \
 	AGENT_EXECUTABLE_NAME \
 	AGENT_APP_BUNDLE_NAME \

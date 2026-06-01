@@ -10,6 +10,8 @@
     <dict>
         <key>[[AGENT_MACH_SERVICE_NAME]]</key>
         <true/>
+        <key>[[AGENT_XPC_SESSION_SERVICE_NAME]]</key>
+        <true/>
     </dict>
     <key>AssociatedBundleIdentifiers</key>
     <array>

@@ -37,6 +37,14 @@ Each component handles only its own leg and knows nothing of the others.
 
 WireGuard is a transport tool, not a participant. Its handshake carries no project logic. The only WireGuard timing the project sets is `PersistentKeepalive = 25` from the config.
 
+## User interface
+
+One app target, `CellTunnelPhone`, builds two products from the same SwiftUI screens. The iPhone product drives the iPhone relay and shows the status screen and the developer console. The Mac product is built through Mac Catalyst and is a read-only front-end to the agent: it shows the same screens filled from the agent's status snapshot and owns no tunnel.
+
+The views bind to one observable controller, `RelayController`, which holds a `RelayControlBackend` and never branches on platform. Two backends sit behind it. `PhoneRelayBackend` (iPhone) owns the tunnel manager, the on-demand rule, the device-name publish, and the status poll over the provider message channel. `AgentRelayBackend` (Mac) reads the agent's status and maps it onto the same reading the views render.
+
+The Mac cannot reach the agent the way `celltunnelctl` does, because a Mac Catalyst app cannot open an `NSXPCConnection` to a mach service. It instead opens an `XPCSession` to a second mach service the agent advertises, `AGENT_XPC_SESSION_SERVICE_NAME`, served by `AgentSessionListener` over the modern libxpc protocol. Both the new listener and the existing `NSXPCListener` decode the same `AgentControlEnvelope` JSON and call the same controller, so the proven `celltunnelctl` path is unchanged.
+
 ## Path selection
 
 The iPhone keeps a connection to the agent open over every reachable path at once and carries traffic on one of them, so a path loss moves traffic to an already-open path without a reconnect.

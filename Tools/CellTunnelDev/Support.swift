@@ -17,6 +17,7 @@ let derivedDataDirectory = buildDirectory.appendingPathComponent("DerivedData")
 let macOSPlatformName = "macosx"
 let iOSDevicePlatformName = "iphoneos"
 let iOSSimulatorPlatformName = "iphonesimulator"
+let macCatalystPlatformName = "maccatalyst"
 let phoneBundleIdentifier = "io.goodkind.CellTunnelPhone"
 let phoneActivationArgument = "--cell-tunnel-start-relay"
 let phoneListenerPortArgument = "--cell-tunnel-port"

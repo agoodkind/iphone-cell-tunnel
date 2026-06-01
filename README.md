@@ -8,6 +8,7 @@ Cell Tunnel routes a Mac's internet traffic through an iPhone's native cellular 
 - `CellTunnelAgent` is a user-space background agent (an `LSUIElement` LaunchAgent registered via `SMAppService.agent`) that owns the `NETunnelProviderManager`, runs continuous Bonjour discovery of iPhone relays, persists the selected device, and embeds the macOS tunnel provider extension.
 - The tunnel provider extension is the `NEPacketTunnelProvider` embedded in the agent. It owns the data path: WireGuard, the relay transport to the iPhone, and the typed control channel.
 - The iPhone relay app runs the relay forwarder and a control listener, binds its cellular egress, and forwards encrypted datagrams between the Mac and the WireGuard server.
+- The same app target also builds for Mac through Mac Catalyst, sharing the iPhone's SwiftUI screens. The Mac build is a read-only front-end to the agent, reaching it over XPC and showing the Mac tunnel's status; it owns no tunnel of its own.
 
 ## Build
 
@@ -15,6 +16,7 @@ Builds run lint and audit gates first. `TARGET` is required.
 
 ```sh
 make build TARGET=mac CONFIG=Debug
+make build TARGET=mac-catalyst CONFIG=Debug
 make build TARGET=iphone-device CONFIG=Debug
 make build TARGET=iphone-simulator CONFIG=Debug
 ```
@@ -52,6 +54,8 @@ celltunnelctl stop                    # stop the tunnel
 ```
 
 The iPhone app is always-on. It auto-starts the relay on launch and on returning to the foreground, with no Start button, and shows a minimal status screen with relay state, cellular egress, throughput, and dropped counts.
+
+The Mac Catalyst build shows the same status screen and the ladybug developer console, populated from the agent over XPC. It is a viewer: control still happens through `celltunnelctl`. Build it with `make build TARGET=mac-catalyst CONFIG=Debug`.
 
 ## Requirements
 

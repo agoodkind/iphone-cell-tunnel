@@ -53,6 +53,22 @@ let cellTunnelPhoneBaseSettings: SettingsDictionary = [
     "PRODUCT_NAME": "CellTunnelPhone",
     "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "",
     "REGISTER_APP_GROUPS": "YES",
+    // The Mac Catalyst build keeps the iPhone bundle identifier so it stays in the
+    // same app group, and signs from a Catalyst-only entitlements file that adds
+    // the mach-lookup allowance for the agent service and drops the tunnel
+    // entitlement. Adding .macCatalyst to the destinations turns on
+    // SUPPORTS_MACCATALYST.
+    "DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER": "NO",
+    "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]":
+        "$(SRCROOT)/Apps/iOS/Entitlements/CellTunnelPhone-Catalyst.entitlements",
+    // Tuist writes CODE_SIGN_IDENTITY = "-" (ad-hoc) at target level for the macOS
+    // SDK, which the Catalyst entitlements reject because they require a
+    // development certificate. Forwarding the xcconfig signing values for the
+    // macOS SDK only lets the Catalyst slice sign like the Mac agent while the
+    // iPhone slice is untouched.
+    "CODE_SIGN_IDENTITY[sdk=macosx*]": "$(CODE_SIGN_IDENTITY)",
+    "CODE_SIGN_STYLE[sdk=macosx*]": "$(CODE_SIGN_STYLE)",
+    "DEVELOPMENT_TEAM[sdk=macosx*]": "$(DEVELOPMENT_TEAM)",
 ]
 
 let appDependencies: [TargetDependency] = [
@@ -70,7 +86,8 @@ let tunnelProviderDependencies: [TargetDependency] =
 // here too.
 let xcconfigEnvKeys =
     "AGENT_BUNDLE_ID PROVIDER_BUNDLE_ID PHONE_BUNDLE_ID "
-    + "AGENT_MACH_SERVICE_NAME AGENT_LAUNCH_AGENT_PLIST_NAME "
+    + "AGENT_MACH_SERVICE_NAME AGENT_XPC_SESSION_SERVICE_NAME "
+    + "AGENT_LAUNCH_AGENT_PLIST_NAME "
     + "AGENT_EXECUTABLE_NAME AGENT_APP_BUNDLE_NAME "
     + "APP_GROUP_ID BUNDLE_ID_PREFIX"
 
@@ -114,7 +131,7 @@ let project = Project(
     targets: [
         .target(
             name: "CellTunnelCore",
-            destinations: [.iPhone, .mac],
+            destinations: [.iPhone, .mac, .macCatalyst],
             product: .framework,
             bundleId: "$(BUNDLE_ID_PREFIX).CellTunnelCore",
             infoPlist: .default,
@@ -127,7 +144,7 @@ let project = Project(
         ),
         .target(
             name: "CellTunnelLog",
-            destinations: [.iPhone, .mac],
+            destinations: [.iPhone, .mac, .macCatalyst],
             product: .framework,
             bundleId: "$(BUNDLE_ID_PREFIX).CellTunnelLog",
             infoPlist: .default,
@@ -138,7 +155,7 @@ let project = Project(
         ),
         .target(
             name: "CellTunnelPhone",
-            destinations: [.iPhone],
+            destinations: [.iPhone, .macCatalyst],
             product: .app,
             bundleId: "$(PHONE_BUNDLE_ID)",
             deploymentTargets: iOSDeploymentTarget,
@@ -147,7 +164,13 @@ let project = Project(
                 "Apps/iOS/**"
             ],
             entitlements: .file(path: "Apps/iOS/Entitlements/CellTunnelPhone.entitlements"),
-            dependencies: appDependencies + [.target(name: "CellTunnelPhoneTunnel")],
+            dependencies: appDependencies + [
+                // The iPhone build embeds the relay tunnel extension. The Mac
+                // Catalyst build hosts no tunnel and reads the agent over XPC, so
+                // the extension is scoped to iPhone to keep it out of the Catalyst
+                // product and avoid a duplicate framework producer.
+                .target(name: "CellTunnelPhoneTunnel", condition: .when([.ios]))
+            ],
             settings: .settings(base: cellTunnelPhoneBaseSettings)
         ),
         .target(

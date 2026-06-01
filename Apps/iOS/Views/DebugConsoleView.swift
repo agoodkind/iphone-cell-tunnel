@@ -1,3 +1,11 @@
+//
+//  DebugConsoleView.swift
+//  CellTunnelPhone
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-23.
+//  Copyright © 2026
+//
+
 #if DEBUG
     import CellTunnelCore
     import CellTunnelLog
@@ -8,20 +16,19 @@
     private let valueNone = "None"
 
     /// DEBUG-only developer console for live debugging against the real relay
-    /// infra: the iOS relay listener in the background extension, the Mac
-    /// control/data link, and the cellular egress. Most rows read
-    /// `PhoneRelayController`'s `@Observable` state, which the status poller fills
-    /// from the extension, so they auto-update; the buttons drive real
-    /// interactions and report their latest outcome inline. Nothing here is a
-    /// synthetic unit test.
+    /// infra. Most rows read `RelayController`'s observable state, which the status
+    /// poll fills from the platform backend, so they auto-update. The buttons drive
+    /// real interactions and report their latest outcome inline. The console runs on
+    /// both platforms: the iPhone reads its on-device tunnel, the Mac reads the
+    /// agent over XPC.
     struct DebugConsoleView: View {
-        let relayController: PhoneRelayController
+        let relayController: RelayController
 
         @Environment(\.dismiss) private var dismiss
         @State private var endpointText = ""
         @State private var restartResult = ""
-        @State private var cellularProbeResult = ""
-        @State private var isProbingCellular = false
+        @State private var serverProbeResult = ""
+        @State private var isProbingServer = false
 
         var body: some View {
             NavigationStack {
@@ -29,6 +36,7 @@
                     relaySection
                     macLinkSection
                     cellularSection
+                    environmentSection
                     countersSection
                 }
                 .navigationTitle("Developer")
@@ -37,6 +45,9 @@
                         Button("Done") { dismiss() }
                     }
                 }
+            }
+            .task {
+                await relayController.refreshEnvironmentChecks()
             }
         }
 
@@ -77,12 +88,22 @@
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                 Button {
-                    probeCellular()
+                    probeServer()
                 } label: {
-                    Label("Probe server over cellular", systemImage: "cellularbars")
+                    Label("Probe server", systemImage: "dot.radiowaves.left.and.right")
                 }
-                .disabled(isProbingCellular)
-                resultCaption(cellularProbeResult)
+                .disabled(isProbingServer)
+                resultCaption(serverProbeResult)
+            }
+        }
+
+        @ViewBuilder private var environmentSection: some View {
+            if !relayController.environmentChecks.isEmpty {
+                Section("Environment") {
+                    ForEach(relayController.environmentChecks, id: \.name) { check in
+                        LabeledContent(check.name, value: check.value)
+                    }
+                }
             }
         }
 
@@ -132,32 +153,28 @@
 
         // MARK: - Actions
 
-        // The relay runs in the background extension now, so a restart cycles the
-        // VPN session via the controller rather than tearing down an in-app
-        // forwarder.
+        // The relay runs in the platform backend, so a restart cycles it through the
+        // controller rather than tearing down an in-app forwarder.
         private func restartRelay() {
             logger.notice("developer console restart relay requested")
             Task {
-                await relayController.stop()
-                await relayController.start()
+                await relayController.restartRelay()
             }
             restartResult = "Relay restarting"
         }
 
-        private func probeCellular() {
-            logger.notice("developer console cellular probe requested")
-            guard let endpoint = DebugConsoleProbes.parseEndpoint(from: endpointText) else {
-                cellularProbeResult = "Enter host:port first"
+        private func probeServer() {
+            logger.notice("developer console server probe requested")
+            guard let endpoint = RelayServerProbe.parseEndpoint(from: endpointText) else {
+                serverProbeResult = "Enter host:port first"
                 return
             }
-            isProbingCellular = true
-            cellularProbeResult = "Probing..."
+            isProbingServer = true
+            serverProbeResult = "Probing..."
             Task {
-                let result = await DebugConsoleProbes.probeServerOverCellular(endpoint: endpoint)
-                await MainActor.run {
-                    cellularProbeResult = result.detail
-                    isProbingCellular = false
-                }
+                let result = await relayController.probeServer(endpoint: endpoint)
+                isProbingServer = false
+                serverProbeResult = result.detail
             }
         }
     }

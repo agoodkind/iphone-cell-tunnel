@@ -4,6 +4,7 @@
 import Foundation
 
 public let agentMachServiceName = "[[AGENT_MACH_SERVICE_NAME]]"
+public let agentXPCSessionServiceName = "[[AGENT_XPC_SESSION_SERVICE_NAME]]"
 public let agentLaunchAgentPlistName = "[[AGENT_LAUNCH_AGENT_PLIST_NAME]]"
 public let agentBinaryName = "[[AGENT_EXECUTABLE_NAME]]"
 public let agentAppBundleName = "[[AGENT_APP_BUNDLE_NAME]]"

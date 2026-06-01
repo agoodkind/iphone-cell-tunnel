@@ -28,6 +28,7 @@ final class AgentRuntime: @unchecked Sendable {
     private var idleTimer: DispatchSourceTimer?
     private var relayActive = false
     private var server: AgentXPCServer?
+    private var sessionListener: AgentSessionListener?
 
     // MARK: - Lifecycle
 
@@ -39,6 +40,13 @@ final class AgentRuntime: @unchecked Sendable {
         self.server = server
         listener.delegate = server
         listener.resume()
+        // The modern libxpc listener serves the same control protocol to the Mac
+        // Catalyst app, which cannot open an NSXPCConnection to a mach service.
+        let sessionListener = AgentSessionListener(controller: controller) { [weak self] in
+            self?.resetIdleTimer()
+        }
+        self.sessionListener = sessionListener
+        sessionListener.start()
         resetIdleTimer()
         wireRelayActivityHold()
         logger.notice(
