@@ -1,3 +1,11 @@
+//
+//  ProviderControlRequest.swift
+//  CellTunnelCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-27.
+//  Copyright © 2026, all rights reserved.
+//
+
 import Foundation
 
 public let providerControlWireVersion = 1
@@ -55,6 +63,8 @@ public enum ProviderControlRequest: Codable, Sendable {
     }
 }
 
+// MARK: - ProviderControlEnvelope
+
 public struct ProviderControlEnvelope: Codable, Sendable {
     public var version: Int
     public var request: ProviderControlRequest
@@ -64,6 +74,8 @@ public struct ProviderControlEnvelope: Codable, Sendable {
         self.request = request
     }
 }
+
+// MARK: - ProviderControlResponse
 
 public struct ProviderControlResponse: Codable, Sendable {
     public var version: Int

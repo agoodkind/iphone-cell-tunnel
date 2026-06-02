@@ -1,3 +1,11 @@
+//
+//  WireGuardTunnelConfigBuilder.swift
+//  CellTunnelTunnelProvider
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-27.
+//  Copyright © 2026, all rights reserved.
+//
+
 import Foundation
 import Network
 import WireGuardKit
@@ -41,6 +49,8 @@ enum WireGuardTunnelConfigBuildError: LocalizedError {
         }
     }
 }
+
+// MARK: - WireGuardTunnelConfigBuilder
 
 enum WireGuardTunnelConfigBuilder {
     static func build(

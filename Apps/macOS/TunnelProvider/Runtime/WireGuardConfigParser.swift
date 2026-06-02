@@ -1,3 +1,11 @@
+//
+//  WireGuardConfigParser.swift
+//  CellTunnelTunnelProvider
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-27.
+//  Copyright © 2026, all rights reserved.
+//
+
 import CellTunnelLog
 import Foundation
 
@@ -63,9 +71,13 @@ enum WireGuardConfigError: LocalizedError {
     }
 }
 
+// MARK: - WireGuardKey
+
 struct WireGuardKey: Equatable, Sendable {
     let hexValue: String
 }
+
+// MARK: - WireGuardEndpoint
 
 struct WireGuardEndpoint: Equatable, Sendable {
     let host: String
@@ -80,12 +92,16 @@ struct WireGuardEndpoint: Equatable, Sendable {
     }
 }
 
+// MARK: - WireGuardInterfaceSection
+
 struct WireGuardInterfaceSection: Equatable, Sendable {
     var privateKey: WireGuardKey?
     var addresses: [AddressPrefix] = []
     var listenPort: UInt16?
     var mtu: Int?
 }
+
+// MARK: - WireGuardPeerSection
 
 struct WireGuardPeerSection: Equatable, Sendable {
     var publicKey: WireGuardKey?
@@ -95,10 +111,14 @@ struct WireGuardPeerSection: Equatable, Sendable {
     var persistentKeepaliveSeconds: UInt16?
 }
 
+// MARK: - WireGuardClientConfig
+
 struct WireGuardClientConfig: Equatable, Sendable {
     var interface: WireGuardInterfaceSection
     var peer: WireGuardPeerSection
 }
+
+// MARK: - WireGuardConfigParser
 
 enum WireGuardConfigParser {
     static func load(from url: URL) throws -> WireGuardClientConfig {
@@ -322,6 +342,8 @@ enum WireGuardConfigParser {
         return WireGuardEndpoint(host: host, port: port, isIPv6Literal: isIPv6)
     }
 }
+
+// MARK: - WireGuardClientConfig
 
 extension WireGuardClientConfig {
     func uapiConfig(endpointOverride: WireGuardEndpoint? = nil) -> String {

@@ -1,3 +1,11 @@
+//
+//  ActivationActions.swift
+//  CellTunnelDev
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-24.
+//  Copyright © 2026, all rights reserved.
+//
+
 import Foundation
 
 private let keyValuePairComponentCount = 2
@@ -51,9 +59,13 @@ func phoneSimulatorAppPath(configuration: String) -> URL {
     ).appendingPathComponent("CellTunnelPhone.app")
 }
 
+// MARK: - SimulatorDeviceList
+
 struct SimulatorDeviceList: Decodable {
     let devices: [String: [SimulatorDevice]]
 }
+
+// MARK: - SimulatorDevice
 
 struct SimulatorDevice: Decodable {
     let udid: String
@@ -64,9 +76,13 @@ struct SimulatorDevice: Decodable {
     let state: String
 }
 
+// MARK: - SimulatorRuntimeList
+
 struct SimulatorRuntimeList: Decodable {
     let runtimes: [SimulatorRuntime]
 }
+
+// MARK: - SimulatorRuntime
 
 struct SimulatorRuntime: Decodable {
     let identifier: String
@@ -76,11 +92,15 @@ struct SimulatorRuntime: Decodable {
     let version: String
 }
 
+// MARK: - SimulatorSupportedDeviceType
+
 struct SimulatorSupportedDeviceType: Decodable {
     let identifier: String
     let name: String
     let productFamily: String
 }
+
+// MARK: - AvailableSimulator
 
 struct AvailableSimulator {
     let runtimeIdentifier: String
@@ -281,6 +301,8 @@ func preferredSimulatorRuntime() throws -> SimulatorRuntime {
 func bootPhoneSimulator(identifier: String) throws {
     try run("xcrun", ["simctl", "bootstatus", identifier, "-b"])
 }
+
+// MARK: - SimulatorRuntime
 
 extension SimulatorRuntime {
     var versionComponents: [Int] {

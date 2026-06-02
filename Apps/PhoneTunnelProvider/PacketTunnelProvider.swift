@@ -1,3 +1,11 @@
+//
+//  PacketTunnelProvider.swift
+//  CellTunnelPhoneTunnel
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-29.
+//  Copyright © 2026, all rights reserved.
+//
+
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
@@ -34,6 +42,8 @@ private struct UncheckedSendableBox<Value>: @unchecked Sendable {
 // Latest relay observations the forwarder pushes through its callbacks, held off
 // the MainActor so `handleAppMessage` can read them for the status snapshot
 // without a hop. The forwarder owns the per-packet path; this is only state.
+// MARK: - RelayStatusState
+
 private struct RelayStatusState {
     var running = false
     var lastError: String?
@@ -45,6 +55,8 @@ private struct RelayStatusState {
 // mutated across start and stop is never touched concurrently. The relay
 // observations and the cellular snapshot are additionally `Mutex`-guarded so the
 // status path can read them from any thread.
+// MARK: - PacketTunnelProvider
+
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let forwarder = PhoneRelayForwarder()
     private let controlClient = PhoneControlClient()

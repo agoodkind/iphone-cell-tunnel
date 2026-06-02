@@ -1,3 +1,11 @@
+//
+//  TunnelControlCLIAction.swift
+//  CellTunnelCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-30.
+//  Copyright © 2026, all rights reserved.
+//
+
 import CellTunnelLog
 import Foundation
 
@@ -93,6 +101,8 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
         return TunnelStartSettings(wireGuardConfigPath: configPath, relayEndpoint: relayEndpoint)
     }
 }
+
+// MARK: - TunnelControlCLIExecutor
 
 public struct TunnelControlCLIExecutor: Sendable {
     private let client: any TunnelControlClientProtocol

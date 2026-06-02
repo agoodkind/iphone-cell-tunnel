@@ -1,3 +1,11 @@
+//
+//  TunnelControlModelsTests.swift
+//  CellTunnelCoreTests
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-24.
+//  Copyright © 2026, all rights reserved.
+//
+
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
@@ -196,6 +204,8 @@ private func makeRelayService(
         isSelected: isSelected
     )
 }
+
+// MARK: - FakeTunnelControlClient
 
 private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unchecked Sendable {
     var events: [String] = []

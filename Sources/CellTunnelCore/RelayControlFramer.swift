@@ -1,3 +1,11 @@
+//
+//  RelayControlFramer.swift
+//  CellTunnelCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//  Copyright © 2026, all rights reserved.
+//
+
 import CellTunnelLog
 import Foundation
 import Network
@@ -105,6 +113,8 @@ public final class RelayControlFramer: NWProtocolFramerImplementation {
         }
     }
 }
+
+// MARK: - RelayControlFramerSupport
 
 public enum RelayControlFramerSupport {
     public static func framerOptions() -> NWProtocolFramer.Options {

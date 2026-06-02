@@ -1,9 +1,19 @@
+//
+//  RelayEndpoint.swift
+//  CellTunnelCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//  Copyright © 2026, all rights reserved.
+//
+
 import Foundation
 
 public enum RelayAddressFamily: UInt8, CaseIterable, Codable, Sendable {
     case ipv4 = 4
     case ipv6 = 6
 }
+
+// MARK: - RelayEndpoint
 
 public struct RelayEndpoint: Codable, Equatable, Sendable {
     public var addressFamily: RelayAddressFamily
@@ -17,9 +27,13 @@ public struct RelayEndpoint: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - WireGuardDatagramError
+
 public enum WireGuardDatagramError: Error, Equatable {
     case emptyDatagram
 }
+
+// MARK: - WireGuardDatagram
 
 public struct WireGuardDatagram: Equatable, Sendable {
     public var addressFamily: RelayAddressFamily

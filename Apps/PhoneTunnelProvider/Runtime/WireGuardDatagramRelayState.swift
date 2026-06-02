@@ -1,3 +1,11 @@
+//
+//  WireGuardDatagramRelayState.swift
+//  CellTunnelPhoneTunnel
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-29.
+//  Copyright © 2026, all rights reserved.
+//
+
 import Foundation
 
 /// Lifecycle of the iPhone relay's path to the WireGuard server: it starts
@@ -27,6 +35,8 @@ enum WireGuardDatagramRelayState: String, Sendable {
     }
 }
 
+// MARK: - WireGuardDatagramRelayError
+
 enum WireGuardDatagramRelayError: LocalizedError {
     case invalidServerPort(UInt16)
     case missingServerEndpoint
@@ -43,6 +53,8 @@ enum WireGuardDatagramRelayError: LocalizedError {
         }
     }
 }
+
+// MARK: - CellularWireGuardUDPState
 
 enum CellularWireGuardUDPState: String, Sendable {
     case connecting

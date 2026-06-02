@@ -1,4 +1,12 @@
 // swift-tools-version: 6.0
+//
+//  Package.swift
+//  CellTunnelDev
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-24.
+//  Copyright © 2026, all rights reserved.
+//
+
 import PackageDescription
 
 let package = Package(

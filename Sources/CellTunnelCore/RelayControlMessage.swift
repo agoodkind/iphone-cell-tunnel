@@ -1,3 +1,11 @@
+//
+//  RelayControlMessage.swift
+//  CellTunnelCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-25.
+//  Copyright © 2026, all rights reserved.
+//
+
 import Foundation
 
 public let relayControlServiceType = "_cellrelaycontrol._tcp"
@@ -97,11 +105,15 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
     }
 }
 
+// MARK: - RelayControlCodecError
+
 public enum RelayControlCodecError: Error, Equatable {
     case payloadTooLarge(Int)
     case truncatedFrame
     case unsupportedVersion(Int)
 }
+
+// MARK: - RelayControlMessageCodec
 
 public enum RelayControlMessageCodec {
     public static let maxPayloadBytes = 1 << 20

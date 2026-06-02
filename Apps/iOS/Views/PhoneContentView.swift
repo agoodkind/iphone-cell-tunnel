@@ -3,7 +3,7 @@
 //  CellTunnelPhone
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-23.
-//  Copyright © 2026
+//  Copyright © 2026, all rights reserved.
 //
 
 import SwiftUI
@@ -98,11 +98,15 @@ struct PhoneContentView: View {
     }
 }
 
+// MARK: - RelayStatus
+
 private struct RelayStatus {
     let text: String
     let color: Color
     let symbol: String
 }
+
+// MARK: - View
 
 extension View {
     #if DEBUG

@@ -1,3 +1,11 @@
+//
+//  RelayTransport.swift
+//  CellTunnelTunnelProvider
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-27.
+//  Copyright © 2026, all rights reserved.
+//
+
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
@@ -21,6 +29,8 @@ enum RelayTransportError: LocalizedError {
         }
     }
 }
+
+// MARK: - RelayTransport
 
 final class RelayTransport: @unchecked Sendable {
     private let queue = DispatchQueue(label: "io.goodkind.celltunnel.relay")

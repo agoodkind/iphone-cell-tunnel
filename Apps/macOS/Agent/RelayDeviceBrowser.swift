@@ -1,3 +1,11 @@
+//
+//  RelayDeviceBrowser.swift
+//  CellTunnelAgent
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-28.
+//  Copyright © 2026, all rights reserved.
+//
+
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
@@ -20,6 +28,8 @@ struct DiscoveredRelayDevice: Equatable, Hashable, Sendable {
     let domain: String
     let interfaceIndex: Int
 }
+
+// MARK: - RelayDeviceBrowser
 
 /// Runs a continuous `NWBrowser` for the iPhone relay Bonjour type on one serial
 /// queue, independent of the VPN tunnel, so the agent can list nearby relays and

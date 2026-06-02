@@ -1,3 +1,11 @@
+//
+//  CellTunnelLog.swift
+//  CellTunnelLog
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-23.
+//  Copyright © 2026, all rights reserved.
+//
+
 import struct OSLog.Logger
 import struct OSLog.OSSignposter
 

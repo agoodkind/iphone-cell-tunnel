@@ -1,3 +1,11 @@
+//
+//  AgentTunnelController+Start.swift
+//  CellTunnelAgent
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-29.
+//  Copyright © 2026, all rights reserved.
+//
+
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
@@ -91,6 +99,8 @@ extension AgentTunnelController {
 // using the status notification and a scheduled deadline rather than polling. The
 // lock makes the single continuation resume exactly once across the observer and
 // the timeout.
+// MARK: - SessionConnectWaiter
+
 private final class SessionConnectWaiter: @unchecked Sendable {
     private let lock = NSLock()
     private var continuation: CheckedContinuation<Void, Never>?

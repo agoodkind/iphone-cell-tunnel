@@ -1,3 +1,11 @@
+//
+//  BuildActions.swift
+//  CellTunnelDev
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-24.
+//  Copyright © 2026, all rights reserved.
+//
+
 import CellTunnelLog
 import Foundation
 import SwiftMkCore

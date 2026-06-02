@@ -3,7 +3,7 @@
 //  CellTunnelDev
 //
 //  Created by Alex Goodkind <alex@goodkind.io> on 2026-05-29.
-//  Copyright © 2026
+//  Copyright © 2026, all rights reserved.
 //
 
 import CellTunnelCore
@@ -227,6 +227,8 @@ func runRelayCommand(
         throw error
     }
 }
+
+// MARK: - RelayCommandOutcome
 
 /// Thread-safe holder for the error thrown inside the bridged async task so the
 /// synchronous caller can rethrow it after the semaphore wakes.

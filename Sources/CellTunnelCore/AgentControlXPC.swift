@@ -1,3 +1,11 @@
+//
+//  AgentControlXPC.swift
+//  CellTunnelCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-27.
+//  Copyright © 2026, all rights reserved.
+//
+
 import Foundation
 
 // The string constants used by the XPC layer (mach service name, agent

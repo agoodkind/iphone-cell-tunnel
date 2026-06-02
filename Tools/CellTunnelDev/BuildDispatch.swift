@@ -1,9 +1,19 @@
+//
+//  BuildDispatch.swift
+//  CellTunnelDev
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-24.
+//  Copyright © 2026, all rights reserved.
+//
+
 import CellTunnelLog
 import Foundation
 
 enum BuildDispatch {}
 
 private let buildDispatchLogger = CellTunnelLog.logger(category: .build)
+
+// MARK: - BuildTarget
 
 enum BuildTarget: String, CaseIterable {
     case all

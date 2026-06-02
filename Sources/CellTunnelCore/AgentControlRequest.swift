@@ -1,3 +1,11 @@
+//
+//  AgentControlRequest.swift
+//  CellTunnelCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-27.
+//  Copyright © 2026, all rights reserved.
+//
+
 import Foundation
 
 public let agentControlWireVersion = 1
@@ -13,6 +21,8 @@ public protocol TunnelControlClientProtocol: Sendable {
     func listRelayServices() async throws -> TunnelDiscoverySnapshot
     func selectRelayService(serviceID: String) async throws -> TunnelDiscoverySnapshot
 }
+
+// MARK: - AgentControlRequest
 
 public enum AgentControlRequest: Codable, Sendable {
     case check
@@ -106,6 +116,8 @@ public enum AgentControlRequest: Codable, Sendable {
     }
 }
 
+// MARK: - AgentControlEnvelope
+
 public struct AgentControlEnvelope: Codable, Sendable {
     public var version: Int
     public var request: AgentControlRequest
@@ -116,6 +128,8 @@ public struct AgentControlEnvelope: Codable, Sendable {
     }
 }
 
+// MARK: - AgentControlFailure
+
 public struct AgentControlFailure: Codable, Sendable {
     public var errorCode: TunnelControlErrorCode
     public var message: String
@@ -125,6 +139,8 @@ public struct AgentControlFailure: Codable, Sendable {
         self.message = message
     }
 }
+
+// MARK: - AgentControlResponse
 
 public struct AgentControlResponse: Codable, Sendable {
     public var version: Int

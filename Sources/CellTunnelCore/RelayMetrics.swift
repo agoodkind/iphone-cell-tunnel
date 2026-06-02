@@ -1,3 +1,11 @@
+//
+//  RelayMetrics.swift
+//  CellTunnelCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-28.
+//  Copyright © 2026, all rights reserved.
+//
+
 import Synchronization
 
 /// Lock-free relay counters shared by the macOS provider and the iPhone relay.

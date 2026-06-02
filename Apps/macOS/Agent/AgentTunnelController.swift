@@ -3,7 +3,7 @@
 //  CellTunnelAgent
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-27.
-//  Copyright © 2026
+//  Copyright © 2026, all rights reserved.
 //
 
 import CellTunnelCore
@@ -32,6 +32,8 @@ private struct UncheckedSendableBox<Value>: @unchecked Sendable {
 }
 
 private typealias ManagerListBox = UncheckedSendableBox<[NETunnelProviderManager]>
+
+// MARK: - AgentTunnelController
 
 actor AgentTunnelController {
     private var manager: NETunnelProviderManager?
@@ -278,6 +280,8 @@ actor AgentTunnelController {
     }
 }
 
+// MARK: - AgentTunnelController
+
 extension AgentTunnelController {
     func loadOrCreateManager() async throws -> NETunnelProviderManager {
         if let manager {
@@ -455,6 +459,8 @@ extension AgentTunnelController {
         return try String(contentsOf: URL(fileURLWithPath: expanded), encoding: .utf8)
     }
 }
+
+// MARK: - AgentTunnelControllerError
 
 enum AgentTunnelControllerError: LocalizedError {
     case missingServerEndpoint

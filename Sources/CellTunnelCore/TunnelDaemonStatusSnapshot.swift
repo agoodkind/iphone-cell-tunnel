@@ -1,3 +1,11 @@
+//
+//  TunnelDaemonStatusSnapshot.swift
+//  CellTunnelCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-30.
+//  Copyright © 2026, all rights reserved.
+//
+
 import Foundation
 
 private let hostPortComponentCount = 2
@@ -8,10 +16,14 @@ public enum TunnelAddressFamily: String, Codable, Equatable, Sendable {
     case unspecified
 }
 
+// MARK: - TunnelRouteState
+
 public enum TunnelRouteState: String, Codable, Equatable, Sendable {
     case installed
     case notInstalled = "not-installed"
 }
+
+// MARK: - TunnelPeerState
 
 public enum TunnelPeerState: String, Codable, Equatable, Sendable {
     case notSelected = "not-selected"
@@ -19,12 +31,16 @@ public enum TunnelPeerState: String, Codable, Equatable, Sendable {
     case wireGuardConfigured = "wireguard-configured"
 }
 
+// MARK: - TunnelDiscoveryPhase
+
 public enum TunnelDiscoveryPhase: String, Codable, Equatable, Sendable {
     case browsing
     case failed
     case ready
     case stopped
 }
+
+// MARK: - TunnelControlErrorCode
 
 public enum TunnelControlErrorCode: String, Codable, Equatable, Sendable {
     case `internal` = "internal"
@@ -48,6 +64,8 @@ private func prefixedSchemeForHost(_ host: String) -> String? {
     }
     return nil
 }
+
+// MARK: - TunnelRelayEndpoint
 
 public struct TunnelRelayEndpoint: Codable, Equatable, Hashable, Sendable {
     public var host: String
@@ -141,6 +159,8 @@ public struct TunnelRelayEndpoint: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+// MARK: - TunnelRelayService
+
 public struct TunnelRelayService: Codable, Equatable, Identifiable, Sendable {
     public var id: String
     public var serviceName: String
@@ -182,6 +202,8 @@ public struct TunnelRelayService: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+// MARK: - TunnelDiscoverySnapshot
+
 public struct TunnelDiscoverySnapshot: Codable, Equatable, Sendable {
     public var phase: TunnelDiscoveryPhase
     public var services: [TunnelRelayService]
@@ -222,6 +244,8 @@ public struct TunnelDiscoverySnapshot: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - TunnelStartSettings
+
 public struct TunnelStartSettings: Codable, Equatable, Sendable {
     public var wireGuardConfigPath: String
     public var relayEndpoint: TunnelRelayEndpoint?
@@ -248,6 +272,8 @@ public struct TunnelStartSettings: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - TunnelEnvironmentCheckResult
+
 public struct TunnelEnvironmentCheckResult: Codable, Equatable, Sendable {
     public var name: String
     public var value: String
@@ -257,6 +283,8 @@ public struct TunnelEnvironmentCheckResult: Codable, Equatable, Sendable {
         self.value = value
     }
 }
+
+// MARK: - TunnelEnvironmentReport
 
 public struct TunnelEnvironmentReport: Codable, Equatable, Sendable {
     public var checks: [TunnelEnvironmentCheckResult]
@@ -269,6 +297,8 @@ public struct TunnelEnvironmentReport: Codable, Equatable, Sendable {
         checks.map { "\($0.name)=\($0.value)" }.joined(separator: "\n")
     }
 }
+
+// MARK: - TunnelDaemonStatusSnapshot
 
 public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     public var running: Bool
@@ -354,6 +384,8 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     }
 }
 
+// MARK: - TunnelControlFailure
+
 public struct TunnelControlFailure: Sendable {
     public var errorCode: TunnelControlErrorCode
     public var message: String
@@ -363,6 +395,8 @@ public struct TunnelControlFailure: Sendable {
         self.message = message
     }
 }
+
+// MARK: - TunnelRPCFailure
 
 public struct TunnelRPCFailure: Sendable {
     public var code: String
@@ -375,6 +409,8 @@ public struct TunnelRPCFailure: Sendable {
         self.cause = cause
     }
 }
+
+// MARK: - TunnelDaemonError
 
 public enum TunnelDaemonError: LocalizedError, Sendable {
     case controlFailure(TunnelControlFailure)

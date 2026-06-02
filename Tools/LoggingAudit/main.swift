@@ -1,3 +1,11 @@
+//
+//  main.swift
+//  LoggingAudit
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-23.
+//  Copyright © 2026, all rights reserved.
+//
+
 import Foundation
 import SwiftParser
 import SwiftSyntax
@@ -13,6 +21,8 @@ enum AuditRule: String {
     case warningLevel
 }
 
+// MARK: - AuditAllowlistEntry
+
 struct AuditAllowlistEntry {
     let pathSuffix: String
     let rule: AuditRule
@@ -22,6 +32,8 @@ struct AuditAllowlistEntry {
         path.hasSuffix(pathSuffix) && self.rule == rule && !reason.isEmpty
     }
 }
+
+// MARK: - Violation
 
 struct Violation: CustomStringConvertible {
     let path: String
@@ -215,6 +227,8 @@ func auditText(path: String, lines: [String], violations: inout [Violation]) {
         }
     }
 }
+
+// MARK: - AuditVisitor
 
 final class AuditVisitor: SyntaxVisitor {
     private let path: String

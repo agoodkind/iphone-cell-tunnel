@@ -3,7 +3,7 @@
 //  CellTunnelPhoneTunnel
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-30.
-//  Copyright © 2026
+//  Copyright © 2026, all rights reserved.
 //
 
 import CellTunnelCore

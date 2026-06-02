@@ -1,3 +1,11 @@
+//
+//  TunnelCounters.swift
+//  CellTunnelCore
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-30.
+//  Copyright © 2026, all rights reserved.
+//
+
 public struct TunnelCounters: Codable, Equatable, Sendable {
     public var wireGuardDatagramsFromMac: UInt64
     public var wireGuardDatagramsToMac: UInt64
@@ -25,6 +33,8 @@ public struct TunnelCounters: Codable, Equatable, Sendable {
         self.relayBytesOut = relayBytesOut
     }
 }
+
+// MARK: - CellularPathSnapshot
 
 public struct CellularPathSnapshot: Codable, Equatable, Sendable {
     public var isSatisfied: Bool

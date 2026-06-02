@@ -1,3 +1,11 @@
+//
+//  PacketTunnelProvider.swift
+//  CellTunnelTunnelProvider
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-27.
+//  Copyright © 2026, all rights reserved.
+//
+
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
@@ -25,6 +33,8 @@ private struct UncheckedSendableBox<Value>: @unchecked Sendable {
     }
 }
 
+// MARK: - PacketTunnelProviderError
+
 enum PacketTunnelProviderError: LocalizedError {
     case missingWireGuardConfig
 
@@ -38,6 +48,8 @@ enum PacketTunnelProviderError: LocalizedError {
 
 // NEPacketTunnelProvider serializes the tunnel lifecycle callbacks, so the
 // stored state mutated across start and stop is never touched concurrently.
+// MARK: - PacketTunnelProvider
+
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let relayMetrics: RelayMetrics
     private let relayTransport: RelayTransport

@@ -1,3 +1,11 @@
+//
+//  PhoneRelayForwarder+Cellular.swift
+//  CellTunnelPhoneTunnel
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-29.
+//  Copyright © 2026, all rights reserved.
+//
+
 import CellTunnelCore
 import CellTunnelLog
 import Foundation

@@ -1,3 +1,11 @@
+//
+//  InstallActions.swift
+//  CellTunnelDev
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-27.
+//  Copyright © 2026, all rights reserved.
+//
+
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
@@ -13,6 +21,8 @@ private let installDestinationOptionName = "--destination"
 private let openExecutablePath = "/usr/bin/open"
 private let installCommandArgumentDropCount = 2
 private let installOptionPairStride = 2
+
+// MARK: - InstallMacOptions
 
 struct InstallMacOptions {
     let configuration: String

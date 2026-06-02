@@ -1,3 +1,11 @@
+//
+//  RelaySelectionStore.swift
+//  CellTunnelAgent
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-28.
+//  Copyright © 2026, all rights reserved.
+//
+
 import CellTunnelCore
 import Foundation
 

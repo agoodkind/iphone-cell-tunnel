@@ -1,3 +1,11 @@
+//
+//  WireGuardRuntime.swift
+//  CellTunnelTunnelProvider
+//
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-27.
+//  Copyright © 2026, all rights reserved.
+//
+
 import CellTunnelLog
 import Foundation
 import NetworkExtension
@@ -21,6 +29,8 @@ enum WireGuardRuntimeError: LocalizedError {
         }
     }
 }
+
+// MARK: - WireGuardRuntime
 
 actor WireGuardRuntime {
     private var adapter: WireGuardAdapter?
