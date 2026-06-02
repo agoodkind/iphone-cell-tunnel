@@ -1,11 +1,19 @@
 import CellTunnelLog
 import Foundation
+@preconcurrency import XPC
 
-#if os(macOS)
+#if os(macOS) || targetEnvironment(macCatalyst)
     private let logger = CellTunnelLog.logger(category: .daemon)
 
+    /// The single control client for the agent. It connects to the agent's mach
+    /// service with the modern libxpc session API, which both a native macOS
+    /// program and a Mac Catalyst app can use. Each request encodes an
+    /// `AgentControlEnvelope` to JSON, travels as one data field of an xpc
+    /// dictionary, and the reply carries an `AgentControlResponse` JSON under the
+    /// same key. The actor serializes requests so the blocking send runs off the
+    /// caller's thread, which the synchronous libxpc reply call requires.
     public actor AgentClient: TunnelControlClientProtocol {
-        private var connection: NSXPCConnection?
+        private var session: XPCSession?
 
         public init(
             endpointPath: String = "",
@@ -19,7 +27,7 @@ import Foundation
 
         public func shutdown() {
             logger.notice("agent client shutdown requested")
-            tearDownConnection(reason: "shutdown")
+            tearDownSession(reason: "shutdown")
         }
 
         public func status() async throws -> TunnelDaemonStatusSnapshot {
@@ -117,14 +125,9 @@ import Foundation
         private func send(
             request: AgentControlRequest,
             operationName: String
-        ) async throws -> AgentControlResponse {
+        ) throws -> AgentControlResponse {
             let payload = try encode(request: request, operationName: operationName)
-            let proxy = try activeProxy()
-            let responseData = try await transmit(
-                payload: payload,
-                proxy: proxy,
-                operationName: operationName
-            )
+            let responseData = try transmit(payload: payload, operationName: operationName)
             let response = try decode(responseData: responseData, operationName: operationName)
             try validate(responseVersion: response.version, operationName: operationName)
             logger.notice(
@@ -170,77 +173,109 @@ import Foundation
             }
         }
 
-        private func transmit(
-            payload: Data,
-            proxy: any AgentControlXPC,
-            operationName: String
-        ) async throws -> Data {
+        // Sends the request and blocks for the reply. A failed send drops the
+        // session so the next request reconnects, which recovers from an agent
+        // restart. The actor runs this off the caller's thread, which the
+        // synchronous libxpc reply call requires.
+        private func transmit(payload: Data, operationName: String) throws -> Data {
+            let session = try activeSession()
             logger.notice(
                 "\(operationName) agent rpc transmitting bytes=\(payload.count, privacy: .public)"
             )
-            return try await withCheckedThrowingContinuation { continuation in
-                proxy.sendRequest(payload) { reply in
-                    guard let reply else {
-                        continuation.resume(
-                            throwing: TunnelDaemonError.transportFailure(
-                                "agent returned no payload for \(operationName)"
-                            )
-                        )
-                        return
-                    }
-                    continuation.resume(returning: reply)
-                }
-            }
-        }
-
-        private func activeProxy() throws -> any AgentControlXPC {
-            let connection = activeConnection()
-            let proxy = connection.remoteObjectProxyWithErrorHandler { error in
+            do {
+                let reply = try session.sendSync(message: makeMessage(payload: payload))
+                return try replyData(from: reply, operationName: operationName)
+            } catch let error as TunnelDaemonError {
                 logger.error(
-                    "agent xpc proxy error details=\(String(describing: error), privacy: .public)"
+                    """
+                    \(operationName) agent send failed \
+                    details=\(String(describing: error), privacy: .public) \
+                    recovery=drop-session-and-rethrow
+                    """
                 )
-            }
-            guard let typed = proxy as? any AgentControlXPC else {
-                tearDownConnection(reason: "proxy-cast-failed")
+                tearDownSession(reason: "send-failed")
+                throw error
+            } catch {
+                logger.error(
+                    """
+                    \(operationName) agent send failed \
+                    details=\(String(describing: error), privacy: .public) \
+                    recovery=drop-session-and-throw-transport-failure
+                    """
+                )
+                tearDownSession(reason: "send-failed")
                 throw TunnelDaemonError.transportFailure(
-                    "agent proxy does not conform to control protocol"
+                    "\(operationName) agent send failed: \(error.localizedDescription)"
                 )
             }
-            return typed
         }
 
-        private func activeConnection() -> NSXPCConnection {
-            if let connection {
-                return connection
+        private func activeSession() throws -> XPCSession {
+            if let session {
+                return session
             }
-            let created = NSXPCConnection(machServiceName: agentMachServiceName)
-            created.remoteObjectInterface = NSXPCInterface(with: AgentControlXPC.self)
-            created.invalidationHandler = { [weak self] in
-                Task { await self?.handleInvalidation() }
+            do {
+                let created = try XPCSession(machService: agentMachServiceName)
+                session = created
+                logger.notice(
+                    "agent xpc session opened machServiceName=\(agentMachServiceName, privacy: .public)"
+                )
+                return created
+            } catch {
+                logger.error(
+                    """
+                    agent xpc session open failed \
+                    details=\(String(describing: error), privacy: .public) \
+                    recovery=throw-transport-failure
+                    """
+                )
+                throw TunnelDaemonError.transportFailure(
+                    "open agent session failed: \(error.localizedDescription)"
+                )
             }
-            created.interruptionHandler = {
-                logger.notice("agent xpc connection interrupted")
-            }
-            created.resume()
-            connection = created
-            logger.notice(
-                "agent xpc connection opened machServiceName=\(agentMachServiceName, privacy: .public)"
-            )
-            return created
         }
 
-        private func handleInvalidation() {
-            connection = nil
-            logger.notice("agent xpc connection invalidated")
+        // Writes the JSON payload as a data value on the underlying xpc dictionary,
+        // matching the agent listener's data key.
+        private func makeMessage(payload: Data) -> XPCDictionary {
+            let raw = xpc_dictionary_create_empty()
+            payload.withUnsafeBytes { rawBuffer in
+                xpc_dictionary_set_data(
+                    raw, agentControlPayloadKey, rawBuffer.baseAddress, rawBuffer.count
+                )
+            }
+            return XPCDictionary(raw)
         }
 
-        private func tearDownConnection(reason: String) {
-            guard let active = connection else {
+        private func replyData(
+            from reply: XPCDictionary,
+            operationName: String
+        ) throws -> Data {
+            let data = reply.withUnsafeUnderlyingDictionary { raw -> Data? in
+                var length = 0
+                guard
+                    let pointer = xpc_dictionary_get_data(raw, agentControlPayloadKey, &length),
+                    length > 0
+                else {
+                    return nil
+                }
+                return Data(bytes: pointer, count: length)
+            }
+            guard let data else {
+                throw TunnelDaemonError.transportFailure(
+                    "agent returned no payload for \(operationName)"
+                )
+            }
+            return data
+        }
+
+        private func tearDownSession(reason: String) {
+            guard let active = session else {
                 return
             }
-            active.invalidate()
-            connection = nil
-            logger.notice("agent xpc connection torn down reason=\(reason, privacy: .public)")
+            active.cancel(reason: reason)
+            session = nil
+            logger.notice("agent xpc session torn down reason=\(reason, privacy: .public)")
         }
 
         private func validate(responseVersion: Int, operationName: String) throws {

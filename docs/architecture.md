@@ -43,7 +43,7 @@ One app target, `CellTunnelPhone`, builds two products from the same SwiftUI scr
 
 The views bind to one observable controller, `RelayController`, which holds a `RelayControlBackend` and never branches on platform. Two backends sit behind it. `PhoneRelayBackend` (iPhone) owns the tunnel manager, the on-demand rule, the device-name publish, and the status poll over the provider message channel. `AgentRelayBackend` (Mac) reads the agent's status and maps it onto the same reading the views render.
 
-The Mac cannot reach the agent the way `celltunnelctl` does, because a Mac Catalyst app cannot open an `NSXPCConnection` to a mach service. It instead opens an `XPCSession` to a second mach service the agent advertises, `AGENT_XPC_SESSION_SERVICE_NAME`, served by `AgentSessionListener` over the modern libxpc protocol. Both the new listener and the existing `NSXPCListener` decode the same `AgentControlEnvelope` JSON and call the same controller, so the proven `celltunnelctl` path is unchanged.
+The Mac reaches the agent the same way the command-line tool does: it opens an `XPCSession` to the agent's mach service `AGENT_MACH_SERVICE_NAME`, served by `AgentSessionListener` over the libxpc protocol. One shared client, `AgentClient`, carries both. A Mac Catalyst app cannot open an `NSXPCConnection` to a mach service, so the libxpc session API is the one transport every control client uses. Each request crosses as `AgentControlEnvelope` JSON in one data field of an xpc dictionary, and the reply carries `AgentControlResponse` JSON.
 
 ## Path selection
 

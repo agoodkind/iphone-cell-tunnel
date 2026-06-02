@@ -15,12 +15,12 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 
 // MARK: - AgentSessionListener
 
-/// Serves the agent's control protocol over the modern libxpc mach-service
-/// listener, in addition to the `NSXPCListener` that `celltunnelctl` uses. The
-/// Mac Catalyst app cannot open an `NSXPCConnection` to a mach service, but it can
-/// open an `XPCSession`, which speaks libxpc. Both listeners decode the same
-/// `AgentControlEnvelope` JSON and call the same controller, so the two transports
-/// stay in lockstep without sharing a connection type.
+/// Serves the agent's control protocol over the libxpc mach-service listener. It
+/// is the agent's single control transport: the command-line tool and the Mac app
+/// both dial it with the libxpc session API. A Mac Catalyst app cannot open an
+/// `NSXPCConnection` to a mach service, so libxpc is the one transport both clients
+/// share. Each request decodes an `AgentControlEnvelope` JSON and calls the
+/// controller, and the reply carries an `AgentControlResponse` JSON.
 final class AgentSessionListener: @unchecked Sendable {
     private let controller: AgentTunnelController
     private let onActivity: @Sendable () -> Void
@@ -33,11 +33,11 @@ final class AgentSessionListener: @unchecked Sendable {
 
     // MARK: - Lifecycle
 
-    /// Creates the listener connection on the session mach service and begins
+    /// Creates the listener connection on the agent mach service and begins
     /// accepting peer connections. The name is vended by the agent launchd plist
     /// `MachServices` dict, so the lookup resolves once the agent is registered.
     func start() {
-        let listener = agentXPCSessionServiceName.withCString { namePointer in
+        let listener = agentMachServiceName.withCString { namePointer in
             xpc_connection_create_mach_service(
                 namePointer,
                 nil,
@@ -52,9 +52,19 @@ final class AgentSessionListener: @unchecked Sendable {
         logger.notice(
             """
             agent session listener resumed \
-            machService=\(agentXPCSessionServiceName, privacy: .public)
+            machService=\(agentMachServiceName, privacy: .public)
             """
         )
+    }
+
+    /// Cancels the listener connection so it stops accepting peers.
+    func stop() {
+        guard let listener = listenerConnection else {
+            return
+        }
+        xpc_connection_cancel(listener)
+        listenerConnection = nil
+        logger.notice("agent session listener cancelled")
     }
 
     // MARK: - Peer handling
@@ -124,7 +134,7 @@ final class AgentSessionListener: @unchecked Sendable {
 
     private func payloadData(from message: xpc_object_t) -> Data? {
         var length = 0
-        guard let pointer = xpc_dictionary_get_data(message, agentSessionPayloadKey, &length),
+        guard let pointer = xpc_dictionary_get_data(message, agentControlPayloadKey, &length),
             length > 0
         else {
             return nil
@@ -175,7 +185,7 @@ private final class ReplyChannel: @unchecked Sendable {
         }
         data.withUnsafeBytes { rawBuffer in
             xpc_dictionary_set_data(
-                reply, agentSessionPayloadKey, rawBuffer.baseAddress, rawBuffer.count
+                reply, agentControlPayloadKey, rawBuffer.baseAddress, rawBuffer.count
             )
         }
         xpc_connection_send_message(peer, reply)

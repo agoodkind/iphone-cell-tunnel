@@ -12,7 +12,7 @@
 	</array>
 	<key>com.apple.security.temporary-exception.mach-lookup.global-name</key>
 	<array>
-		<string>io.goodkind.celltunnel-agent.session</string>
+		<string>io.goodkind.celltunnel-agent</string>
 	</array>
 </dict>
 </plist>

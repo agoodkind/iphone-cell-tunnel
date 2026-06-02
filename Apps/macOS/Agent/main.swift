@@ -22,26 +22,20 @@ private let agentIdleTimeoutSeconds: Double = 60
 // MARK: - AgentRuntime
 
 final class AgentRuntime: @unchecked Sendable {
-    private let listener = NSXPCListener(machServiceName: agentMachServiceName)
     private let controller = AgentTunnelController()
     private let idleQueue = DispatchQueue(label: "io.goodkind.celltunnel.agent.idle")
     private var idleTimer: DispatchSourceTimer?
     private var relayActive = false
-    private var server: AgentXPCServer?
     private var sessionListener: AgentSessionListener?
 
     // MARK: - Lifecycle
 
     func start() {
         registerLaunchAgentIfNeeded()
-        let server = AgentXPCServer(controller: controller) { [weak self] in
-            self?.resetIdleTimer()
-        }
-        self.server = server
-        listener.delegate = server
-        listener.resume()
-        // The modern libxpc listener serves the same control protocol to the Mac
-        // Catalyst app, which cannot open an NSXPCConnection to a mach service.
+        // The libxpc listener serves the control protocol to every client: the
+        // command-line tool and the Mac app both dial it with the libxpc session
+        // API. A Mac Catalyst app cannot open an NSXPCConnection to a mach service,
+        // so this is the single transport.
         let sessionListener = AgentSessionListener(controller: controller) { [weak self] in
             self?.resetIdleTimer()
         }
@@ -69,7 +63,7 @@ final class AgentRuntime: @unchecked Sendable {
 
     func shutdown(reason: String) {
         logger.notice("agent shutting down reason=\(reason, privacy: .public)")
-        listener.invalidate()
+        sessionListener?.stop()
     }
 
     private func registerLaunchAgentIfNeeded() {
