@@ -121,14 +121,16 @@ enum RelayScreenState: Equatable {
         self == .routing
     }
 
-    /// Whether the `DATA` and `CONNECTION` sections are shown. They are hidden only
-    /// before the tunnel is set up.
+    /// Whether the `DATA` and `CONNECTION` sections are shown. Only the connected
+    /// states show them; every not-connected state renders a full-screen zero state
+    /// instead, so a disconnected or connecting screen never shows placeholder stat
+    /// and connection rows.
     var showsTunnelDetail: Bool {
         switch self {
-        case .notSetUp:
-            return false
-        case .disconnected, .connecting, .passthrough, .routing, .noCellular, .error:
+        case .passthrough, .routing:
             return true
+        case .notSetUp, .disconnected, .connecting, .noCellular, .error:
+            return false
         }
     }
 
@@ -339,7 +341,10 @@ struct RelayScreenModel {
                 ipv6: controller.cellularPath.ipv6Address,
                 ipv4: controller.cellularPath.ipv4Address
             ),
-            secondaryRows: publicAddressRows(ipv6: nil, ipv4: nil)
+            secondaryRows: publicAddressRows(
+                ipv6: controller.devicePublicIPv6Address,
+                ipv4: controller.devicePublicIPv4Address
+            )
         )
     }
 
@@ -354,7 +359,10 @@ struct RelayScreenModel {
                 ipv6: controller.relayPublicIPv6Address,
                 ipv4: controller.relayPublicIPv4Address
             ),
-            secondaryRows: publicAddressRows(ipv6: nil, ipv4: nil)
+            secondaryRows: publicAddressRows(
+                ipv6: controller.relayPublicIPv6Address,
+                ipv4: controller.relayPublicIPv4Address
+            )
         )
     }
 
