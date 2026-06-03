@@ -16,8 +16,6 @@
     // MARK: - Constants
 
     private let relayStoppedStateText = "Stopped"
-    private let storedConfigPathDefaultsKey =
-        "io.goodkind.celltunnel.lastWireGuardConfigPath"
 
     // MARK: - AgentRelayBackend
 
@@ -70,77 +68,14 @@
                 connectedPeerName: snapshot.connectedPeerName,
                 cellularPath: snapshot.cellularPath ?? CellularPathSnapshot(),
                 counters: snapshot.macCounters ?? TunnelCounters(),
-                lastError: snapshot.lastError
+                lastError: snapshot.lastError,
+                routeState: snapshot.routeState,
+                peerState: snapshot.peerState,
+                localLinkInterfaceName: snapshot.localLinkInterfaceName,
+                relayPublicIPv4Address: snapshot.relayPublicIPv4Address,
+                relayPublicIPv6Address: snapshot.relayPublicIPv6Address
             )
         }
     }
 
-    // MARK: - Developer console
-
-    #if DEBUG
-        extension AgentRelayBackend: RelayDebugBackend {
-            // Stops the agent's tunnel, then starts it again when a WireGuard config
-            // path is known from the app group. Without a known path the restart is a
-            // stop, since the agent takes the config path per start over XPC.
-            func restart() async {
-                logger.notice("agent relay backend restart requested")
-                do {
-                    _ = try await client.stopTunnel()
-                } catch {
-                    logger.error(
-                        """
-                        agent relay restart stop failed \
-                        details=\(String(describing: error), privacy: .public) recovery=continue
-                        """
-                    )
-                }
-                guard let configPath = storedWireGuardConfigPath() else {
-                    logger.notice("agent relay restart stopped only: no stored config path")
-                    return
-                }
-                do {
-                    let settings = TunnelStartSettings(
-                        wireGuardConfigPath: configPath, relayEndpoint: nil
-                    )
-                    _ = try await client.startTunnel(settings: settings)
-                } catch {
-                    logger.error(
-                        """
-                        agent relay restart start failed \
-                        details=\(String(describing: error), privacy: .public) recovery=surface-state
-                        """
-                    )
-                }
-            }
-
-            func environmentChecks() async -> [TunnelEnvironmentCheckResult] {
-                logger.notice("agent relay backend environment check requested")
-                do {
-                    let report = try await client.check()
-                    return report.checks
-                } catch {
-                    logger.error(
-                        """
-                        agent relay environment check failed \
-                        details=\(String(describing: error), privacy: .public) recovery=empty
-                        """
-                    )
-                    return []
-                }
-            }
-
-            func probeServer(endpoint: RelayEndpoint) async -> DebugProbeResult {
-                await RelayServerProbe.probeServer(endpoint: endpoint, pinCellular: false)
-            }
-
-            private func storedWireGuardConfigPath() -> String? {
-                let defaults = UserDefaults(suiteName: cellTunnelAppGroupIdentifier) ?? .standard
-                let path = defaults.string(forKey: storedConfigPathDefaultsKey)
-                guard let path, !path.isEmpty else {
-                    return nil
-                }
-                return path
-            }
-        }
-    #endif
 #endif

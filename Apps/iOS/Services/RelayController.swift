@@ -14,7 +14,6 @@ import Observation
 private let logger = CellTunnelLog.logger(category: .relay)
 private let pollIntervalSeconds: Double = 1
 private let relayStoppedStateText = "Stopped"
-private let unknownInterfaceText = "Unknown"
 
 // MARK: - RelayStatusSample
 
@@ -28,6 +27,18 @@ struct RelayStatusSample: Sendable {
     var cellularPath: CellularPathSnapshot
     var counters: TunnelCounters
     var lastError: String?
+    /// Whether the program routes are installed, which the screen reads as routing
+    /// (installed) versus passthrough (not installed).
+    var routeState: TunnelRouteState
+    /// Whether a WireGuard peer is configured, which gates the connected states.
+    var peerState: TunnelPeerState
+    /// The Mac-to-iPhone link interface identifier, mapped to a defined name for
+    /// display, or `nil` when the source has not surfaced it.
+    var localLinkInterfaceName: String?
+    /// The public IPv4 address the internet sees via the WireGuard server.
+    var relayPublicIPv4Address: String?
+    /// The public IPv6 address the internet sees via the WireGuard server.
+    var relayPublicIPv6Address: String?
 }
 
 // MARK: - RelayControlBackend
@@ -71,27 +82,14 @@ final class RelayController {
     var downloadMbps: Double = 0
     var lastError: String?
     var relayStateDescription = relayStoppedStateText
-
-    #if DEBUG
-        var environmentChecks: [TunnelEnvironmentCheckResult] = []
-    #endif
+    var routeState: TunnelRouteState = .notInstalled
+    var peerState: TunnelPeerState = .notSelected
+    var localLinkInterfaceName: String?
+    var relayPublicIPv4Address: String?
+    var relayPublicIPv6Address: String?
 
     init(backend: any RelayControlBackend) {
         self.backend = backend
-    }
-
-    // MARK: - Derived display
-
-    /// The cellular interface name and index for the connection row, or a fallback
-    /// when the path carries no interface yet.
-    var cellularInterfaceDescription: String {
-        guard let interfaceName = cellularPath.interfaceName else {
-            return unknownInterfaceText
-        }
-        if let interfaceIndex = cellularPath.interfaceIndex {
-            return "\(interfaceName) (\(interfaceIndex))"
-        }
-        return interfaceName
     }
 
     // MARK: - Lifecycle
@@ -158,10 +156,37 @@ final class RelayController {
         counters = sample.counters
         lastError = sample.lastError
         relayStateDescription = sample.relayStateDescription
+        routeState = sample.routeState
+        peerState = sample.peerState
+        localLinkInterfaceName = sample.localLinkInterfaceName
+        relayPublicIPv4Address = sample.relayPublicIPv4Address
+        relayPublicIPv6Address = sample.relayPublicIPv6Address
         let rate = throughput.update(with: sample.counters)
         uploadMbps = rate.upload
         downloadMbps = rate.download
         logger.debug("relay controller sample applied running=\(self.isRunning, privacy: .public)")
+    }
+
+    // MARK: - Routing control
+
+    /// Requests routing (on) or passthrough (off) for the `Route traffic` switch.
+    ///
+    /// KNOWN GAP: the agent exposes no app-facing control verb to gate routes; the
+    /// program routes are driven autonomously by the agent off the iPhone link
+    /// state, and the provider's `setRouteState` request is agent-internal, not an
+    /// `AgentControlRequest`. Until a passthrough/routing verb is added to
+    /// `AgentControlRequest`/`AgentClient`, this wires the switch to the closest
+    /// existing capability, the session lifecycle: routing brings the session up,
+    /// passthrough takes it down. The displayed routing-versus-passthrough state
+    /// still reads from the real `routeState` in the status snapshot.
+    func setRouteTraffic(enabled: Bool) async {
+        logger.notice(
+            "relay controller route traffic requested enabled=\(enabled, privacy: .public)")
+        if enabled {
+            await start()
+        } else {
+            await stop()
+        }
     }
 
     /// Spaces polls without `Task.sleep` by resuming off a dispatch queue after the
@@ -175,33 +200,4 @@ final class RelayController {
         }
     }
 
-    // MARK: - Developer console actions
-
-    #if DEBUG
-        /// Restarts the relay through the platform backend.
-        func restartRelay() async {
-            logger.notice("relay controller relay restart requested")
-            await debugBackend?.restart()
-        }
-
-        /// Refreshes the environment check rows from the platform backend.
-        func refreshEnvironmentChecks() async {
-            guard let debugBackend else {
-                return
-            }
-            environmentChecks = await debugBackend.environmentChecks()
-        }
-
-        /// Runs the server probe through the platform backend.
-        func probeServer(endpoint: RelayEndpoint) async -> DebugProbeResult {
-            guard let debugBackend else {
-                return DebugProbeResult(passed: false, detail: "Probe unavailable")
-            }
-            return await debugBackend.probeServer(endpoint: endpoint)
-        }
-
-        private var debugBackend: (any RelayDebugBackend)? {
-            backend as? any RelayDebugBackend
-        }
-    #endif
 }

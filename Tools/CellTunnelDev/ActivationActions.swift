@@ -170,8 +170,8 @@ func simulatorIdentifier(from destination: String) throws -> String? {
         components[String(pieces[0])] = String(pieces[1])
     }
 
-    if let simulatorIdentifier = components["id"], !simulatorIdentifier.isEmpty {
-        return simulatorIdentifier
+    if let identifier = components["id"], !identifier.isEmpty {
+        return identifier
     }
     guard let simulatorName = components["name"], !simulatorName.isEmpty else {
         return nil
@@ -264,11 +264,11 @@ func createPhoneSimulator() throws -> String {
         throw ToolError.failure("xcrun simctl create failed")
     }
 
-    let simulatorIdentifier = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !simulatorIdentifier.isEmpty else {
+    let identifier = result.output.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !identifier.isEmpty else {
         throw ToolError.failure("created simulator identifier was empty")
     }
-    return simulatorIdentifier
+    return identifier
 }
 
 func preferredSimulatorRuntime() throws -> SimulatorRuntime {

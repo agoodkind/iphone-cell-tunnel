@@ -141,9 +141,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     // egress with the shared policy. Starting the probe last means the first
     // discovery arrives with the forwarder already running.
     private func configureTransportSelection() {
-        let forwarder = self.forwarder
+        let relayForwarder = self.forwarder
         probe.onDiscover = { interfaces in
-            forwarder.reconcileLinks(interfaces)
+            relayForwarder.reconcileLinks(interfaces)
         }
         probe.start()
         logger.notice("relay transport selection configured")
@@ -171,31 +171,31 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
     private func startControlClient() {
         logger.notice("phone control client starting")
-        let controlClient = self.controlClient
-        let forwarder = self.forwarder
-        let cellularObserver = self.cellularObserver
+        let client = self.controlClient
+        let relayForwarder = self.forwarder
+        let observer = self.cellularObserver
         // statusState is a non-copyable Mutex, so it cannot be hoisted into a
         // local; the status closure borrows it through a weak self instead.
         Task { @MainActor [weak self] in
-            controlClient.onSetServerEndpoint = { endpoint in
-                forwarder.setServerEndpoint(endpoint)
+            client.onSetServerEndpoint = { endpoint in
+                relayForwarder.setServerEndpoint(endpoint)
             }
-            controlClient.onConnectionDropped = {
-                forwarder.resetLinks()
+            client.onConnectionDropped = {
+                relayForwarder.resetLinks()
             }
-            controlClient.statusProvider = {
+            client.statusProvider = {
                 let lastError = self.flatMap { provider in
                     provider.statusState.withLock { $0.lastError }
                 }
-                let cellularPath = cellularObserver.snapshot
+                let cellularPath = observer.snapshot
                 return RelayControlMessage.Status(
                     hasCellularPath: cellularPath.isSatisfied,
                     cellularInterface: cellularPath.interfaceName,
                     lastError: lastError,
-                    counters: forwarder.metrics.snapshot()
+                    counters: relayForwarder.metrics.snapshot()
                 )
             }
-            controlClient.start()
+            client.start()
         }
     }
 
@@ -212,9 +212,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     }
 
     private func teardownRelayRuntime() {
-        let controlClient = self.controlClient
+        let client = self.controlClient
         Task { @MainActor in
-            controlClient.stop()
+            client.stop()
         }
         probe.stop()
         forwarder.stop()

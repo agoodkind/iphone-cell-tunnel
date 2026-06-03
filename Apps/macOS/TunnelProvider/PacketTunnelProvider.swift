@@ -120,9 +120,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         )
         logger.notice("tunnel runtime started")
 
-        let throughputLogger = RelayThroughputLogger(metrics: relayMetrics)
-        self.throughputLogger = throughputLogger
-        throughputLogger.start()
+        let relayThroughputLogger = RelayThroughputLogger(metrics: relayMetrics)
+        self.throughputLogger = relayThroughputLogger
+        relayThroughputLogger.start()
 
         logger.notice("tunnel start completion handler called success=true")
     }

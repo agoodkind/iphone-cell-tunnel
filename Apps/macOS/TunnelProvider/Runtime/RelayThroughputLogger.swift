@@ -28,16 +28,16 @@ final class RelayThroughputLogger: @unchecked Sendable {
     }
 
     func start() {
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(
+        let source = DispatchSource.makeTimerSource(queue: queue)
+        source.schedule(
             deadline: .now() + .seconds(throughputIntervalSeconds),
             repeating: .seconds(throughputIntervalSeconds)
         )
-        timer.setEventHandler { [weak self] in
+        source.setEventHandler { [weak self] in
             self?.sampleAndLog()
         }
-        self.timer = timer
-        timer.resume()
+        self.timer = source
+        source.resume()
         logger.notice("mac relay throughput logger started")
     }
 

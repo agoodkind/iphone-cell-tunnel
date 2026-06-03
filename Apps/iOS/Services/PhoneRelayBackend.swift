@@ -89,11 +89,11 @@
                     """
                 )
             }
-            guard let session = manager.connection as? NETunnelProviderSession else {
+            guard let tunnelSession = manager.connection as? NETunnelProviderSession else {
                 logger.notice("phone relay backend stop ignored because session is unavailable")
                 return
             }
-            session.stopTunnel()
+            tunnelSession.stopTunnel()
         }
 
         // MARK: - Sampling
@@ -130,7 +130,12 @@
                 connectedPeerName: snapshot.connectedPeerName,
                 cellularPath: snapshot.cellularPath ?? CellularPathSnapshot(),
                 counters: snapshot.phoneCounters ?? TunnelCounters(),
-                lastError: snapshot.lastError
+                lastError: snapshot.lastError,
+                routeState: snapshot.routeState,
+                peerState: snapshot.peerState,
+                localLinkInterfaceName: snapshot.localLinkInterfaceName,
+                relayPublicIPv4Address: snapshot.relayPublicIPv4Address,
+                relayPublicIPv6Address: snapshot.relayPublicIPv6Address
             )
             lastSample = sample
             return sample
@@ -158,7 +163,12 @@
                 connectedPeerName: nil,
                 cellularPath: CellularPathSnapshot(),
                 counters: TunnelCounters(),
-                lastError: nil
+                lastError: nil,
+                routeState: .notInstalled,
+                peerState: .notSelected,
+                localLinkInterfaceName: nil,
+                relayPublicIPv4Address: nil,
+                relayPublicIPv6Address: nil
             )
         }
 
@@ -201,38 +211,38 @@
                 let tunnelProtocol = candidate.protocolConfiguration as? NETunnelProviderProtocol
                 return tunnelProtocol?.providerBundleIdentifier == providerBundleIdentifier
             }
-            let manager = existing ?? NETunnelProviderManager()
+            let resolvedManager = existing ?? NETunnelProviderManager()
 
             let tunnelProtocol = NETunnelProviderProtocol()
             tunnelProtocol.providerBundleIdentifier = providerBundleIdentifier
             tunnelProtocol.serverAddress = tunnelServerAddress
-            manager.protocolConfiguration = tunnelProtocol
-            manager.localizedDescription = tunnelLocalizedDescription
-            manager.isEnabled = true
-            manager.isOnDemandEnabled = true
+            resolvedManager.protocolConfiguration = tunnelProtocol
+            resolvedManager.localizedDescription = tunnelLocalizedDescription
+            resolvedManager.isEnabled = true
+            resolvedManager.isOnDemandEnabled = true
             let connectRule = NEOnDemandRuleConnect()
             connectRule.interfaceTypeMatch = .any
-            manager.onDemandRules = [connectRule]
+            resolvedManager.onDemandRules = [connectRule]
 
-            try await manager.saveToPreferences()
-            try await manager.loadFromPreferences()
+            try await resolvedManager.saveToPreferences()
+            try await resolvedManager.loadFromPreferences()
             logger.notice(
                 "phone relay backend manager saved reused=\(existing != nil, privacy: .public)"
             )
-            return manager
+            return resolvedManager
         }
 
         // Mirrors the macOS agent isSessionActive gate so a tunnel the system
         // already brought up via on-demand is not torn down and restarted on launch.
         private func startSessionIfNeeded(on manager: NETunnelProviderManager) throws {
-            guard let session = manager.connection as? NETunnelProviderSession else {
+            guard let tunnelSession = manager.connection as? NETunnelProviderSession else {
                 throw PhoneRelayBackendError.sessionUnavailable
             }
-            guard !isConnectionRunning(session.status) else {
+            guard !isConnectionRunning(tunnelSession.status) else {
                 logger.notice("phone relay backend session already active; skipping start")
                 return
             }
-            try session.startTunnel(options: nil)
+            try tunnelSession.startTunnel(options: nil)
             logger.notice("phone relay backend startTunnel issued")
         }
 
@@ -346,26 +356,4 @@
         }
     }
 
-    // MARK: - Developer console
-
-    #if DEBUG
-        extension PhoneRelayBackend: RelayDebugBackend {
-            func restart() async {
-                logger.notice("phone relay backend restart requested")
-                await stop()
-                await start()
-            }
-
-            func environmentChecks() async -> [TunnelEnvironmentCheckResult] {
-                // The iPhone has no agent environment report; yield to keep this a
-                // real suspension point for the async contract.
-                await Task.yield()
-                return []
-            }
-
-            func probeServer(endpoint: RelayEndpoint) async -> DebugProbeResult {
-                await RelayServerProbe.probeServer(endpoint: endpoint, pinCellular: true)
-            }
-        }
-    #endif
 #endif

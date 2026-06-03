@@ -53,10 +53,10 @@ final class WireGuardRelayBind: WireGuardRelayBindBridge, @unchecked Sendable {
         // clears it only at lifecycle boundaries, so capture it directly in the
         // receive closure rather than guarding a shared field with a per-datagram
         // lock. The closure runs on RelayTransport's serial receive queue.
-        let metrics = self.metrics
+        let relayMetrics = self.metrics
         transport.onReceive = { datagram in
-            metrics.addDatagramsFromServer()
-            metrics.addBytesIn(UInt64(datagram.count))
+            relayMetrics.addDatagramsFromServer()
+            relayMetrics.addBytesIn(UInt64(datagram.count))
             injector(datagram, Self.inboundEndpoint)
         }
         logger.notice("relay bind inbound injector attached")

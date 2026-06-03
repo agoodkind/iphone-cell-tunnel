@@ -36,24 +36,38 @@ public struct TunnelCounters: Codable, Equatable, Sendable {
 
 // MARK: - CellularPathSnapshot
 
+/// One reading of the iPhone cellular egress path. The support flags and interface
+/// identity come from the Network framework path on the iPhone. The address strings
+/// are the iPhone's own cellular interface addresses, shown under the `DEVICE`
+/// `Cellular` group on the status screen.
 public struct CellularPathSnapshot: Codable, Equatable, Sendable {
     public var isSatisfied: Bool
     public var supportsIPv4: Bool
     public var supportsIPv6: Bool
     public var interfaceName: String?
     public var interfaceIndex: Int?
+    /// The iPhone cellular interface IPv4 address, or `nil` when not yet surfaced
+    /// by the path source.
+    public var ipv4Address: String?
+    /// The iPhone cellular interface IPv6 address, or `nil` when not yet surfaced
+    /// by the path source.
+    public var ipv6Address: String?
 
     public init(
         isSatisfied: Bool = false,
         supportsIPv4: Bool = false,
         supportsIPv6: Bool = false,
         interfaceName: String? = nil,
-        interfaceIndex: Int? = nil
+        interfaceIndex: Int? = nil,
+        ipv4Address: String? = nil,
+        ipv6Address: String? = nil
     ) {
         self.isSatisfied = isSatisfied
         self.supportsIPv4 = supportsIPv4
         self.supportsIPv6 = supportsIPv6
         self.interfaceName = interfaceName
         self.interfaceIndex = interfaceIndex
+        self.ipv4Address = ipv4Address
+        self.ipv6Address = ipv6Address
     }
 }

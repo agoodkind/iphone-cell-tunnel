@@ -109,14 +109,14 @@ public struct TunnelRelayEndpoint: Codable, Equatable, Hashable, Sendable {
             }
             let udid = String(body[..<lastColonIndex])
             let portString = String(body[body.index(after: lastColonIndex)...])
-            guard !udid.isEmpty, let port = Int(portString), port > 0 else {
+            guard !udid.isEmpty, let parsedPort = Int(portString), parsedPort > 0 else {
                 throw TunnelDaemonError.controlFailure(
                     TunnelControlFailure(
                         errorCode: .invalidRelayEndpoint,
                         message: "invalid \(scheme.dropLast()) relay endpoint")
                 )
             }
-            return Self(host: "\(scheme)\(udid)", port: port, addressFamily: .unspecified)
+            return Self(host: "\(scheme)\(udid)", port: parsedPort, addressFamily: .unspecified)
         }
 
         if trimmedArgument.hasPrefix("[") {
@@ -128,24 +128,25 @@ public struct TunnelRelayEndpoint: Codable, Equatable, Hashable, Sendable {
                         errorCode: .invalidRelayEndpoint, message: "invalid relay endpoint")
                 )
             }
-            let host = String(
+            let parsedHost = String(
                 trimmedArgument[
                     trimmedArgument.index(after: trimmedArgument.startIndex)..<closingBracketIndex]
             )
             let portString = String(
                 trimmedArgument[trimmedArgument.index(after: separatorIndex)...])
-            guard let port = Int(portString), port > 0 else {
+            guard let parsedPort = Int(portString), parsedPort > 0 else {
                 throw TunnelDaemonError.controlFailure(
                     TunnelControlFailure(
                         errorCode: .invalidRelayEndpoint, message: "invalid relay endpoint")
                 )
             }
-            return Self(host: host, port: port, addressFamily: .ipv6)
+            return Self(host: parsedHost, port: parsedPort, addressFamily: .ipv6)
         }
 
         let components = trimmedArgument.split(
             separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-        guard components.count == hostPortComponentCount, let port = Int(components[1]), port > 0
+        guard components.count == hostPortComponentCount, let parsedPort = Int(components[1]),
+            parsedPort > 0
         else {
             throw TunnelDaemonError.controlFailure(
                 TunnelControlFailure(
@@ -153,9 +154,9 @@ public struct TunnelRelayEndpoint: Codable, Equatable, Hashable, Sendable {
             )
         }
 
-        let host = String(components[0])
-        let addressFamily: TunnelAddressFamily = host.contains(":") ? .ipv6 : .ipv4
-        return Self(host: host, port: port, addressFamily: addressFamily)
+        let parsedHost = String(components[0])
+        let parsedFamily: TunnelAddressFamily = parsedHost.contains(":") ? .ipv6 : .ipv4
+        return Self(host: parsedHost, port: parsedPort, addressFamily: parsedFamily)
     }
 }
 
@@ -314,6 +315,16 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     public var cellularPath: CellularPathSnapshot?
     public var connectedPeerName: String?
     public var relayState: String?
+    /// The Mac-to-iPhone link transport carrying traffic, by raw interface
+    /// identifier (mapped to a defined name for display), or `nil` when not yet
+    /// surfaced by the link source.
+    public var localLinkInterfaceName: String?
+    /// The public IPv4 address the internet sees via the upstream WireGuard server,
+    /// or `nil` when not yet surfaced.
+    public var relayPublicIPv4Address: String?
+    /// The public IPv6 address the internet sees via the upstream WireGuard server,
+    /// or `nil` when not yet surfaced.
+    public var relayPublicIPv6Address: String?
 
     public init(
         running: Bool = false,
@@ -328,7 +339,10 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         phoneCounters: TunnelCounters? = nil,
         cellularPath: CellularPathSnapshot? = nil,
         connectedPeerName: String? = nil,
-        relayState: String? = nil
+        relayState: String? = nil,
+        localLinkInterfaceName: String? = nil,
+        relayPublicIPv4Address: String? = nil,
+        relayPublicIPv6Address: String? = nil
     ) {
         self.running = running
         self.routeState = routeState
@@ -343,6 +357,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         self.cellularPath = cellularPath
         self.connectedPeerName = connectedPeerName
         self.relayState = relayState
+        self.localLinkInterfaceName = localLinkInterfaceName
+        self.relayPublicIPv4Address = relayPublicIPv4Address
+        self.relayPublicIPv6Address = relayPublicIPv6Address
     }
 
     public var renderedOutput: String {

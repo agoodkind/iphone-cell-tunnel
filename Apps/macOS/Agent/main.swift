@@ -36,11 +36,11 @@ final class AgentRuntime: @unchecked Sendable {
         // command-line tool and the Mac app both dial it with the libxpc session
         // API. A Mac Catalyst app cannot open an NSXPCConnection to a mach service,
         // so this is the single transport.
-        let sessionListener = AgentSessionListener(controller: controller) { [weak self] in
+        let listener = AgentSessionListener(controller: controller) { [weak self] in
             self?.resetIdleTimer()
         }
-        self.sessionListener = sessionListener
-        sessionListener.start()
+        self.sessionListener = listener
+        listener.start()
         resetIdleTimer()
         wireRelayActivityHold()
         logger.notice(
@@ -52,10 +52,10 @@ final class AgentRuntime: @unchecked Sendable {
     // hosts an active relay. The agent owns the relay bridge in memory, so exiting
     // mid-relay would kill the bridge and strand the iPhone link.
     private func wireRelayActivityHold() {
-        let controller = self.controller
+        let heldController = self.controller
         let runtime = self
         Task {
-            await controller.setRelayActiveHandler { [weak runtime] active in
+            await heldController.setRelayActiveHandler { [weak runtime] active in
                 runtime?.setRelayActive(active)
             }
         }

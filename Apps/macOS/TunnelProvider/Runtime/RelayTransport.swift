@@ -94,14 +94,14 @@ final class RelayTransport: @unchecked Sendable {
             )
             return
         }
-        let metrics = self.metrics
+        let relayMetrics = self.metrics
         activeConnection.send(
             content: datagram,
             completion: .contentProcessed { error in
                 guard let error else {
                     return
                 }
-                metrics.addDropped()
+                relayMetrics.addDropped()
                 logger.error(
                     """
                     relay transport send failed \

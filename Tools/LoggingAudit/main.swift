@@ -68,6 +68,16 @@ let allowlist = [
         rule: .loggerDeclaration,
         reason: "TunnelDaemonStatusSnapshot holds Codable payloads with no side effects."
     ),
+    AuditAllowlistEntry(
+        pathSuffix: "Apps/iOS/Views/RelayScreenModel.swift",
+        rule: .loggerDeclaration,
+        reason: "RelayScreenModel derives display state from the controller with no side effects."
+    ),
+    AuditAllowlistEntry(
+        pathSuffix: "Apps/iOS/Views/PreviewRelayBackend.swift",
+        rule: .loggerDeclaration,
+        reason: "PreviewRelayBackend is a no-op preview backend with no runtime side effects."
+    ),
 ]
 
 let boundaryNeedles = [
@@ -194,12 +204,12 @@ func auditText(path: String, lines: [String], violations: inout [Violation]) {
     }
 
     for (index, line) in lines.enumerated() where !isCommentOnly(line) {
-        let lineNumber = index + 1
+        let currentLine = index + 1
         if line.contains(inlineLintDisableMarker) {
             violations.append(
                 Violation(
                     path: path,
-                    line: lineNumber,
+                    line: currentLine,
                     rule: .inlineLintDisable,
                     message: "runtime Swift code must not disable SwiftLint inline"
                 )
@@ -209,7 +219,7 @@ func auditText(path: String, lines: [String], violations: inout [Violation]) {
             violations.append(
                 Violation(
                     path: path,
-                    line: lineNumber,
+                    line: currentLine,
                     rule: .bannedOutput,
                     message: "use CellTunnelLog instead of direct runtime output"
                 )
@@ -219,7 +229,7 @@ func auditText(path: String, lines: [String], violations: inout [Violation]) {
             violations.append(
                 Violation(
                     path: path,
-                    line: lineNumber,
+                    line: currentLine,
                     rule: .warningLevel,
                     message: "use notice for recoverable events or error for failures"
                 )

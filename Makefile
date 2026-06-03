@@ -38,6 +38,15 @@ SWIFT_BUILD_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) build $(TARGET) $(
 SWIFT_TEST_CMD ?= $(CELL_TUNNEL_DEV) test
 SWIFT_RUN_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) activate $(TARGET) $(CONFIG),printf 'run: TARGET=$(ACTIVATION_TARGET_USAGE) is required\n'; exit 1)
 SWIFT_GENERATE_CMD ?= $(MAKE) xcconfig-generate-project
+# CellTunnelDev builds Xcode targets into build/DerivedData; the dead-code gate
+# reads the index store from the same path so it scans every built Xcode target.
+SWIFT_MK_DERIVED_DATA := $(CURDIR)/build/DerivedData
+# Target-free coverage build for the dead-code gate. Builds the macOS agent and
+# provider, the Mac Catalyst app branch, and the iOS app branch plus extension on
+# the simulator, so both targetEnvironment(macCatalyst) branches are analyzed with
+# no device signing. SWIFT_BUILD_CMD itself requires a TARGET, so the gate uses
+# this instead.
+SWIFT_DEADCODE_BUILD_CMD := rm -rf "$(SWIFT_MK_DERIVED_DATA)" && $(CELL_TUNNEL_DEV) build mac $(CONFIG) && $(CELL_TUNNEL_DEV) build mac-catalyst $(CONFIG) && $(CELL_TUNNEL_DEV) build iphone-simulator $(CONFIG)
 SWIFT_CLEAN_CMD ?= $(CELL_TUNNEL_DEV) clean
 SWIFT_DEPLOY_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) activate $(TARGET) $(CONFIG),printf 'deploy: TARGET=$(ACTIVATION_TARGET_USAGE) is required\n'; exit 1)
 SWIFT_ANALYZE_CMD ?= $(CELL_TUNNEL_DEV) analyze

@@ -42,7 +42,7 @@ struct CellTunnelPhoneApp: App {
 
     var body: some Scene {
         WindowGroup {
-            PhoneContentView(relayController: relayController)
+            PhoneContentView(controller: relayController)
                 .task {
                     await relayController.start()
                 }

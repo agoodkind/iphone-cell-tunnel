@@ -37,14 +37,14 @@ final class CellularPathObserver: @unchecked Sendable {
             let cellularInterface = path.availableInterfaces.first { interface in
                 interface.type == .cellular
             }
-            let snapshot = CellularPathSnapshot(
+            let newSnapshot = CellularPathSnapshot(
                 isSatisfied: path.status == .satisfied,
                 supportsIPv4: path.supportsIPv4,
                 supportsIPv6: path.supportsIPv6,
                 interfaceName: cellularInterface?.name,
                 interfaceIndex: cellularInterface?.index
             )
-            latestSnapshot.withLock { $0 = snapshot }
+            latestSnapshot.withLock { $0 = newSnapshot }
             logger.info(
                 """
                 cellular path updated satisfied=\(path.status == .satisfied, privacy: .public) \

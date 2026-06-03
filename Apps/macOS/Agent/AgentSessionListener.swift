@@ -123,9 +123,9 @@ final class AgentSessionListener: @unchecked Sendable {
             replyChannel.sendFailure("request decode failed")
             return
         }
-        let controller = self.controller
+        let handlingController = self.controller
         Task {
-            let response = await controller.handle(request: request)
+            let response = await handlingController.handle(request: request)
             replyChannel.send(response)
         }
     }

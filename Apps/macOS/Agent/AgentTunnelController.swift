@@ -82,11 +82,11 @@ actor AgentTunnelController {
 
     private func handleStatus() async -> AgentControlResponse {
         do {
-            let manager = try await loadOrCreateManager()
-            guard isSessionActive(on: manager) else {
-                return AgentControlResponse(status: snapshot(from: manager))
+            let loadedManager = try await loadOrCreateManager()
+            guard isSessionActive(on: loadedManager) else {
+                return AgentControlResponse(status: snapshot(from: loadedManager))
             }
-            return try await forwardStatus(on: manager)
+            return try await forwardStatus(on: loadedManager)
         } catch {
             logger.error(
                 """
@@ -104,17 +104,17 @@ actor AgentTunnelController {
             TunnelEnvironmentCheckResult(name: "provider_bundle", value: providerBundleIdentifier)
         ]
         do {
-            let manager = try await loadOrCreateManager()
+            let loadedManager = try await loadOrCreateManager()
             checks.append(
                 TunnelEnvironmentCheckResult(
                     name: "configuration_present",
-                    value: String(manager.protocolConfiguration != nil)
+                    value: String(loadedManager.protocolConfiguration != nil)
                 )
             )
             checks.append(
                 TunnelEnvironmentCheckResult(
                     name: "vpn_status",
-                    value: statusDescription(manager.connection.status)
+                    value: statusDescription(loadedManager.connection.status)
                 )
             )
         } catch {
@@ -144,16 +144,16 @@ actor AgentTunnelController {
         }
         do {
             let configText = try readConfigText(at: settings.wireGuardConfigPath)
-            let manager = try await loadOrCreateManager()
-            applyConfiguration(to: manager, wireGuardConfig: configText)
-            try await save(manager: manager)
-            try await load(manager: manager)
+            let loadedManager = try await loadOrCreateManager()
+            applyConfiguration(to: loadedManager, wireGuardConfig: configText)
+            try await save(manager: loadedManager)
+            try await load(manager: loadedManager)
             try await startControlListener(wireGuardConfig: configText)
-            observeStatus(on: manager)
-            try startSession(on: manager)
+            observeStatus(on: loadedManager)
+            try startSession(on: loadedManager)
             logger.notice("agent tunnel start requested")
-            await waitForSessionConnected(on: manager)
-            return try await forwardStatus(on: manager)
+            await waitForSessionConnected(on: loadedManager)
+            return try await forwardStatus(on: loadedManager)
         } catch {
             logger.error(
                 """
@@ -168,11 +168,11 @@ actor AgentTunnelController {
 
     private func handleStopTunnel() async -> AgentControlResponse {
         do {
-            let manager = try await loadOrCreateManager()
-            stopSession(on: manager)
+            let loadedManager = try await loadOrCreateManager()
+            stopSession(on: loadedManager)
             await stopControlListener()
             logger.notice("agent tunnel stop requested")
-            return AgentControlResponse(status: snapshot(from: manager))
+            return AgentControlResponse(status: snapshot(from: loadedManager))
         } catch {
             logger.error(
                 """

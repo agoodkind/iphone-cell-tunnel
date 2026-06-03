@@ -45,14 +45,14 @@ actor WireGuardRuntime {
         guard !didStart else {
             throw WireGuardRuntimeError.alreadyStarted
         }
-        let adapter = WireGuardAdapter(with: provider) { logLevel, line in
+        let wgAdapter = WireGuardAdapter(with: provider) { logLevel, line in
             Self.relayAdapterDiagnosticLine(logLevel: logLevel, line: line)
         }
-        self.adapter = adapter
+        self.adapter = wgAdapter
         self.relayBind = relayBind
         logger.notice("tunnel runtime adapter start scheduled")
         let outcome = await withCheckedContinuation { continuation in
-            adapter.start(
+            wgAdapter.start(
                 tunnelConfiguration: tunnelConfiguration,
                 relayBind: relayBind
             ) { adapterError in
