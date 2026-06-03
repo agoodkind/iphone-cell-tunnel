@@ -10,7 +10,7 @@
 CONFIG ?= Debug
 CELL_TUNNEL_DEV := swift Tools/cell-tunnel-dev.swift
 ACTIVATION_TARGET_USAGE := mac|iphone|iphone-simulator
-BUILD_TARGET_USAGE := daemon|mac|mac-catalyst|iphone-simulator|iphone-device|all
+BUILD_TARGET_USAGE := daemon|mac|mac-catalyst|iphone-simulator|iphone-device|iphone-device-compile|all
 
 SWIFT_MK_MODULES := swift-build.mk xcconfig.mk
 
@@ -42,11 +42,12 @@ SWIFT_GENERATE_CMD ?= $(MAKE) xcconfig-generate-project
 # reads the index store from the same path so it scans every built Xcode target.
 SWIFT_MK_DERIVED_DATA := $(CURDIR)/build/DerivedData
 # Target-free coverage build for the dead-code gate. Builds the macOS agent and
-# provider, the Mac Catalyst app branch, and the iOS app branch plus extension on
-# the simulator, so both targetEnvironment(macCatalyst) branches are analyzed with
-# no device signing. SWIFT_BUILD_CMD itself requires a TARGET, so the gate uses
-# this instead.
-SWIFT_DEADCODE_BUILD_CMD := rm -rf "$(SWIFT_MK_DERIVED_DATA)" && $(CELL_TUNNEL_DEV) build mac $(CONFIG) && $(CELL_TUNNEL_DEV) build mac-catalyst $(CONFIG) && $(CELL_TUNNEL_DEV) build iphone-simulator $(CONFIG)
+# provider, the Mac Catalyst app branch, the iOS app branch plus extension on the
+# simulator, and the iOS device app branch compiled sign-free, so every
+# targetEnvironment branch (macCatalyst, simulator, and device) is analyzed with no
+# device signing. SWIFT_BUILD_CMD itself requires a TARGET, so the gate uses this
+# instead.
+SWIFT_DEADCODE_BUILD_CMD := rm -rf "$(SWIFT_MK_DERIVED_DATA)" && $(CELL_TUNNEL_DEV) build mac $(CONFIG) && $(CELL_TUNNEL_DEV) build mac-catalyst $(CONFIG) && $(CELL_TUNNEL_DEV) build iphone-simulator $(CONFIG) && $(CELL_TUNNEL_DEV) build iphone-device-compile $(CONFIG)
 SWIFT_CLEAN_CMD ?= $(CELL_TUNNEL_DEV) clean
 SWIFT_DEPLOY_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) activate $(TARGET) $(CONFIG),printf 'deploy: TARGET=$(ACTIVATION_TARGET_USAGE) is required\n'; exit 1)
 SWIFT_ANALYZE_CMD ?= $(CELL_TUNNEL_DEV) analyze
