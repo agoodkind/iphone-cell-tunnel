@@ -18,7 +18,8 @@ private let screenTitle = "Cell Tunnel"
 private let routeTrafficLabel = "Route traffic"
 private let speedSectionTitle = "SPEED"
 private let dataSectionTitle = "DATA"
-private let bytesCountStyle = ByteCountFormatStyle(style: .file)
+private let bytesCountStyle = ByteCountFormatStyle(style: .file, spellsOutZero: false)
+private let secondaryGroupSpacing: CGFloat = 10
 
 // MARK: - RelayStatusScreen
 
@@ -144,6 +145,15 @@ struct RelayStatusScreen: View {
             Section {
                 ForEach(section.rows) { row in
                     LabeledContent(row.label, value: row.value)
+                }
+                if !section.secondaryRows.isEmpty {
+                    Color.clear
+                        .frame(height: secondaryGroupSpacing)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                    ForEach(section.secondaryRows) { row in
+                        LabeledContent(row.label, value: row.value)
+                    }
                 }
             } header: {
                 connectionSectionHeader(section)

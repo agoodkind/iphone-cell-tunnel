@@ -81,12 +81,14 @@ struct ConnectionRow: Identifiable, Equatable {
 
 /// One titled group of connection rows, with an optional right-aligned qualifier
 /// such as `Cellular` or `WireGuard`. The connection area renders an ordered list
-/// of these, so adding a group is a data change, not a view change.
+/// of these, so adding a group is a data change, not a view change. `secondaryRows`
+/// render below the primary rows after a slight gap, empty when the group has none.
 struct ConnectionSection: Identifiable, Equatable {
     let id = UUID()
     let title: String
     let qualifier: String?
     let rows: [ConnectionRow]
+    let secondaryRows: [ConnectionRow]
 }
 
 // MARK: - RelayScreenState
@@ -321,7 +323,8 @@ struct RelayScreenModel {
             rows: [
                 ConnectionRow(label: "Connected to", value: connectedToValue),
                 ConnectionRow(label: "Connected via", value: connectedViaValue),
-            ]
+            ],
+            secondaryRows: []
         )
     }
 
@@ -335,7 +338,8 @@ struct RelayScreenModel {
             rows: addressRows(
                 ipv6: controller.cellularPath.ipv6Address,
                 ipv4: controller.cellularPath.ipv4Address
-            ) + publicAddressRows(ipv6: nil, ipv4: nil)
+            ),
+            secondaryRows: publicAddressRows(ipv6: nil, ipv4: nil)
         )
     }
 
@@ -349,7 +353,8 @@ struct RelayScreenModel {
             rows: addressRows(
                 ipv6: controller.relayPublicIPv6Address,
                 ipv4: controller.relayPublicIPv4Address
-            ) + publicAddressRows(ipv6: nil, ipv4: nil)
+            ),
+            secondaryRows: publicAddressRows(ipv6: nil, ipv4: nil)
         )
     }
 
