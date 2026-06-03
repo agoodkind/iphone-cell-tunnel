@@ -79,6 +79,8 @@ final class RelayController {
     private var pollTask: Task<Void, Never>?
     private var throughput = ThroughputCalculator()
     private var lifetimeStore = LifetimeDataStore()
+    private let publicProbe = PublicAddressProbe()
+    private var didProbePublicAddress = false
 
     var isRunning = false
     var connectedPeerName: String?
@@ -94,6 +96,8 @@ final class RelayController {
     var localLinkInterfaceName: String?
     var relayPublicIPv4Address: String?
     var relayPublicIPv6Address: String?
+    var devicePublicIPv4Address: String?
+    var devicePublicIPv6Address: String?
 
     init(backend: any RelayControlBackend) {
         self.backend = backend
@@ -173,7 +177,32 @@ final class RelayController {
         let rate = throughput.update(with: sample.counters)
         uploadMbps = rate.upload
         downloadMbps = rate.download
+        updatePublicAddressProbe()
         logger.debug("relay controller sample applied running=\(self.isRunning, privacy: .public)")
+    }
+
+    // Probes this device's public addresses once per live connection and clears
+    // them when the connection drops, so the device public rows reflect the current
+    // session.
+    private func updatePublicAddressProbe() {
+        guard connectedPeerName != nil else {
+            didProbePublicAddress = false
+            devicePublicIPv4Address = nil
+            devicePublicIPv6Address = nil
+            return
+        }
+        guard !didProbePublicAddress else {
+            return
+        }
+        didProbePublicAddress = true
+        Task { @MainActor [weak self] in
+            guard let self else {
+                return
+            }
+            let result = await publicProbe.probe()
+            devicePublicIPv4Address = result.ipv4
+            devicePublicIPv6Address = result.ipv6
+        }
     }
 
     // MARK: - Routing control
