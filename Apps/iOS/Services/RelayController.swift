@@ -78,11 +78,13 @@ final class RelayController {
     private let backend: any RelayControlBackend
     private var pollTask: Task<Void, Never>?
     private var throughput = ThroughputCalculator()
+    private var lifetimeStore = LifetimeDataStore()
 
     var isRunning = false
     var connectedPeerName: String?
     var cellularPath = CellularPathSnapshot()
     var counters = TunnelCounters()
+    var lifetimeTotalBytes: UInt64 = 0
     var uploadMbps: Double = 0
     var downloadMbps: Double = 0
     var lastError: String?
@@ -159,6 +161,8 @@ final class RelayController {
         connectedPeerName = sample.connectedPeerName
         cellularPath = sample.cellularPath
         counters = sample.counters
+        lifetimeTotalBytes = lifetimeStore.total(
+            sessionTotal: sample.counters.relayBytesIn &+ sample.counters.relayBytesOut)
         lastError = sample.lastError
         relayStateDescription = sample.relayStateDescription
         routeState = sample.routeState

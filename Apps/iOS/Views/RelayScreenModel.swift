@@ -276,11 +276,11 @@ struct RelayScreenModel {
 
     // MARK: - Data
 
-    /// The lifetime total bytes through the tunnel, summing both directions, for
-    /// the `DATA` section. The relay byte counters are the real lifetime totals the
-    /// backend reports.
+    /// The lifetime total bytes through the tunnel for the `DATA` section. The
+    /// controller accumulates the relay byte total across sessions, so the figure
+    /// persists rather than resetting when a session restarts.
     var lifetimeTotalBytes: UInt64 {
-        controller.counters.relayBytesIn &+ controller.counters.relayBytesOut
+        controller.lifetimeTotalBytes
     }
 
     // MARK: - Connection
