@@ -59,6 +59,11 @@ protocol RelayControlBackend {
 
     /// One status reading, or `nil` when the source is briefly unavailable.
     func sample() async -> RelayStatusSample?
+
+    /// Sets the routing choice: on installs the program routes, off returns to
+    /// passthrough. The choice reaches the agent, which owns the routes, over the
+    /// platform's control path.
+    func setRouting(enabled: Bool) async
 }
 
 // MARK: - RelayController
@@ -170,23 +175,13 @@ final class RelayController {
     // MARK: - Routing control
 
     /// Requests routing (on) or passthrough (off) for the `Route traffic` switch.
-    ///
-    /// KNOWN GAP: the agent exposes no app-facing control verb to gate routes; the
-    /// program routes are driven autonomously by the agent off the iPhone link
-    /// state, and the provider's `setRouteState` request is agent-internal, not an
-    /// `AgentControlRequest`. Until a passthrough/routing verb is added to
-    /// `AgentControlRequest`/`AgentClient`, this wires the switch to the closest
-    /// existing capability, the session lifecycle: routing brings the session up,
-    /// passthrough takes it down. The displayed routing-versus-passthrough state
-    /// still reads from the real `routeState` in the status snapshot.
+    /// The backend forwards the choice to the agent, which installs or withdraws
+    /// the program routes. The displayed routing-versus-passthrough state reads from
+    /// the real `routeState` in the next status snapshot.
     func setRouteTraffic(enabled: Bool) async {
         logger.notice(
             "relay controller route traffic requested enabled=\(enabled, privacy: .public)")
-        if enabled {
-            await start()
-        } else {
-            await stop()
-        }
+        await backend.setRouting(enabled: enabled)
     }
 
     /// Spaces polls without `Task.sleep` by resuming off a dispatch queue after the

@@ -43,6 +43,15 @@ actor AgentTunnelController {
     let relayBridge = AgentRelayBridge()
     let relayBrowser = RelayDeviceBrowser()
 
+    /// Whether the user has turned routing on. The agent installs the program
+    /// routes only while this is true and a phone link is up, so the default is
+    /// passthrough: the link stays up carrying nothing until routing is enabled.
+    var routingEnabled = false
+
+    /// Whether a phone relay link is up, tracked from the relay bridge so a routing
+    /// change installs or withdraws routes against the live link state.
+    var phoneLinkUp = false
+
     /// Called when the relay goes active or inactive so the runtime can hold the
     /// agent idle timer while it hosts the relay bridge. Set once at startup.
     var onRelayActiveChange: (@Sendable (Bool) -> Void)?
@@ -77,7 +86,14 @@ actor AgentTunnelController {
             return snapshotResponse()
         case .selectRelayService(let serviceID):
             return selectRelay(serviceID: serviceID)
+        case .setRoutingEnabled(let enabled):
+            return await handleSetRoutingEnabled(enabled)
         }
+    }
+
+    private func handleSetRoutingEnabled(_ enabled: Bool) async -> AgentControlResponse {
+        await setRoutingEnabled(enabled)
+        return await handleStatus()
     }
 
     private func handleStatus() async -> AgentControlResponse {

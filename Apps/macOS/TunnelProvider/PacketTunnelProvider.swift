@@ -181,6 +181,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         case .setRouteState(let installed):
             applyRouteState(installed)
             return ProviderControlResponse(status: currentStatusSnapshot())
+        case .setRoutingEnabled:
+            // The agent owns the routing choice and translates it into setRouteState,
+            // so the Mac extension never receives this request directly.
+            return ProviderControlResponse(status: currentStatusSnapshot())
         case .discoverySnapshot:
             // Discovery is owned by the agent; the extension holds no browser.
             return ProviderControlResponse(discovery: TunnelDiscoverySnapshot())

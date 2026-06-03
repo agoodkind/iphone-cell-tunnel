@@ -248,6 +248,29 @@
 
         // MARK: - Provider message
 
+        // Sends the routing choice to the extension, which forwards it to the agent
+        // over the control link. The agent owns the routes.
+        func setRouting(enabled: Bool) async {
+            guard let session else {
+                logger.notice("phone relay backend routing change ignored: no session")
+                return
+            }
+            do {
+                let payload = try JSONEncoder().encode(
+                    ProviderControlEnvelope(request: .setRoutingEnabled(enabled: enabled)))
+                _ = try await sendProviderMessage(payload, on: session)
+                logger.notice(
+                    "phone relay backend routing sent enabled=\(enabled, privacy: .public)")
+            } catch {
+                logger.error(
+                    """
+                    phone relay backend routing change failed \
+                    details=\(String(describing: error), privacy: .public) recovery=keep-state
+                    """
+                )
+            }
+        }
+
         private func sendStatusRequest(
             on session: NETunnelProviderSession
         ) async throws -> ProviderControlResponse {

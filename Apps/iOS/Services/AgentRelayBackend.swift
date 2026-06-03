@@ -44,6 +44,23 @@
             await client.shutdown()
         }
 
+        // Sends the routing choice to the agent, which installs or withdraws the
+        // program routes.
+        func setRouting(enabled: Bool) async {
+            do {
+                _ = try await client.setRoutingEnabled(enabled)
+                logger.notice(
+                    "agent relay backend routing sent enabled=\(enabled, privacy: .public)")
+            } catch {
+                logger.error(
+                    """
+                    agent relay backend routing change failed \
+                    details=\(String(describing: error), privacy: .public) recovery=keep-state
+                    """
+                )
+            }
+        }
+
         // MARK: - Sampling
 
         func sample() async -> RelayStatusSample? {

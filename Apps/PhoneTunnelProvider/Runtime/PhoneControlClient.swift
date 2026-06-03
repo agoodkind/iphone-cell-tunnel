@@ -269,10 +269,26 @@ final class PhoneControlClient {
                 message=\(payload.message, privacy: .public)
                 """
             )
+        case .setRoutingEnabled:
+            logger.debug("control received unexpected set-routing-enabled from peer")
         }
     }
 
     // MARK: - Send
+
+    /// Pushes the user's routing choice to the agent over the control link. Without
+    /// a live control connection the choice is dropped, since the agent learns the
+    /// current choice again when the link re-establishes and the app re-sends.
+    func sendRoutingEnabled(_ enabled: Bool) {
+        guard let connection else {
+            logger.notice("control client routing change dropped: no control connection")
+            return
+        }
+        let message = RelayControlMessage.setRoutingEnabled(
+            RelayControlMessage.SetRoutingEnabled(enabled: enabled))
+        send(message, on: connection)
+        logger.notice("control client sent routing enabled=\(enabled, privacy: .public)")
+    }
 
     private func send(_ message: RelayControlMessage, on connection: NWConnection) {
         let payload: Data

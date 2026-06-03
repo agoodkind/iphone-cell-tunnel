@@ -15,8 +15,22 @@ public let relayControlWireVersion: Int = 1
 public enum RelayControlMessage: Codable, Sendable, Equatable {
     case acknowledge(Acknowledge)
     case error(Failure)
+    case setRoutingEnabled(SetRoutingEnabled)
     case setServerEndpoint(SetServerEndpoint)
     case status(Status)
+
+    /// Carries the user's passthrough-versus-routing choice from the iPhone app to
+    /// the agent over the control link. The agent installs the program routes only
+    /// while this is on, so the default is passthrough.
+    public struct SetRoutingEnabled: Codable, Sendable, Equatable {
+        public var version: Int
+        public var enabled: Bool
+
+        public init(enabled: Bool, version: Int = relayControlWireVersion) {
+            self.enabled = enabled
+            self.version = version
+        }
+    }
 
     public struct SetServerEndpoint: Codable, Sendable, Equatable {
         public var version: Int
@@ -82,6 +96,8 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
         switch self {
         case .setServerEndpoint:
             return "set-server-endpoint"
+        case .setRoutingEnabled:
+            return "set-routing-enabled"
         case .acknowledge:
             return "acknowledge"
         case .status:
@@ -94,6 +110,8 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
     public var declaredVersion: Int {
         switch self {
         case .setServerEndpoint(let payload):
+            return payload.version
+        case .setRoutingEnabled(let payload):
             return payload.version
         case .acknowledge(let payload):
             return payload.version

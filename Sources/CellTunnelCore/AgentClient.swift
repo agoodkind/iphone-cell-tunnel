@@ -127,6 +127,16 @@ import Foundation
             )
             return try requireDiscovery(from: response, operationName: "selectRelayService")
         }
+
+        public func setRoutingEnabled(_ enabled: Bool) async throws -> TunnelDaemonStatusSnapshot {
+            logger.notice(
+                "agent client invoked rpc=set-routing-enabled enabled=\(enabled, privacy: .public)")
+            let response = try await send(
+                request: .setRoutingEnabled(enabled: enabled),
+                operationName: "setRoutingEnabled"
+            )
+            return try requireStatus(from: response, operationName: "setRoutingEnabled")
+        }
     }
 
     extension AgentClient {

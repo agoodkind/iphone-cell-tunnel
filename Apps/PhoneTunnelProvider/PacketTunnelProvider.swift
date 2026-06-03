@@ -49,6 +49,9 @@ private struct RelayStatusState {
     var lastError: String?
     var connectedPeerName: String?
     var relayState = WireGuardDatagramRelayState.stopped.displayName
+    // The user's routing choice, defaulting to passthrough. The provider reports
+    // it as the route state and pushes it to the agent, which owns the routes.
+    var routingEnabled = false
 }
 
 // NEPacketTunnelProvider serializes the tunnel lifecycle callbacks, so the state
@@ -271,6 +274,11 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         case .setRouteState:
             // Route gating is a Mac-side concern; the iPhone relay ignores it.
             return ProviderControlResponse(status: currentStatusSnapshot())
+        case .setRoutingEnabled(let enabled):
+            statusState.withLock { $0.routingEnabled = enabled }
+            let client = controlClient
+            Task { @MainActor in client.sendRoutingEnabled(enabled) }
+            return ProviderControlResponse(status: currentStatusSnapshot())
         case .discoverySnapshot:
             return ProviderControlResponse(discovery: TunnelDiscoverySnapshot())
         }
@@ -280,7 +288,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         let state = statusState.withLock { $0 }
         return TunnelDaemonStatusSnapshot(
             running: state.running,
-            routeState: state.running ? .installed : .notInstalled,
+            routeState: state.routingEnabled ? .installed : .notInstalled,
             peerState: state.running ? .relaySelected : .notSelected,
             lastError: state.lastError,
             phoneCounters: forwarder.metrics.snapshot(),

@@ -104,6 +104,15 @@
             )
         }
 
+        // Routing needs the packet tunnel the simulator cannot run, so the choice
+        // is recorded only as a log and the state stays passthrough.
+        func setRouting(enabled: Bool) async {
+            await Task.yield()
+            logger.notice(
+                "simulator relay backend routing change ignored enabled=\(enabled, privacy: .public): no packet tunnel in the simulator"
+            )
+        }
+
         // MARK: - Dial
 
         private func connectIfNeeded(to endpoint: NWEndpoint) {

@@ -14,18 +14,21 @@ public enum ProviderControlRequest: Codable, Sendable {
     case discoverySnapshot
     case reloadConfig(text: String)
     case setRouteState(installed: Bool)
+    case setRoutingEnabled(enabled: Bool)
     case status
 
     private enum CodingKeys: String, CodingKey {
         case configText
         case installed
         case kind
+        case routingEnabled
     }
 
     private enum Kind: String, Codable {
         case discoverySnapshot
         case reloadConfig
         case setRouteState
+        case setRoutingEnabled
         case status
     }
 
@@ -41,6 +44,9 @@ public enum ProviderControlRequest: Codable, Sendable {
         case .setRouteState:
             let installed = try container.decode(Bool.self, forKey: .installed)
             self = .setRouteState(installed: installed)
+        case .setRoutingEnabled:
+            let enabled = try container.decode(Bool.self, forKey: .routingEnabled)
+            self = .setRoutingEnabled(enabled: enabled)
         case .status:
             self = .status
         }
@@ -57,6 +63,9 @@ public enum ProviderControlRequest: Codable, Sendable {
         case .setRouteState(let installed):
             try container.encode(Kind.setRouteState, forKey: .kind)
             try container.encode(installed, forKey: .installed)
+        case .setRoutingEnabled(let enabled):
+            try container.encode(Kind.setRoutingEnabled, forKey: .kind)
+            try container.encode(enabled, forKey: .routingEnabled)
         case .status:
             try container.encode(Kind.status, forKey: .kind)
         }

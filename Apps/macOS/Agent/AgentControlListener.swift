@@ -61,8 +61,17 @@ actor AgentControlListener {
     private var connection: NWConnection?
     private var didStart = false
 
+    /// Invoked with the user's routing choice when the iPhone pushes it over the
+    /// control link, so the controller can install or withdraw the program routes.
+    private var onSetRoutingEnabled: (@Sendable (Bool) -> Void)?
+
     init(serverEndpoint: RelayEndpoint) {
         self.serverEndpoint = serverEndpoint
+    }
+
+    /// Registers the routing-choice handler before the listener starts.
+    func setRoutingHandler(_ handler: @escaping @Sendable (Bool) -> Void) {
+        onSetRoutingEnabled = handler
     }
 
     // MARK: - Lifecycle
@@ -341,6 +350,10 @@ actor AgentControlListener {
             )
         case .setServerEndpoint:
             logger.debug("agent control received unexpected set-server-endpoint from peer")
+        case .setRoutingEnabled(let payload):
+            logger.notice(
+                "agent control received routing enabled=\(payload.enabled, privacy: .public)")
+            onSetRoutingEnabled?(payload.enabled)
         }
     }
 }

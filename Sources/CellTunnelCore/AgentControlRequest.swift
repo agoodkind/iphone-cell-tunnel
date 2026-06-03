@@ -30,6 +30,7 @@ public enum AgentControlRequest: Codable, Sendable {
     case reloadTunnel(TunnelStartSettings)
     case reset
     case selectRelayService(serviceID: String)
+    case setRoutingEnabled(enabled: Bool)
     case startRelayDiscovery
     case startTunnel(TunnelStartSettings)
     case status
@@ -39,6 +40,7 @@ public enum AgentControlRequest: Codable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case kind
         case reloadSettings
+        case routingEnabled
         case serviceID
         case startSettings
     }
@@ -49,6 +51,7 @@ public enum AgentControlRequest: Codable, Sendable {
         case reloadTunnel
         case reset
         case selectRelayService
+        case setRoutingEnabled
         case startRelayDiscovery
         case startTunnel
         case status
@@ -72,6 +75,9 @@ public enum AgentControlRequest: Codable, Sendable {
         case .selectRelayService:
             let serviceID = try container.decode(String.self, forKey: .serviceID)
             self = .selectRelayService(serviceID: serviceID)
+        case .setRoutingEnabled:
+            let enabled = try container.decode(Bool.self, forKey: .routingEnabled)
+            self = .setRoutingEnabled(enabled: enabled)
         case .startRelayDiscovery:
             self = .startRelayDiscovery
         case .startTunnel:
@@ -101,6 +107,9 @@ public enum AgentControlRequest: Codable, Sendable {
         case .selectRelayService(let serviceID):
             try container.encode(Kind.selectRelayService, forKey: .kind)
             try container.encode(serviceID, forKey: .serviceID)
+        case .setRoutingEnabled(let enabled):
+            try container.encode(Kind.setRoutingEnabled, forKey: .kind)
+            try container.encode(enabled, forKey: .routingEnabled)
         case .startRelayDiscovery:
             try container.encode(Kind.startRelayDiscovery, forKey: .kind)
         case .startTunnel(let settings):

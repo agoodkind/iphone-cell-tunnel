@@ -27,4 +27,8 @@ final class PreviewRelayBackend: RelayControlBackend {
         await Task.yield()
         return nil
     }
+
+    func setRouting(enabled _: Bool) async {
+        await Task.yield()
+    }
 }

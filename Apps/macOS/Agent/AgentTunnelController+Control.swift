@@ -32,13 +32,16 @@ extension AgentTunnelController {
         }
         await controlListener?.stop()
         let listener = AgentControlListener(serverEndpoint: endpoint)
+        await listener.setRoutingHandler { [weak self] enabled in
+            Task { await self?.setRoutingEnabled(enabled) }
+        }
         controlListener = listener
         try await listener.start()
         relayBridge.onPhoneConnected = { [weak self] in
-            Task { await self?.signalRouteState(true) }
+            Task { await self?.handlePhoneLink(up: true) }
         }
         relayBridge.onPhoneDisconnected = { [weak self] in
-            Task { await self?.signalRouteState(false) }
+            Task { await self?.handlePhoneLink(up: false) }
         }
         relayBridge.start(serviceName: ProcessInfo.processInfo.hostName)
         onRelayActiveChange?(true)
@@ -56,6 +59,38 @@ extension AgentTunnelController {
         relayBridge.stop()
         onRelayActiveChange?(false)
         logger.notice("agent control link cleared on tunnel stop")
+    }
+
+    // MARK: - Routing control
+
+    /// Records the user's routing choice and reconciles routes against the live
+    /// link. Routing on with a link up installs the program routes; routing off
+    /// withdraws them. The default is passthrough, so a link comes up carrying
+    /// nothing until the user turns routing on.
+    func setRoutingEnabled(_ enabled: Bool) async {
+        routingEnabled = enabled
+        logger.notice(
+            "agent routing set enabled=\(enabled, privacy: .public) phoneLinkUp=\(self.phoneLinkUp, privacy: .public)"
+        )
+        if enabled, phoneLinkUp {
+            await signalRouteState(true)
+        } else if !enabled {
+            await signalRouteState(false)
+        }
+    }
+
+    /// Tracks the live phone link and reconciles routes. A link coming up installs
+    /// routes only when routing is on; a link going down always withdraws them, so
+    /// routing resumes by itself when the link returns while routing stays on.
+    func handlePhoneLink(up: Bool) async {
+        phoneLinkUp = up
+        if up {
+            if routingEnabled {
+                await signalRouteState(true)
+            }
+        } else {
+            await signalRouteState(false)
+        }
     }
 
     // MARK: - Endpoint parsing
