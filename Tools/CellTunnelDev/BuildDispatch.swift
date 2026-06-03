@@ -19,7 +19,6 @@ enum BuildTarget: String, CaseIterable {
     case all
     case daemon
     case iphoneDevice = "iphone-device"
-    case iphoneDeviceCompile = "iphone-device-compile"
     case iphoneSimulator = "iphone-simulator"
     case mac
     case macCatalyst = "mac-catalyst"
@@ -42,8 +41,6 @@ func buildProject(target: BuildTarget, configuration: String) throws {
         try buildMacCatalyst(configuration: configuration, developmentTeam: team)
     case .iphoneSimulator:
         try buildIPhoneSimulator(configuration: configuration)
-    case .iphoneDeviceCompile:
-        try buildIPhoneDeviceCompile(configuration: configuration)
     case .iphoneDevice:
         let team = try developmentTeamFromEnvironment()
         try buildPhoneDevice(
@@ -112,31 +109,6 @@ private func buildIPhoneSimulator(configuration: String) throws {
         destination: ProcessInfo.processInfo.environment["IOS_SIMULATOR_DESTINATION"]
             ?? "generic/platform=iOS Simulator",
         platformName: iOSSimulatorPlatformName
-    )
-}
-
-// Compiles the iPhone device slice without signing, so the dead-code gate covers
-// the device-only branches the simulator and Mac Catalyst slices exclude, for
-// example the targetEnvironment branch that selects the on-device tunnel backend.
-// It builds for the device destination with signing turned off, which produces the
-// index store the gate reads without a development team or provisioning.
-private func buildIPhoneDeviceCompile(configuration: String) throws {
-    buildDispatchLogger.notice(
-        """
-        compiling CellTunnelPhone device slice sign-free \
-        configuration=\(configuration, privacy: .public)
-        """
-    )
-    try buildScheme(
-        scheme: "CellTunnelPhone",
-        configuration: configuration,
-        destination: ProcessInfo.processInfo.environment["IOS_DEVICE_DESTINATION"]
-            ?? "generic/platform=iOS",
-        platformName: iOSDevicePlatformName,
-        buildSettings: [
-            "CODE_SIGNING_ALLOWED": "NO",
-            "CODE_SIGNING_REQUIRED": "NO",
-        ]
     )
 }
 

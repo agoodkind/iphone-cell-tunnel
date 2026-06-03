@@ -37,6 +37,13 @@
         private var manager: NETunnelProviderManager?
         private var lastSample: RelayStatusSample?
 
+        // In the simulator the Network Extension packet tunnel cannot run, so the
+        // backend delegates to a control-link probe. The check is runtime, not a
+        // compile condition, so the device tunnel code stays compiled in the same
+        // build and the dead-code gate covers it from the simulator slice.
+        private let simulatorProbe = SimulatorRelayBackend()
+        private let isSimulator = ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil
+
         // The provider bundle id nests under the host app: the app's own bundle id
         // with a ".Tunnel" suffix matches PHONE_PROVIDER_BUNDLE_ID.
         private var providerBundleIdentifier: String {
@@ -50,6 +57,10 @@
         // MARK: - Lifecycle
 
         func start() async {
+            if isSimulator {
+                await simulatorProbe.start()
+                return
+            }
             logger.notice("phone relay backend start requested")
             publishDeviceNameForRelayAdvertisement()
             UIApplication.shared.isIdleTimerDisabled = true
@@ -70,6 +81,10 @@
         }
 
         func stop() async {
+            if isSimulator {
+                await simulatorProbe.stop()
+                return
+            }
             logger.notice("phone relay backend stop requested")
             UIApplication.shared.isIdleTimerDisabled = false
             guard let manager else {
@@ -99,6 +114,9 @@
         // MARK: - Sampling
 
         func sample() async -> RelayStatusSample? {
+            if isSimulator {
+                return await simulatorProbe.sample()
+            }
             guard let session else {
                 return nil
             }
@@ -251,6 +269,10 @@
         // Sends the routing choice to the extension, which forwards it to the agent
         // over the control link. The agent owns the routes.
         func setRouting(enabled: Bool) async {
+            if isSimulator {
+                await simulatorProbe.setRouting(enabled: enabled)
+                return
+            }
             guard let session else {
                 logger.notice("phone relay backend routing change ignored: no session")
                 return
