@@ -38,11 +38,16 @@
         private var lastSample: RelayStatusSample?
 
         // In the simulator the Network Extension packet tunnel cannot run, so the
-        // backend delegates to a control-link probe. The check is runtime, not a
-        // compile condition, so the device tunnel code stays compiled in the same
-        // build and the dead-code gate covers it from the simulator slice.
+        // backend delegates to a control-link probe. `isSimulator` is a stored flag
+        // read at runtime, so the device tunnel code below the guard stays compiled
+        // in the simulator slice and the dead-code gate covers it.
         private let simulatorProbe = SimulatorRelayBackend()
-        private let isSimulator = ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil
+
+        #if targetEnvironment(simulator)
+            private let isSimulator = true
+        #else
+            private let isSimulator = false
+        #endif
 
         // The provider bundle id nests under the host app: the app's own bundle id
         // with a ".Tunnel" suffix matches PHONE_PROVIDER_BUNDLE_ID.
