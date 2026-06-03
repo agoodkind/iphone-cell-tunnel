@@ -34,6 +34,9 @@ struct CellTunnelPhoneApp: App {
         #if targetEnvironment(macCatalyst)
             logger.notice("phone app selecting Mac agent backend")
             return AgentRelayBackend()
+        #elseif targetEnvironment(simulator)
+            logger.notice("phone app selecting simulator relay backend")
+            return SimulatorRelayBackend()
         #else
             logger.notice("phone app selecting iPhone relay backend")
             return PhoneRelayBackend()
