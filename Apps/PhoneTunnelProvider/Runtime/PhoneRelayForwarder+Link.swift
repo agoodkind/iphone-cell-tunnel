@@ -192,6 +192,7 @@ extension PhoneRelayForwarder {
             logger.notice(
                 "phone relay carrying link interface=\(chosen ?? "none", privacy: .public)"
             )
+            onEgressInterfaceChange?(chosen)
         }
         egressInterfaceName = chosen
         egressConnection = chosen.flatMap { macLinks[$0]?.connection }

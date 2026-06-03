@@ -55,6 +55,8 @@ private struct RelayStatusState {
     // The WireGuard server endpoint the agent sent over the control link, reported
     // as the relay's public address since device traffic egresses through it.
     var serverEndpoint: RelayEndpoint?
+    // The carrying link's interface, reported as the connected-via transport.
+    var localLinkInterfaceName: String?
 }
 
 // NEPacketTunnelProvider serializes the tunnel lifecycle callbacks, so the state
@@ -171,6 +173,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             self?.statusState.withLock { $0.connectedPeerName = name }
             logger.notice(
                 "phone relay peer changed peer=\(name ?? "none", privacy: .public)"
+            )
+        }
+        forwarder.onEgressInterfaceChange = { [weak self] name in
+            self?.statusState.withLock { $0.localLinkInterfaceName = name }
+            logger.notice(
+                "phone relay egress interface changed interface=\(name ?? "none", privacy: .public)"
             )
         }
     }
@@ -299,6 +307,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             cellularPath: cellularObserver.snapshot,
             connectedPeerName: state.connectedPeerName,
             relayState: state.relayState,
+            localLinkInterfaceName: state.localLinkInterfaceName,
             relayPublicIPv4Address: relayHost(state.serverEndpoint, family: .ipv4),
             relayPublicIPv6Address: relayHost(state.serverEndpoint, family: .ipv6)
         )

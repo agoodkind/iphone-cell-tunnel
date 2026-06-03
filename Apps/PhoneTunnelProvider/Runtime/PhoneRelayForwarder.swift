@@ -96,6 +96,9 @@ final class PhoneRelayForwarder: @unchecked Sendable {
     var onStateChange: (@Sendable (WireGuardDatagramRelayState) -> Void)?
     var onError: (@Sendable (String) -> Void)?
     var onPeerChange: (@Sendable (String?) -> Void)?
+    /// Fired with the carrying link's interface identifier whenever the egress
+    /// choice changes, so the status screen can show which transport is in use.
+    var onEgressInterfaceChange: (@Sendable (String?) -> Void)?
 
     // MARK: - Public API (MainActor callers funnel onto the relay queue)
 
