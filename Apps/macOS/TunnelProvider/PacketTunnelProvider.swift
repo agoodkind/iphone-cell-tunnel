@@ -56,6 +56,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let wireGuardRuntime = WireGuardRuntime()
     private let routeGate = RouteGate()
     private var wireGuardRelayBind: WireGuardRelayBind?
+    // The WireGuard server endpoint from the active config, reported as the relay's
+    // public address so the Mac status shows the same endpoint the iPhone does.
+    private var serverEndpoint: WireGuardEndpoint?
     private var throughputLogger: RelayThroughputLogger?
 
     override init() {
@@ -92,6 +95,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
 
         let configText = try extractWireGuardConfigText()
         let parsedConfig = try WireGuardConfigParser.parse(configText)
+        serverEndpoint = parsedConfig.peer.endpoint
 
         // Seed the captured route set from the config's AllowedIPs before
         // WireGuard applies settings, so the gate installs the scoped routes and
@@ -199,6 +203,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private func reloadConfig(_ text: String) -> ProviderControlResponse {
         do {
             let parsedConfig = try WireGuardConfigParser.parse(text)
+            serverEndpoint = parsedConfig.peer.endpoint
             let programRoutes = ProgramRouteSet.routes(from: parsedConfig.peer.allowedIPs)
             if let settings = routeGate.setProgramRoutes(
                 ipv4: programRoutes.ipv4,
@@ -291,8 +296,27 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             peerState: running ? .wireGuardConfigured : .notSelected,
             ipv4Address: addresses.ipv4,
             ipv6Address: addresses.ipv6,
-            macCounters: relayMetrics.snapshot()
+            macCounters: relayMetrics.snapshot(),
+            relayPublicIPv4Address: relayEndpointHost(family: .ipv4),
+            relayPublicIPv6Address: relayEndpointHost(family: .ipv6)
         )
+    }
+
+    // The server endpoint host for the requested family, so the Mac status reports
+    // the same relay endpoint the iPhone does. An IPv6 literal fills the IPv6 row; a
+    // bare host or IPv4 fills the IPv4 row, matching the iPhone's mapping.
+    private func relayEndpointHost(family: TunnelAddressFamily) -> String? {
+        guard let serverEndpoint, !serverEndpoint.host.isEmpty else {
+            return nil
+        }
+        switch family {
+        case .ipv6:
+            return serverEndpoint.isIPv6Literal ? serverEndpoint.host : nil
+        case .ipv4:
+            return serverEndpoint.isIPv6Literal ? nil : serverEndpoint.host
+        case .unspecified:
+            return serverEndpoint.host
+        }
     }
 
     private func encodeResponse(_ response: ProviderControlResponse) -> Data? {
