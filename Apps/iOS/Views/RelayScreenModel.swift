@@ -299,7 +299,7 @@ struct RelayScreenModel {
             return sections
         }
         sections.append(deviceSection)
-        sections.append(relaySection)
+        sections.append(endpointSection)
         return sections
     }
 
@@ -325,8 +325,9 @@ struct RelayScreenModel {
         )
     }
 
-    // The device section shows the iPhone's own cellular interface addresses from
-    // the path snapshot. A family with no routable address shows the placeholder.
+    // The device section shows the iPhone's own cellular interface addresses, then
+    // the public addresses the internet sees from the iPhone. A family with no
+    // address shows the placeholder.
     private var deviceSection: ConnectionSection {
         ConnectionSection(
             title: "Device",
@@ -334,21 +335,21 @@ struct RelayScreenModel {
             rows: addressRows(
                 ipv6: controller.cellularPath.ipv6Address,
                 ipv4: controller.cellularPath.ipv4Address
-            )
+            ) + publicAddressRows(ipv6: nil, ipv4: nil)
         )
     }
 
-    // KNOWN GAP: the relay public addresses the internet sees are not yet surfaced
-    // by the agent or the extension, so both rows render the zero-state placeholder
-    // until `relayPublicIPv4Address`/`relayPublicIPv6Address` are filled.
-    private var relaySection: ConnectionSection {
+    // The endpoint section shows the WireGuard server endpoint, then the public
+    // addresses traffic egresses through. The endpoint IPv6 and the public IPv6 are
+    // the same address by design. The public rows wait on the public-address probe.
+    private var endpointSection: ConnectionSection {
         ConnectionSection(
-            title: "Relay",
+            title: "Endpoint",
             qualifier: wireGuardQualifier,
             rows: addressRows(
                 ipv6: controller.relayPublicIPv6Address,
                 ipv4: controller.relayPublicIPv4Address
-            )
+            ) + publicAddressRows(ipv6: nil, ipv4: nil)
         )
     }
 
@@ -358,6 +359,15 @@ struct RelayScreenModel {
         [
             ConnectionRow(label: "IPv6", value: nonEmptyOrPlaceholder(ipv6)),
             ConnectionRow(label: "IPv4", value: nonEmptyOrPlaceholder(ipv4)),
+        ]
+    }
+
+    // The public address pair shown below the interface or endpoint pair, IPv6
+    // first and always present. Both wait on the public-address probe.
+    private func publicAddressRows(ipv6: String?, ipv4: String?) -> [ConnectionRow] {
+        [
+            ConnectionRow(label: "Public IPv6", value: nonEmptyOrPlaceholder(ipv6)),
+            ConnectionRow(label: "Public IPv4", value: nonEmptyOrPlaceholder(ipv4)),
         ]
     }
 
