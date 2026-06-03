@@ -42,7 +42,6 @@ final class PhoneControlClient {
     // the agent died or restarted. The data plane dials over UDP and does not
     // surface a drop, so the provider uses this to reset the stale data link.
     var onConnectionDropped: (@MainActor () -> Void)?
-    private(set) var lastError: String?
 
     // MARK: - Lifecycle
 
@@ -99,7 +98,6 @@ final class PhoneControlClient {
         case .ready:
             logger.notice("control client browser ready")
         case .failed(let error):
-            lastError = error.localizedDescription
             logger.error(
                 "control client browser failed error=\(error.localizedDescription, privacy: .public)"
             )
@@ -146,7 +144,6 @@ final class PhoneControlClient {
                 "control client connection waiting error=\(error.localizedDescription, privacy: .public)"
             )
         case .failed(let error):
-            lastError = error.localizedDescription
             logger.error(
                 "control client connection failed error=\(error.localizedDescription, privacy: .public)"
             )

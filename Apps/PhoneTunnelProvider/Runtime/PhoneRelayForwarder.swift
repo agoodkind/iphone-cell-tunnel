@@ -103,22 +103,6 @@ final class PhoneRelayForwarder: @unchecked Sendable {
         logger.notice("phone relay forwarder ready, awaiting discovery")
     }
 
-    /// Forces the carrying link to a specific interface, or returns to the score
-    /// order when `interfaceName` is nil. This is the switch primitive a UI or a
-    /// future selection algorithm calls; it recomputes the carrying link at once.
-    func setPreferredInterface(_ interfaceName: String?) {
-        queue.async { [weak self] in
-            guard let self else {
-                return
-            }
-            preferredInterface = interfaceName
-            logger.notice(
-                "phone relay preferred interface set to \(interfaceName ?? "auto", privacy: .public)"
-            )
-            recomputeEgress()
-        }
-    }
-
     func setServerEndpoint(_ endpoint: RelayEndpoint) {
         logger.notice(
             """
