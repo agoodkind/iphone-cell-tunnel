@@ -325,10 +325,8 @@ struct RelayScreenModel {
         )
     }
 
-    // KNOWN GAP: the device cellular addresses are not yet surfaced by the iPhone
-    // path source (`CellularPathSnapshot` carries only the support flags and
-    // interface identity today), so both rows render the zero-state placeholder
-    // until the extension fills `ipv4Address`/`ipv6Address`.
+    // The device section shows the iPhone's own cellular interface addresses from
+    // the path snapshot. A family with no routable address shows the placeholder.
     private var deviceSection: ConnectionSection {
         ConnectionSection(
             title: "Device",
