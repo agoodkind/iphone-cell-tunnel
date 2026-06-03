@@ -52,6 +52,9 @@ private struct RelayStatusState {
     // The user's routing choice, defaulting to passthrough. The provider reports
     // it as the route state and pushes it to the agent, which owns the routes.
     var routingEnabled = false
+    // The WireGuard server endpoint the agent sent over the control link, reported
+    // as the relay's public address since device traffic egresses through it.
+    var serverEndpoint: RelayEndpoint?
 }
 
 // NEPacketTunnelProvider serializes the tunnel lifecycle callbacks, so the state
@@ -180,8 +183,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         // statusState is a non-copyable Mutex, so it cannot be hoisted into a
         // local; the status closure borrows it through a weak self instead.
         Task { @MainActor [weak self] in
-            client.onSetServerEndpoint = { endpoint in
+            client.onSetServerEndpoint = { [weak self] endpoint in
                 relayForwarder.setServerEndpoint(endpoint)
+                self?.statusState.withLock { $0.serverEndpoint = endpoint }
             }
             client.onConnectionDropped = {
                 relayForwarder.resetLinks()
@@ -294,8 +298,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             phoneCounters: forwarder.metrics.snapshot(),
             cellularPath: cellularObserver.snapshot,
             connectedPeerName: state.connectedPeerName,
-            relayState: state.relayState
+            relayState: state.relayState,
+            relayPublicIPv4Address: relayHost(state.serverEndpoint, family: .ipv4),
+            relayPublicIPv6Address: relayHost(state.serverEndpoint, family: .ipv6)
         )
+    }
+
+    // Reports the WireGuard server endpoint host for the requested family, the
+    // relay's public identity that device traffic egresses through.
+    private func relayHost(_ endpoint: RelayEndpoint?, family: RelayAddressFamily) -> String? {
+        guard let endpoint, !endpoint.host.isEmpty, endpoint.addressFamily == family else {
+            return nil
+        }
+        return endpoint.host
     }
 
     private func encodeResponse(_ response: ProviderControlResponse) -> Data? {
