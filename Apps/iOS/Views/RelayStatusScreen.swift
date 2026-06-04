@@ -29,7 +29,7 @@ private let secondaryGroupSpacing: CGFloat = 10
 /// tree: a `List` whose `Section`s hold `LabeledContent` rows, a `Toggle` for the
 /// one control, and `ContentUnavailableView` for the hero and every zero state.
 struct RelayStatusScreen: View {
-    let controller: RelayController
+    @Environment(RelayController.self) private var controller
 
     private var model: RelayScreenModel {
         RelayScreenModel(controller: controller)
@@ -38,17 +38,20 @@ struct RelayStatusScreen: View {
     // MARK: - Body
 
     var body: some View {
+        let state = model.state
         NavigationStack {
-            content
+            content(state: state)
                 .navigationTitle(screenTitle)
+                .navigationBarTitleDisplayMode(state.showsTunnelDetail ? .large : .inline)
         }
     }
 
     // The states with no tunnel detail render as a full-screen
-    // `ContentUnavailableView`, the documented hero and zero-state component. The
-    // states with detail render the hero plus the data sections inside one `List`.
-    @ViewBuilder private var content: some View {
-        let state = model.state
+    // `ContentUnavailableView`, the documented hero and zero-state component, under an
+    // inline title so the empty state owns the screen rather than sitting below a
+    // large left-aligned title. The states with detail render the hero plus the data
+    // sections inside one `List` beneath the large title.
+    @ViewBuilder private func content(state: RelayScreenState) -> some View {
         if state.showsTunnelDetail {
             detailList(state: state)
         } else {
@@ -196,10 +199,7 @@ struct RelayStatusScreen: View {
         }
     }
 
-    // KNOWN GAP: there is no app-side setup flow yet; the agent is configured out of
-    // band via celltunnelctl and the iPhone via its tunnel manager. Set Up wires to
-    // the closest existing capability, bringing the session up, until a real
-    // configuration flow lands.
+    // Set Up brings the relay session up.
     private func setUp() {
         logger.notice("relay status screen set up requested")
         Task {
@@ -231,5 +231,13 @@ struct RelayStatusScreen: View {
 // MARK: - Preview
 
 #Preview {
-    RelayStatusScreen(controller: RelayController(backend: PreviewRelayBackend()))
+    RelayStatusScreen()
+        .environment(
+            RelayController(
+                backend: PreviewRelayBackend(),
+                throughput: ThroughputCalculator(),
+                lifetimeStore: LifetimeDataStore(),
+                publicProbe: PublicAddressProbe()
+            )
+        )
 }

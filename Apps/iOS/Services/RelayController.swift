@@ -77,9 +77,9 @@ protocol RelayControlBackend {
 final class RelayController {
     private let backend: any RelayControlBackend
     private var pollTask: Task<Void, Never>?
-    private var throughput = ThroughputCalculator()
-    private var lifetimeStore = LifetimeDataStore()
-    private let publicProbe = PublicAddressProbe()
+    private var throughput: ThroughputCalculator
+    private var lifetimeStore: LifetimeDataStore
+    private let publicProbe: PublicAddressProbe
     private var didProbePublicAddress = false
 
     var isRunning = false
@@ -99,8 +99,16 @@ final class RelayController {
     var devicePublicIPv4Address: String?
     var devicePublicIPv6Address: String?
 
-    init(backend: any RelayControlBackend) {
+    init(
+        backend: any RelayControlBackend,
+        throughput: ThroughputCalculator,
+        lifetimeStore: LifetimeDataStore,
+        publicProbe: PublicAddressProbe
+    ) {
         self.backend = backend
+        self.throughput = throughput
+        self.lifetimeStore = lifetimeStore
+        self.publicProbe = publicProbe
     }
 
     // MARK: - Lifecycle

@@ -37,10 +37,11 @@
         private var manager: NETunnelProviderManager?
         private var lastSample: RelayStatusSample?
 
-        // In the simulator the Network Extension packet tunnel cannot run, so the
-        // backend delegates to a control-link probe. `isSimulator` is a stored flag
-        // read at runtime, so the device tunnel code below the guard stays compiled
-        // in the simulator slice and the dead-code gate covers it.
+        // In the simulator the Network Extension has no launchable nehelper to start
+        // the packet tunnel, so the backend delegates to SimulatorRelayBackend, which
+        // hosts the same relay runtime in-process. `isSimulator` is a stored flag read
+        // at runtime, so the device tunnel code below the guard stays compiled in the
+        // simulator slice and the dead-code gate covers it.
         private let simulatorProbe = SimulatorRelayBackend()
 
         #if targetEnvironment(simulator)

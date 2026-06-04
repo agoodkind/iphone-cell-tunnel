@@ -27,7 +27,14 @@ struct CellTunnelPhoneApp: App {
         CellTunnelLog.bootstrap()
         logger.notice("CellTunnelPhone app initializing")
         applyLaunchPortOverride()
-        _relayController = State(initialValue: RelayController(backend: Self.makeBackend()))
+        _relayController = State(
+            initialValue: RelayController(
+                backend: Self.makeBackend(),
+                throughput: ThroughputCalculator(),
+                lifetimeStore: LifetimeDataStore(),
+                publicProbe: PublicAddressProbe()
+            )
+        )
     }
 
     private static func makeBackend() -> any RelayControlBackend {
@@ -35,8 +42,8 @@ struct CellTunnelPhoneApp: App {
             logger.notice("phone app selecting Mac agent backend")
             return AgentRelayBackend()
         #else
-            // The iPhone backend drives the on-device tunnel and delegates to the
-            // simulator control-link probe when running in the simulator.
+            // The iPhone backend drives the on-device packet tunnel and delegates to
+            // the in-process relay runtime host in the simulator.
             logger.notice("phone app selecting iPhone relay backend")
             return PhoneRelayBackend()
         #endif
@@ -44,7 +51,8 @@ struct CellTunnelPhoneApp: App {
 
     var body: some Scene {
         WindowGroup {
-            PhoneContentView(controller: relayController)
+            PhoneContentView()
+                .environment(relayController)
                 .task {
                     await relayController.start()
                 }
