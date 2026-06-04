@@ -198,6 +198,28 @@ actor AgentControlListener {
         try await awaitAcknowledge(on: connection, requestKind: "set-server-endpoint")
     }
 
+    /// Sends the agent's confirmed route state to the connected iPhone, so the app
+    /// reports installed routes from the agent's truth rather than the local routing
+    /// intent. A no-op when no iPhone is connected.
+    func sendRouteState(_ installed: Bool) async {
+        guard let connection else {
+            return
+        }
+        do {
+            try await send(
+                .routeState(RelayControlMessage.RouteState(installed: installed)),
+                on: connection
+            )
+        } catch {
+            logger.error(
+                """
+                agent control route-state send failed installed=\(installed, privacy: .public) \
+                error=\(error.localizedDescription, privacy: .public) recovery=await-next-change
+                """
+            )
+        }
+    }
+
     private func send(
         _ message: RelayControlMessage,
         on connection: NWConnection
@@ -354,6 +376,8 @@ actor AgentControlListener {
             logger.notice(
                 "agent control received routing enabled=\(payload.enabled, privacy: .public)")
             onSetRoutingEnabled?(payload.enabled)
+        case .routeState:
+            logger.debug("agent control received unexpected route-state from peer")
         }
     }
 }

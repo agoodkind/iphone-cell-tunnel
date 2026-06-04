@@ -40,8 +40,13 @@ actor AgentTunnelController {
     private var statusObserver: NSObjectProtocol?
     private var latestStatus: NEVPNStatus = .invalid
     var controlListener: AgentControlListener?
-    let relayBridge = AgentRelayBridge()
-    let relayBrowser = RelayDeviceBrowser()
+    let relayBridge: AgentRelayBridge
+    let relayBrowser: RelayDeviceBrowser
+
+    init(relayBridge: AgentRelayBridge, relayBrowser: RelayDeviceBrowser) {
+        self.relayBridge = relayBridge
+        self.relayBrowser = relayBrowser
+    }
 
     /// Whether the user has turned routing on. The agent installs the program
     /// routes only while this is true and a phone link is up, so the default is
@@ -394,6 +399,8 @@ extension AgentTunnelController {
     // link comes and goes, so routes track the link rather than tunnel start.
     func signalRouteState(_ installed: Bool) async {
         guard let manager else {
+            // No Mac tunnel means no routes exist; tell the iPhone the truth anyway.
+            await controlListener?.sendRouteState(installed)
             return
         }
         do {
@@ -405,6 +412,9 @@ extension AgentTunnelController {
             logger.notice(
                 "agent signaled route state installed=\(installed, privacy: .public)"
             )
+            // The extension applied the route change, so report the confirmed state
+            // to the iPhone over the control link.
+            await controlListener?.sendRouteState(installed)
         } catch {
             logger.error(
                 """

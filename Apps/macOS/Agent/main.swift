@@ -22,11 +22,15 @@ private let agentIdleTimeoutSeconds: Double = 60
 // MARK: - AgentRuntime
 
 final class AgentRuntime: @unchecked Sendable {
-    private let controller = AgentTunnelController()
+    private let controller: AgentTunnelController
     private let idleQueue = DispatchQueue(label: "io.goodkind.celltunnel.agent.idle")
     private var idleTimer: DispatchSourceTimer?
     private var relayActive = false
     private var sessionListener: AgentSessionListener?
+
+    init(controller: AgentTunnelController) {
+        self.controller = controller
+    }
 
     // MARK: - Lifecycle
 
@@ -167,32 +171,42 @@ final class AgentRuntime: @unchecked Sendable {
     }
 }
 
-nonisolated(unsafe) var signalSourceRetention: [DispatchSourceSignal] = []
-let agentRuntime = AgentRuntime()
+// MARK: - Composition root
 
-CellTunnelLog.bootstrap()
-logger.notice("agent boot")
+/// Builds the agent graph as locals and runs the dispatch main loop. Nothing is a
+/// module global: the runtime, the collaborators it injects, and the signal sources
+/// all live for the life of the process inside this call, which never returns.
+private func runAgent() -> Never {
+    CellTunnelLog.bootstrap()
+    logger.notice("agent boot")
 
-let interruptSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-let terminateSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
+    let relayBridge = AgentRelayBridge()
+    let relayBrowser = RelayDeviceBrowser()
+    let controller = AgentTunnelController(relayBridge: relayBridge, relayBrowser: relayBrowser)
+    let agentRuntime = AgentRuntime(controller: controller)
 
-signal(SIGINT, SIG_IGN)
-signal(SIGTERM, SIG_IGN)
+    let interruptSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+    let terminateSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
 
-interruptSource.setEventHandler {
-    agentRuntime.shutdown(reason: "SIGINT")
-    exit(EXIT_SUCCESS)
+    signal(SIGINT, SIG_IGN)
+    signal(SIGTERM, SIG_IGN)
+
+    interruptSource.setEventHandler {
+        agentRuntime.shutdown(reason: "SIGINT")
+        exit(EXIT_SUCCESS)
+    }
+
+    terminateSource.setEventHandler {
+        agentRuntime.shutdown(reason: "SIGTERM")
+        exit(EXIT_SUCCESS)
+    }
+
+    interruptSource.resume()
+    terminateSource.resume()
+
+    agentRuntime.start()
+
+    dispatchMain()
 }
 
-terminateSource.setEventHandler {
-    agentRuntime.shutdown(reason: "SIGTERM")
-    exit(EXIT_SUCCESS)
-}
-
-interruptSource.resume()
-terminateSource.resume()
-signalSourceRetention = [interruptSource, terminateSource]
-
-agentRuntime.start()
-
-dispatchMain()
+runAgent()

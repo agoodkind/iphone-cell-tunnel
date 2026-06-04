@@ -15,6 +15,7 @@ public let relayControlWireVersion: Int = 1
 public enum RelayControlMessage: Codable, Sendable, Equatable {
     case acknowledge(Acknowledge)
     case error(Failure)
+    case routeState(RouteState)
     case setRoutingEnabled(SetRoutingEnabled)
     case setServerEndpoint(SetServerEndpoint)
     case status(Status)
@@ -80,6 +81,20 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
         }
     }
 
+    /// Carries the agent's confirmed route state to the iPhone over the control
+    /// link, so the app reports installed routes from the agent's truth rather than
+    /// the local routing intent. The agent sends it after the Mac extension applies
+    /// the route change and when a link transition withdraws routes.
+    public struct RouteState: Codable, Sendable, Equatable {
+        public var version: Int
+        public var installed: Bool
+
+        public init(installed: Bool, version: Int = relayControlWireVersion) {
+            self.installed = installed
+            self.version = version
+        }
+    }
+
     public struct Failure: Codable, Sendable, Equatable {
         public var version: Int
         public var code: String
@@ -104,6 +119,8 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
             return "status"
         case .error:
             return "error"
+        case .routeState:
+            return "route-state"
         }
     }
 
@@ -118,6 +135,8 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
         case .status(let payload):
             return payload.version
         case .error(let payload):
+            return payload.version
+        case .routeState(let payload):
             return payload.version
         }
     }

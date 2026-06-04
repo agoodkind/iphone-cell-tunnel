@@ -134,6 +134,13 @@ final class AgentRelayBridge: @unchecked Sendable {
 
     private func adopt(_ connection: NWConnection) {
         let isLoopback = Self.isLoopback(connection.endpoint)
+        logger.notice(
+            """
+            agent relay bridge inbound connection \
+            endpoint=\(String(describing: connection.endpoint), privacy: .public) \
+            loopback=\(isLoopback, privacy: .public)
+            """
+        )
         if isLoopback {
             macConnection?.cancel()
             macConnection = connection
