@@ -58,7 +58,18 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private var wireGuardRelayBind: WireGuardRelayBind?
     // The WireGuard server endpoint from the active config, reported as the relay's
     // public address so the Mac status shows the same endpoint the iPhone does.
-    private var serverEndpoint: WireGuardEndpoint?
+    // The WireGuard server endpoint from the active config. Setting it resolves the
+    // host once and caches the server's A and AAAA records, so the status path
+    // reports the resolved addresses without a blocking lookup. An IP literal
+    // resolves to itself.
+    private var serverEndpoint: WireGuardEndpoint? {
+        didSet {
+            resolvedServerAddresses = serverEndpoint.map { endpoint in
+                HostAddressResolver.resolve(host: endpoint.host)
+            }
+        }
+    }
+    private var resolvedServerAddresses: HostAddressResolver.Resolved?
     private var throughputLogger: RelayThroughputLogger?
 
     // The designated initializer takes the graph, so a test can build the provider
@@ -318,26 +329,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             ipv4Address: addresses.ipv4,
             ipv6Address: addresses.ipv6,
             macCounters: relayMetrics.snapshot(),
-            relayPublicIPv4Address: relayEndpointHost(family: .ipv4),
-            relayPublicIPv6Address: relayEndpointHost(family: .ipv6)
+            relayHost: serverEndpoint?.host,
+            relayServerIPv4Address: resolvedServerAddresses?.ipv4,
+            relayServerIPv6Address: resolvedServerAddresses?.ipv6
         )
-    }
-
-    // The server endpoint host for the requested family, so the Mac status reports
-    // the same relay endpoint the iPhone does. An IPv6 literal fills the IPv6 row; a
-    // bare host or IPv4 fills the IPv4 row, matching the iPhone's mapping.
-    private func relayEndpointHost(family: TunnelAddressFamily) -> String? {
-        guard let serverEndpoint, !serverEndpoint.host.isEmpty else {
-            return nil
-        }
-        switch family {
-        case .ipv6:
-            return serverEndpoint.isIPv6Literal ? serverEndpoint.host : nil
-        case .ipv4:
-            return serverEndpoint.isIPv6Literal ? nil : serverEndpoint.host
-        case .unspecified:
-            return serverEndpoint.host
-        }
     }
 
     private func encodeResponse(_ response: ProviderControlResponse) -> Data? {
