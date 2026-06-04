@@ -2,9 +2,7 @@
 
 ## Project goal
 
-Cell Tunnel routes Mac internet traffic through an iPhone's native cellular interface. The Mac encrypts each outbound IP packet with WireGuard, ships the encrypted UDP datagram to the iPhone over a Network framework connection, and the iPhone forwards each datagram out the cellular radio to a hosted WireGuard server. Replies retrace the same path.
-
-The use case is education and research.
+Cell Tunnel routes Mac internet traffic through an iPhone's native cellular interface, for education and research. See `docs/architecture.md` for the data path.
 
 **Hard rule:** Do not enable iOS Personal Hotspot. Do not propose Personal Hotspot or the macOS `en7` interface as the Mac-to-iPhone link. The iPhone app binds its WireGuard UDP egress with `requiredInterfaceType = .cellular`, which uses the regular cellular APN and is what the project routes around hotspot to obtain.
 
@@ -46,28 +44,11 @@ This file is the map, not the source of truth. The source of truth is the code a
 
 ## Components
 
-Components are named by target. The code is the source of truth for their internals; find current sources under each target's directory rather than from a path written here.
+See `docs/architecture.md` ("Component responsibilities" and "User interface") for the component map and the data path. The code under each target's directory is the source of truth for internals.
 
-| Component | Role |
-|---|---|
-| `celltunnelctl` | User-facing command-line client of the agent. It connects to the agent's mach service with the libxpc session API (`AgentClient`), the same client the Mac app uses. |
-| `CellTunnelAgent` | macOS background agent. Owns the Mac VPN configuration, hosts the control link and the relay data listener the iPhone dials, sends the WireGuard server endpoint to the iPhone, and bridges relay datagrams between the Mac extension over loopback and the iPhone. It exits when idle to free resources, but holds that idle timer for the life of the relay so it never kills its own bridge mid-session. |
-| `CellTunnelTunnelProvider` | macOS packet-tunnel extension hosted by the agent app. Runs WireGuard and dials the agent over loopback for the relay data plane. |
-| `AgentSessionListener` | The agent's single control listener, on the `AGENT_MACH_SERVICE_NAME` mach service, speaking the libxpc protocol. Every control client dials it with `XPCSession`: the command-line tool and the Mac app both use it. It decodes the `AgentControlEnvelope` JSON of each request and calls the controller, and replies with `AgentControlResponse` JSON. |
-| `CellTunnelPhoneTunnel` | iOS packet-tunnel extension hosted by the iPhone app. Owns the always-on relay data plane: it dials the Mac to receive the WireGuard server endpoint, keeps a link open to the agent over every reachable local path and carries traffic on the preferred one (failing over to another open link on a send error), forwards datagrams to and from the cellular radio, observes the cellular path, and answers status requests. |
-| `CellTunnelPhone` | iOS and Mac Catalyst app, one target, two products. The iPhone product drives the extension with an on-demand rule, polls status, and shows the status screen; it holds no relay data plane itself. The Mac Catalyst product shows the same screens as a read-only front-end to the agent, reaching it over XPC; it owns no tunnel. The shared `RelayController` binds the views over a `RelayControlBackend`, with `PhoneRelayBackend` (iPhone) and `AgentRelayBackend` (Mac) behind it. |
-| `CellTunnelCore` | Shared control wire protocol, framer, wire models, and shared keys. |
-| `CellTunnelLog` | Pinned logging subsystem and categories. |
+## App behavior and transports
 
-## Transports
-
-The Network framework primitives in the provider make the Mac-to-iPhone path transport-agnostic. USB-C CDC-NCM, a USB-C Ethernet adapter, shared Wi-Fi LAN, and AWDL all work without code changes. The iPhone keeps a link open over every reachable path at once and carries traffic on one of them, so a path loss moves traffic to an already-open link with no reconnect. The carrying link is chosen by a preference order, USB over Wi-Fi LAN over AWDL held as scores in `RelayLinkScorer`, or by an explicit interface override; the choice is the pure `RelayLinkPolicy.chooseCarrying`, recomputed only when a link opens or closes and read as one cached pointer off the packet path. A link closes only when its connection errors or a send on it fails, the reliable signal a UDP path went away, so the carrying link fails over on a send error with no timer or heartbeat. The iPhone-to-server leg is cellular UDP, pinned to the cellular interface so it uses the regular cellular APN. The iPhone caps how many datagrams it holds in the cellular socket at once and sizes that cap from the measured time each datagram waits for the socket to accept it (`CellularSendWindow`), so the local send buffer stays short and upload latency under load stays low without starving throughput.
-
-## iPhone app behavior
-
-`CellTunnelPhone` is always-on with no Start control. The relay data plane runs in the iPhone packet-tunnel extension, which the system keeps up via an on-demand rule, so it keeps forwarding while the app is backgrounded. The app starts the tunnel on launch and resumes the status poll when it becomes active. It shows a minimal first-party status screen with relay state, cellular egress, throughput, and dropped counts, and a DEBUG console (the ladybug toolbar button) shows live detail including the last error. The app targets iOS 26.
-
-The same app target builds for Mac through Mac Catalyst. The Mac product shows the same status screen and DEBUG console, filled from the agent's status snapshot read over XPC by `AgentRelayBackend`; it owns no tunnel and issues no on-demand rule. The DEBUG console's server probe runs over the tunnel path on the Mac rather than pinning the cellular interface, and its environment rows come from the agent `check()`. Catalyst signs from `Apps/iOS/Entitlements/CellTunnelPhone-Catalyst.entitlements`, which keeps the app group, drops the NetworkExtension entitlement, and adds a mach-lookup allowance for the agent mach service. The Catalyst minimum macOS derives from the iOS deployment target.
+See `docs/architecture.md` ("User interface", "Path selection") for how the app is structured and how the iPhone carries traffic across links. Two operational specifics live here: the app targets iOS 26, and Catalyst signs from `Apps/iOS/Entitlements/CellTunnelPhone-Catalyst.entitlements`, which keeps the app group, drops the NetworkExtension entitlement, and adds a mach-lookup allowance for the agent mach service, with the Catalyst minimum macOS derived from the iOS deployment target.
 
 ## Configuration source of truth
 

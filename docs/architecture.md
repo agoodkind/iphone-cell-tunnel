@@ -31,15 +31,20 @@ Terms:
 Each component handles only its own leg and knows nothing of the others.
 
 - Mac WireGuard: produces and consumes encrypted UDP datagrams. Knows nothing about the link.
-- Mac packet-tunnel extension: bridges WireGuard datagrams to and from the agent over loopback.
-- Mac agent: hosts the relay data listener, bridging datagrams between the Mac extension over loopback and the iPhone over the local link.
-- iPhone packet-tunnel extension: dials the agent, then bridges the link datagram channel to and from the cellular UDP socket to the WireGuard server. It also chooses which path the local link uses and changes it on its own. See "Path selection". It limits how many datagrams sit in the cellular socket at once and sizes that limit from the time each datagram waits for the socket to accept it, so the local send buffer stays short and upload latency under load stays low.
+- Mac packet-tunnel extension (`CellTunnelTunnelProvider`): bridges WireGuard datagrams to and from the agent over loopback.
+- Mac agent (`CellTunnelAgent`): hosts the relay data listener, bridging datagrams between the Mac extension over loopback and the iPhone over the local link. It exits when idle, but holds the idle timer for the life of the relay so it never kills its own bridge mid-session.
+- iPhone packet-tunnel extension (`CellTunnelPhoneTunnel`): dials the agent, then bridges the link datagram channel to and from the cellular UDP socket to the WireGuard server. It also chooses which path the local link uses and changes it on its own. See "Path selection". It limits how many datagrams sit in the cellular socket at once and sizes that limit from the time each datagram waits for the socket to accept it, so the local send buffer stays short and upload latency under load stays low.
+- Mac agent control listener (`AgentSessionListener`): the single control entry point on the agent's mach service. The command-line tool and the Mac app both reach it through one shared client, `AgentClient`, over `XPCSession`.
+- `celltunnelctl`: the command-line control client of the agent.
+- `CellTunnelPhone`: one app target, two products, the iPhone relay driver and the Mac read-only viewer. See "User interface".
+- `CellTunnelCore`: the shared control wire protocol, framer, wire models, and keys.
+- `CellTunnelLog`: the pinned logging subsystem and categories.
 
 WireGuard is a transport tool, not a participant. Its handshake carries no project logic. The only WireGuard timing the project sets is `PersistentKeepalive = 25` from the config.
 
 ## User interface
 
-One app target, `CellTunnelPhone`, builds two products from the same SwiftUI screens. The iPhone product drives the iPhone relay and shows the status screen and the developer console. The Mac product is built through Mac Catalyst and is a read-only front-end to the agent: it shows the same screens filled from the agent's status snapshot and owns no tunnel.
+One app target, `CellTunnelPhone`, builds two products from the same SwiftUI screen. The iPhone product drives the iPhone relay and shows the status screen. The Mac product is built through Mac Catalyst and is a read-only front-end to the agent: it shows the same screen filled from the agent's status snapshot and owns no tunnel.
 
 The views bind to one observable controller, `RelayController`, which holds a `RelayControlBackend` and never branches on platform. Two backends sit behind it. `PhoneRelayBackend` (iPhone) owns the tunnel manager, the on-demand rule, the device-name publish, and the status poll over the provider message channel. `AgentRelayBackend` (Mac) reads the agent's status and maps it onto the same reading the views render.
 
@@ -86,4 +91,5 @@ The iPhone relay runs inside an `NEPacketTunnelProvider`, the stock iOS mechanis
 | Build, lint, test, install targets | `make help` (generated from the `Makefile`). |
 | Identifiers, ports, signing | `Config/Constants.xcconfig` and `Config/local.xcconfig`. |
 | Task and ticket state | Tack workspace `main`, project `OSS`, epic `OSS-7`. |
-| Component map and house rules | `AGENTS.md`. |
+| Component map | This document, "Component responsibilities" and "User interface". |
+| House rules | `AGENTS.md`. |
