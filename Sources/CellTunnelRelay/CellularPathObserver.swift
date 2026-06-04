@@ -70,7 +70,7 @@ final class CellularPathObserver: @unchecked Sendable {
                 egress path updated satisfied=\(path.status == .satisfied, privacy: .public) \
                 ipv4=\(path.supportsIPv4, privacy: .public) \
                 ipv6=\(path.supportsIPv6, privacy: .public) \
-                interface=\(egressInterface?.name ?? "none", privacy: .public)
+                interface=\(egress?.name ?? "none", privacy: .public)
                 """
             )
         }
