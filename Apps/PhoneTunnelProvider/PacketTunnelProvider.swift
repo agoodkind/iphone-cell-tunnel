@@ -8,17 +8,16 @@
 
 import CellTunnelCore
 import CellTunnelLog
+import CellTunnelRelay
 import Foundation
-import Network
 import NetworkExtension
-import Synchronization
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 
 // The provider installs a no-route tunnel so neither the phone's own traffic nor
-// the relay's cellular socket is captured, then runs the iPhone relay data plane
-// in the background. The server endpoint is not in providerConfiguration; it
-// arrives at runtime over the Mac control channel via the control listener.
+// the relay's cellular socket is captured, then runs the iPhone relay runtime in
+// the background. The server endpoint is not in providerConfiguration; it arrives
+// at runtime over the Mac control channel.
 private let tunnelRemoteAddress = "127.0.0.1"
 private let tunnelLocalAddress = "10.7.0.2"
 private let tunnelLocalSubnetMask = "255.255.255.255"
@@ -39,38 +38,17 @@ private struct UncheckedSendableBox<Value>: @unchecked Sendable {
     }
 }
 
-// Latest relay observations the forwarder pushes through its callbacks, held off
-// the MainActor so `handleAppMessage` can read them for the status snapshot
-// without a hop. The forwarder owns the per-packet path; this is only state.
-// MARK: - RelayStatusState
-
-private struct RelayStatusState {
-    var running = false
-    var lastError: String?
-    var connectedPeerName: String?
-    var relayState = WireGuardDatagramRelayState.stopped.displayName
-    // The user's routing choice, defaulting to passthrough. The provider reports
-    // it as the route state and pushes it to the agent, which owns the routes.
-    var routingEnabled = false
-    // The WireGuard server endpoint the agent sent over the control link, reported
-    // as the relay's public address since device traffic egresses through it.
-    var serverEndpoint: RelayEndpoint?
-    // The carrying link's interface, reported as the connected-via transport.
-    var localLinkInterfaceName: String?
-}
-
-// NEPacketTunnelProvider serializes the tunnel lifecycle callbacks, so the state
-// mutated across start and stop is never touched concurrently. The relay
-// observations and the cellular snapshot are additionally `Mutex`-guarded so the
-// status path can read them from any thread.
 // MARK: - PacketTunnelProvider
 
+/// The iOS host for the relay runtime. It owns a no-route packet tunnel that keeps
+/// the app alive in the background, and it forwards the tunnel lifecycle and the
+/// app control messages to one `RelayRuntime`, which owns the relay itself. The
+/// same `RelayRuntime` runs in-process in the simulator, where this Network
+/// Extension host has no launchable `nehelper`.
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
-    private let forwarder = PhoneRelayForwarder()
-    private let controlClient = PhoneControlClient()
-    private let cellularObserver = CellularPathObserver()
-    private let probe = RelayPathProbe()
-    private let statusState = Mutex(RelayStatusState())
+    // This Network Extension is the device composition root: it builds the pinned
+    // graph, where each connection binds to its physical interface.
+    private let runtime = RelayRuntime(composition: .pinned())
 
     // Held so the stop can complete after teardown finishes; invoked once.
     private var stopCompletion: (() -> Void)?
@@ -111,7 +89,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             """
         )
         let handlerBox = UncheckedSendableBox(completionHandler)
-        self.setTunnelNetworkSettings(settings) { [weak self] error in
+        let relayRuntime = self.runtime
+        self.setTunnelNetworkSettings(settings) { error in
             if let error {
                 logger.error(
                     """
@@ -124,93 +103,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
                 return
             }
             logger.notice("setTunnelNetworkSettings applied success=true")
-            self?.startRelayRuntime()
+            relayRuntime.start()
             handlerBox.value(nil)
-        }
-    }
-
-    // Brings up the relay data plane the provider owns: the cellular path
-    // observer, the forwarder callbacks wired into status state, the forwarder
-    // that browses for the agent relay service and dials it, and the control
-    // client that dials the agent for the WireGuard server endpoint.
-    private func startRelayRuntime() {
-        cellularObserver.start()
-        configureForwarderCallbacks()
-        forwarder.start()
-        configureTransportSelection()
-        startControlClient()
-        statusState.withLock { $0.running = true }
-        logger.notice("relay runtime started")
-    }
-
-    // Wires the discovery probe to the forwarder, then starts it. The probe
-    // reports the set of interfaces the agent is reachable on whenever it
-    // changes; the forwarder keeps one warm link per interface and selects the
-    // egress with the shared policy. Starting the probe last means the first
-    // discovery arrives with the forwarder already running.
-    private func configureTransportSelection() {
-        let relayForwarder = self.forwarder
-        probe.onDiscover = { interfaces in
-            relayForwarder.reconcileLinks(interfaces)
-        }
-        probe.start()
-        logger.notice("relay transport selection configured")
-    }
-
-    private func configureForwarderCallbacks() {
-        logger.notice("phone relay forwarder callbacks configured")
-        forwarder.onStateChange = { [weak self] state in
-            self?.statusState.withLock { $0.relayState = state.displayName }
-            logger.notice(
-                "phone relay state changed state=\(state.rawValue, privacy: .public)"
-            )
-        }
-        forwarder.onError = { [weak self] message in
-            self?.statusState.withLock { $0.lastError = message }
-            logger.error("phone relay reported error=\(message, privacy: .public)")
-        }
-        forwarder.onPeerChange = { [weak self] name in
-            self?.statusState.withLock { $0.connectedPeerName = name }
-            logger.notice(
-                "phone relay peer changed peer=\(name ?? "none", privacy: .public)"
-            )
-        }
-        forwarder.onEgressInterfaceChange = { [weak self] name in
-            self?.statusState.withLock { $0.localLinkInterfaceName = name }
-            logger.notice(
-                "phone relay egress interface changed interface=\(name ?? "none", privacy: .public)"
-            )
-        }
-    }
-
-    private func startControlClient() {
-        logger.notice("phone control client starting")
-        let client = self.controlClient
-        let relayForwarder = self.forwarder
-        let observer = self.cellularObserver
-        // statusState is a non-copyable Mutex, so it cannot be hoisted into a
-        // local; the status closure borrows it through a weak self instead.
-        Task { @MainActor [weak self] in
-            client.onSetServerEndpoint = { [weak self] endpoint in
-                relayForwarder.setServerEndpoint(endpoint)
-                self?.statusState.withLock { $0.serverEndpoint = endpoint }
-            }
-            client.onConnectionDropped = {
-                relayForwarder.resetLinks()
-            }
-            client.statusProvider = {
-                let lastError = self.flatMap { provider in
-                    provider.statusState.withLock { $0.lastError }
-                }
-                let cellularPath = observer.snapshot
-                return RelayControlMessage.Status(
-                    hasCellularPath: cellularPath.isSatisfied,
-                    cellularInterface: cellularPath.interfaceName,
-                    lastError: lastError,
-                    counters: relayForwarder.metrics.snapshot()
-                )
-            }
-            client.start()
         }
     }
 
@@ -222,24 +116,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             "tunnel stop request received reason=\(String(describing: reason), privacy: .public)"
         )
         stopCompletion = completionHandler
-        teardownRelayRuntime()
+        runtime.stop()
         finishStop()
-    }
-
-    private func teardownRelayRuntime() {
-        let client = self.controlClient
-        Task { @MainActor in
-            client.stop()
-        }
-        probe.stop()
-        forwarder.stop()
-        cellularObserver.stop()
-        statusState.withLock { state in
-            state.running = false
-            state.connectedPeerName = nil
-            state.relayState = WireGuardDatagramRelayState.stopped.displayName
-        }
-        logger.notice("relay runtime torn down on shutdown")
     }
 
     private func finishStop() {
@@ -279,47 +157,19 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     ) -> ProviderControlResponse {
         switch request {
         case .status:
-            return ProviderControlResponse(status: currentStatusSnapshot())
+            return ProviderControlResponse(status: runtime.statusSnapshot())
         case .reloadConfig:
             // WireGuard runs on the Mac; the iPhone relay holds no config to reload.
-            return ProviderControlResponse(status: currentStatusSnapshot())
+            return ProviderControlResponse(status: runtime.statusSnapshot())
         case .setRouteState:
             // Route gating is a Mac-side concern; the iPhone relay ignores it.
-            return ProviderControlResponse(status: currentStatusSnapshot())
+            return ProviderControlResponse(status: runtime.statusSnapshot())
         case .setRoutingEnabled(let enabled):
-            statusState.withLock { $0.routingEnabled = enabled }
-            let client = controlClient
-            Task { @MainActor in client.sendRoutingEnabled(enabled) }
-            return ProviderControlResponse(status: currentStatusSnapshot())
+            runtime.setRoutingEnabled(enabled)
+            return ProviderControlResponse(status: runtime.statusSnapshot())
         case .discoverySnapshot:
             return ProviderControlResponse(discovery: TunnelDiscoverySnapshot())
         }
-    }
-
-    private func currentStatusSnapshot() -> TunnelDaemonStatusSnapshot {
-        let state = statusState.withLock { $0 }
-        return TunnelDaemonStatusSnapshot(
-            running: state.running,
-            routeState: state.routingEnabled ? .installed : .notInstalled,
-            peerState: state.running ? .relaySelected : .notSelected,
-            lastError: state.lastError,
-            phoneCounters: forwarder.metrics.snapshot(),
-            cellularPath: cellularObserver.snapshot,
-            connectedPeerName: state.connectedPeerName,
-            relayState: state.relayState,
-            localLinkInterfaceName: state.localLinkInterfaceName,
-            relayPublicIPv4Address: relayHost(state.serverEndpoint, family: .ipv4),
-            relayPublicIPv6Address: relayHost(state.serverEndpoint, family: .ipv6)
-        )
-    }
-
-    // Reports the WireGuard server endpoint host for the requested family, the
-    // relay's public identity that device traffic egresses through.
-    private func relayHost(_ endpoint: RelayEndpoint?, family: RelayAddressFamily) -> String? {
-        guard let endpoint, !endpoint.host.isEmpty, endpoint.addressFamily == family else {
-            return nil
-        }
-        return endpoint.host
     }
 
     private func encodeResponse(_ response: ProviderControlResponse) -> Data? {

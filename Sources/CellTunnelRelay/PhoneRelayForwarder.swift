@@ -1,6 +1,6 @@
 //
 //  PhoneRelayForwarder.swift
-//  CellTunnelPhoneTunnel
+//  CellTunnelRelay
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-30.
 //  Copyright © 2026, all rights reserved.
@@ -56,6 +56,11 @@ final class PhoneRelayForwarder: @unchecked Sendable {
 
     let queue = DispatchQueue(label: "CellTunnelPhone.RelayPlane")
 
+    // The host's network policy: pin each connection to its physical interface, or
+    // leave it on the host network. Injected so the data plane never reads the
+    // build target.
+    let interfaceBinder: RelayInterfaceBinder
+
     // The open Mac-facing links keyed by iPhone interface name and the cached
     // carrying pointer the download path reads per datagram. `egressInterfaceName`
     // records which link is carrying so the chooser can keep it stable.
@@ -99,6 +104,12 @@ final class PhoneRelayForwarder: @unchecked Sendable {
     /// Fired with the carrying link's interface identifier whenever the egress
     /// choice changes, so the status screen can show which transport is in use.
     var onEgressInterfaceChange: (@Sendable (String?) -> Void)?
+
+    // MARK: - Initialization
+
+    init(interfaceBinder: RelayInterfaceBinder) {
+        self.interfaceBinder = interfaceBinder
+    }
 
     // MARK: - Public API (MainActor callers funnel onto the relay queue)
 

@@ -162,6 +162,19 @@ let project = Project(
             settings: .settings(base: moduleVerifierSettings)
         ),
         .target(
+            name: "CellTunnelRelay",
+            destinations: [.iPhone],
+            product: .framework,
+            bundleId: "$(BUNDLE_ID_PREFIX).CellTunnelRelay",
+            deploymentTargets: iOSDeploymentTarget,
+            infoPlist: .default,
+            sources: [
+                "Sources/CellTunnelRelay/**"
+            ],
+            dependencies: appDependencies,
+            settings: .settings(base: moduleVerifierSettings)
+        ),
+        .target(
             name: "CellTunnelPhone",
             destinations: [.iPhone, .macCatalyst],
             product: .app,
@@ -177,7 +190,11 @@ let project = Project(
                 // Catalyst build hosts no tunnel and reads the agent over XPC, so
                 // the extension is scoped to iPhone to keep it out of the Catalyst
                 // product and avoid a duplicate framework producer.
-                .target(name: "CellTunnelPhoneTunnel", condition: .when([.ios]))
+                .target(name: "CellTunnelPhoneTunnel", condition: .when([.ios])),
+                // The relay runtime engine. The iPhone product hosts it in-process
+                // in the simulator through SimulatorRelayBackend; the Catalyst
+                // product reads the agent over XPC and does not link it.
+                .target(name: "CellTunnelRelay", condition: .when([.ios])),
             ],
             settings: .settings(base: cellTunnelPhoneBaseSettings)
         ),
@@ -238,7 +255,7 @@ let project = Project(
             entitlements: .file(
                 path: "Apps/iOS/Entitlements/CellTunnelPhoneTunnel.entitlements"
             ),
-            dependencies: appDependencies,
+            dependencies: appDependencies + [.target(name: "CellTunnelRelay")],
             settings: .settings(base: ["REGISTER_APP_GROUPS": "YES"])
         ),
     ],

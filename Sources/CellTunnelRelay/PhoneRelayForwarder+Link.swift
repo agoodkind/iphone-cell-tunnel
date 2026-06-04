@@ -1,6 +1,6 @@
 //
 //  PhoneRelayForwarder+Link.swift
-//  CellTunnelPhoneTunnel
+//  CellTunnelRelay
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-30.
 //  Copyright © 2026, all rights reserved.
@@ -54,9 +54,10 @@ extension PhoneRelayForwarder {
         let parameters = NWParameters.udp
         parameters.allowLocalEndpointReuse = true
         parameters.includePeerToPeer = interface.linkClass == .peerToPeer
-        // Pin the connection to the discovered interface, so each interface
-        // becomes its own link instead of the system collapsing them onto one.
-        parameters.requiredInterface = interface.interface
+        // The binder decides whether to pin this link to the discovered interface,
+        // so each interface becomes its own link, or to leave it on the host
+        // network when the agent is reachable there.
+        interfaceBinder.configureLinkParameters(parameters, for: interface)
         let connection = NWConnection(to: interface.endpoint, using: parameters)
         macLinks[interface.interfaceName] = PhoneMacLink(
             interfaceName: interface.interfaceName,
@@ -76,7 +77,8 @@ extension PhoneRelayForwarder {
         logger.notice(
             """
             phone relay dialing link interface=\(interface.interfaceName, privacy: .public) \
-            class=\(interface.linkClass.rawValue, privacy: .public)
+            class=\(interface.linkClass.rawValue, privacy: .public) \
+            endpoint=\(String(describing: interface.endpoint), privacy: .public)
             """
         )
     }
@@ -160,14 +162,18 @@ extension PhoneRelayForwarder {
     // empty datagram so the agent adopts this connection as a link. The relay
     // forwards only non-empty datagrams, so the prime never reaches WireGuard.
     private func primeLink(_ connection: NWConnection) {
+        let endpoint = connection.endpoint
         connection.send(
             content: Data(),
             completion: .contentProcessed { error in
-                guard let error else {
+                if let error {
+                    logger.error(
+                        "phone relay link prime failed error=\(error.localizedDescription, privacy: .public)"
+                    )
                     return
                 }
-                logger.error(
-                    "phone relay link prime failed error=\(error.localizedDescription, privacy: .public)"
+                logger.notice(
+                    "phone relay link prime sent endpoint=\(String(describing: endpoint), privacy: .public)"
                 )
             }
         )

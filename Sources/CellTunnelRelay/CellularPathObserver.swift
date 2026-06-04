@@ -1,6 +1,6 @@
 //
 //  CellularPathObserver.swift
-//  CellTunnelPhoneTunnel
+//  CellTunnelRelay
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-29.
 //  Copyright © 2026, all rights reserved.
@@ -17,13 +17,24 @@ private let logger = CellTunnelLog.logger(category: .relay)
 /// Runs the cellular `NWPathMonitor` on its own serial queue and holds the latest
 /// `CellularPathSnapshot` behind a `Mutex` so the packet-tunnel provider can read
 /// it for status reporting without hopping to the MainActor. The provider owns one
-/// instance, starts it in `startTunnel`, and cancels it in `stopTunnel`. This
-/// replaces the monitor that previously lived on `PhoneRelayController` in the app
-/// target, which cannot run in the background extension.
+/// instance, starts it in `startTunnel`, and cancels it in `stopTunnel`.
 final class CellularPathObserver: @unchecked Sendable {
     private let monitorQueue = DispatchQueue(label: "CellTunnelPhone.CellularMonitor")
-    private let monitor = NWPathMonitor(requiredInterfaceType: .cellular)
+    private let monitor: NWPathMonitor
     private let latestSnapshot = Mutex(CellularPathSnapshot())
+
+    /// Watches a specific interface type, or the general path when
+    /// `requiredInterfaceType` is nil. The device pins the cellular radio; the
+    /// in-process simulator host, which has no cellular radio, watches the general
+    /// path so a satisfied host network drives the connected status the same way a
+    /// live cellular path does on device.
+    init(requiredInterfaceType: NWInterface.InterfaceType?) {
+        if let requiredInterfaceType {
+            monitor = NWPathMonitor(requiredInterfaceType: requiredInterfaceType)
+        } else {
+            monitor = NWPathMonitor()
+        }
+    }
 
     var snapshot: CellularPathSnapshot {
         latestSnapshot.withLock { $0 }

@@ -1,6 +1,6 @@
 //
 //  PhoneControlClient.swift
-//  CellTunnelPhoneTunnel
+//  CellTunnelRelay
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-30.
 //  Copyright © 2026, all rights reserved.
@@ -42,6 +42,9 @@ final class PhoneControlClient {
     // the agent died or restarted. The data plane dials over UDP and does not
     // surface a drop, so the provider uses this to reset the stale data link.
     var onConnectionDropped: (@MainActor () -> Void)?
+    /// Fired with the agent's confirmed route state, so the status path reports
+    /// installed routes from the agent's truth rather than the local routing intent.
+    var onRouteState: (@MainActor (Bool) -> Void)?
 
     // MARK: - Lifecycle
 
@@ -177,7 +180,7 @@ final class PhoneControlClient {
     // MARK: - Receive and decode
 
     private func receive(on connection: NWConnection) {
-        connection.receiveMessage { [weak self, weak connection] data, _, isComplete, error in
+        connection.receiveMessage { [weak self, weak connection] data, _, _, error in
             if let error {
                 logger.error(
                     "control client receive failed error=\(error.localizedDescription, privacy: .public)"
@@ -203,7 +206,11 @@ final class PhoneControlClient {
                 }
             }
 
-            guard !isComplete, let connection else {
+            // Re-arm for the next framed message regardless of `isComplete`: the
+            // framer marks each control message complete, but the stream stays open
+            // for later messages such as the agent's route-state confirmation. The
+            // agent's own receive loop re-arms the same way.
+            guard let connection else {
                 return
             }
 
@@ -271,6 +278,11 @@ final class PhoneControlClient {
             )
         case .setRoutingEnabled:
             logger.debug("control received unexpected set-routing-enabled from peer")
+        case .routeState(let payload):
+            logger.notice(
+                "control received route-state installed=\(payload.installed, privacy: .public)"
+            )
+            onRouteState?(payload.installed)
         }
     }
 
@@ -339,13 +351,18 @@ final class PhoneControlClient {
         send(.status(status), on: connection)
     }
 
+}
+
+// MARK: - Status push loop
+
+extension PhoneControlClient {
     // A repeating dispatch timer fires the periodic status push instead of a
     // sleep loop, satisfying the sleep_in_production rule. The handler is
     // `@Sendable` so it stays nonisolated and runs on the client queue; without
     // it the closure inherits MainActor isolation and dispatch firing it off the
     // main thread traps. It hops to the MainActor through a Task for the
     // connection and status-provider access.
-    private func startStatusLoop() {
+    func startStatusLoop() {
         statusTimer?.cancel()
         logger.notice(
             "control status loop starting intervalSeconds=\(statusPushIntervalSeconds, privacy: .public)"

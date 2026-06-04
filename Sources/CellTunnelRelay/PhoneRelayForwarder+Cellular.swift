@@ -1,6 +1,6 @@
 //
 //  PhoneRelayForwarder+Cellular.swift
-//  CellTunnelPhoneTunnel
+//  CellTunnelRelay
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-29.
 //  Copyright © 2026, all rights reserved.
@@ -240,13 +240,12 @@ extension PhoneRelayForwarder {
         // left able to use expensive and constrained networks (defaults), so the
         // relay is never opted out of the user's "Allow More Data on 5G" data mode.
         parameters.serviceClass = .bestEffort
-        #if targetEnvironment(simulator)
-            logger.notice(
-                "cellular relay simulator-mode: cellular gate skipped; egress uses host network"
-            )
-        #else
-            parameters.requiredInterfaceType = .cellular
-        #endif
+        // The binder decides whether to pin the cellular radio or egress over the
+        // host network, so the data plane does not read the build target.
+        interfaceBinder.configureServerParameters(parameters)
+        logger.notice(
+            "cellular relay egress via=\(self.interfaceBinder.egressDescription, privacy: .public)"
+        )
         let connection = NWConnection(
             host: NWEndpoint.Host(endpoint.host), port: serverPort, using: parameters)
         connection.stateUpdateHandler = { [weak self, weak connection] nwState in

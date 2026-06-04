@@ -53,20 +53,41 @@ enum PacketTunnelProviderError: LocalizedError {
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     private let relayMetrics: RelayMetrics
     private let relayTransport: RelayTransport
-    private let wireGuardRuntime = WireGuardRuntime()
-    private let routeGate = RouteGate()
+    private let wireGuardRuntime: WireGuardRuntime
+    private let routeGate: RouteGate
     private var wireGuardRelayBind: WireGuardRelayBind?
     // The WireGuard server endpoint from the active config, reported as the relay's
     // public address so the Mac status shows the same endpoint the iPhone does.
     private var serverEndpoint: WireGuardEndpoint?
     private var throughputLogger: RelayThroughputLogger?
 
-    override init() {
-        let metrics = RelayMetrics()
-        relayMetrics = metrics
-        relayTransport = RelayTransport(metrics: metrics)
+    // The designated initializer takes the graph, so a test can build the provider
+    // with fakes.
+    init(
+        relayMetrics: RelayMetrics,
+        relayTransport: RelayTransport,
+        wireGuardRuntime: WireGuardRuntime,
+        routeGate: RouteGate
+    ) {
+        self.relayMetrics = relayMetrics
+        self.relayTransport = relayTransport
+        self.wireGuardRuntime = wireGuardRuntime
+        self.routeGate = routeGate
         super.init()
         logger.notice("PacketTunnelProvider initialized")
+    }
+
+    // The system instantiates the provider through the no-argument initializer, so
+    // this is the composition root: it builds the production graph, wiring the
+    // relay transport to the shared metrics, and hands it to the designated init.
+    override convenience init() {
+        let metrics = RelayMetrics()
+        self.init(
+            relayMetrics: metrics,
+            relayTransport: RelayTransport(metrics: metrics),
+            wireGuardRuntime: WireGuardRuntime(),
+            routeGate: RouteGate()
+        )
     }
 
     override func startTunnel(
