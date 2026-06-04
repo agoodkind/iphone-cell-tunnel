@@ -12,8 +12,7 @@ import SwiftUI
 // MARK: - Constants
 
 private let emptyValuePlaceholder = "(none)"
-private let cellularQualifier = "Cellular"
-private let wireGuardQualifier = "WireGuard"
+private let wireGuardProtocolName = "WireGuard"
 
 // MARK: - LocalLinkTransport
 
@@ -79,16 +78,14 @@ struct ConnectionRow: Identifiable, Equatable {
 
 // MARK: - ConnectionSection
 
-/// One titled group of connection rows, with an optional right-aligned qualifier
-/// such as `Cellular` or `WireGuard`. The connection area renders an ordered list
-/// of these, so adding a group is a data change, not a view change. `secondaryRows`
-/// render below the primary rows after a slight gap, empty when the group has none.
+/// One titled group of connection rows. The connection area renders an ordered
+/// list of these, so adding a group is a data change, not a view change. A
+/// qualifier such as the egress transport or the protocol is an ordinary first
+/// row, so the header stays a plain uppercase title.
 struct ConnectionSection: Identifiable, Equatable {
     let id = UUID()
     let title: String
-    let qualifier: String?
     let rows: [ConnectionRow]
-    let secondaryRows: [ConnectionRow]
 }
 
 // MARK: - RelayScreenState
@@ -298,89 +295,75 @@ struct RelayScreenModel {
         guard state.showsTunnelDetail else {
             return []
         }
-        var sections = [overviewSection]
-        guard showsAddressGroups else {
-            return sections
-        }
-        sections.append(deviceSection)
-        sections.append(endpointSection)
-        return sections
+        return [connectionSection, deviceSection, internetSection, relaySection]
     }
 
-    // The address groups belong to a live connection, so they show in passthrough
-    // and routing and stay hidden while disconnected, connecting, or in an edge.
-    private var showsAddressGroups: Bool {
-        switch state {
-        case .passthrough, .routing:
-            return true
-        case .notSetUp, .disconnected, .connecting, .noCellular, .error:
-            return false
-        }
-    }
-
-    private var overviewSection: ConnectionSection {
+    // The peer the phone is connected to and the link transport carrying it.
+    private var connectionSection: ConnectionSection {
         ConnectionSection(
-            title: "Connection",
-            qualifier: nil,
+            title: "CONNECTION",
             rows: [
                 ConnectionRow(label: "Connected to", value: connectedToValue),
                 ConnectionRow(label: "Connected via", value: connectedViaValue),
-            ],
-            secondaryRows: []
+            ]
         )
     }
 
-    // The device section shows the iPhone's own cellular interface addresses, then
-    // the public addresses the internet sees from the iPhone. A family with no
-    // address shows the placeholder.
+    // The iPhone egress: the transport it reaches the internet over, and the
+    // addresses on that egress interface.
     private var deviceSection: ConnectionSection {
         ConnectionSection(
-            title: "Device",
-            qualifier: cellularQualifier,
+            title: "DEVICE",
+            rows: [
+                ConnectionRow(
+                    label: "Egress",
+                    value: nonEmptyOrPlaceholder(controller.cellularPath.transportDisplayName)
+                ),
+                ConnectionRow(
+                    label: "IPv6",
+                    value: nonEmptyOrPlaceholder(controller.cellularPath.ipv6Address)
+                ),
+                ConnectionRow(
+                    label: "IPv4",
+                    value: nonEmptyOrPlaceholder(controller.cellularPath.ipv4Address)
+                ),
+            ]
+        )
+    }
+
+    // The public addresses the internet sees from the device, from the probe.
+    private var internetSection: ConnectionSection {
+        ConnectionSection(
+            title: "INTERNET",
             rows: addressRows(
-                ipv6: controller.cellularPath.ipv6Address,
-                ipv4: controller.cellularPath.ipv4Address
-            ),
-            secondaryRows: publicAddressRows(
                 ipv6: controller.devicePublicIPv6Address,
                 ipv4: controller.devicePublicIPv4Address
             )
         )
     }
 
-    // The endpoint section shows the WireGuard server endpoint, then the public
-    // addresses traffic egresses through. The endpoint IPv6 and the public IPv6 are
-    // the same address by design. The public rows wait on the public-address probe.
-    private var endpointSection: ConnectionSection {
-        ConnectionSection(
-            title: "Endpoint",
-            qualifier: wireGuardQualifier,
-            rows: addressRows(
-                ipv6: controller.relayPublicIPv6Address,
-                ipv4: controller.relayPublicIPv4Address
-            ),
-            secondaryRows: publicAddressRows(
-                ipv6: controller.relayPublicIPv6Address,
-                ipv4: controller.relayPublicIPv4Address
+    // The WireGuard relay: the protocol, the configured endpoint hostname, and the
+    // server's addresses resolved from that hostname.
+    private var relaySection: ConnectionSection {
+        var rows = [
+            ConnectionRow(label: "Protocol", value: wireGuardProtocolName),
+            ConnectionRow(label: "Host", value: nonEmptyOrPlaceholder(controller.relayHost)),
+        ]
+        rows.append(
+            contentsOf: addressRows(
+                ipv6: controller.relayServerIPv6Address,
+                ipv4: controller.relayServerIPv4Address
             )
         )
+        return ConnectionSection(title: "RELAY", rows: rows)
     }
 
-    // The address group always shows both families, so the zero state is a labeled
-    // placeholder rather than a missing row. IPv6 lists before IPv4 per the design.
+    // An IPv6 then IPv4 pair, IPv6 first per the design, each falling back to a
+    // labeled placeholder so no row is blank.
     private func addressRows(ipv6: String?, ipv4: String?) -> [ConnectionRow] {
         [
             ConnectionRow(label: "IPv6", value: nonEmptyOrPlaceholder(ipv6)),
             ConnectionRow(label: "IPv4", value: nonEmptyOrPlaceholder(ipv4)),
-        ]
-    }
-
-    // The public address pair shown below the interface or endpoint pair, IPv6
-    // first and always present. Both wait on the public-address probe.
-    private func publicAddressRows(ipv6: String?, ipv4: String?) -> [ConnectionRow] {
-        [
-            ConnectionRow(label: "Public IPv6", value: nonEmptyOrPlaceholder(ipv6)),
-            ConnectionRow(label: "Public IPv4", value: nonEmptyOrPlaceholder(ipv4)),
         ]
     }
 

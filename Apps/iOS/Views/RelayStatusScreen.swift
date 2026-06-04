@@ -19,7 +19,7 @@ private let routeTrafficLabel = "Route traffic"
 private let speedSectionTitle = "SPEED"
 private let dataSectionTitle = "DATA"
 private let bytesCountStyle = ByteCountFormatStyle(style: .file, spellsOutZero: false)
-private let secondaryGroupSpacing: CGFloat = 10
+private let heroTitleSubtitleSpacing: CGFloat = 4
 
 // MARK: - RelayStatusScreen
 
@@ -27,7 +27,8 @@ private let secondaryGroupSpacing: CGFloat = 10
 /// `RelayScreenModel`. Every surface is a stock SwiftUI component, so the Liquid
 /// Glass look comes for free and the Mac adapts to its width through the same view
 /// tree: a `List` whose `Section`s hold `LabeledContent` rows, a `Toggle` for the
-/// one control, and `ContentUnavailableView` for the hero and every zero state.
+/// one control, a plain title-and-subtitle hero in the connected states, and
+/// `ContentUnavailableView` for the zero, connecting, and error states.
 struct RelayStatusScreen: View {
     @Environment(RelayController.self) private var controller
 
@@ -105,21 +106,21 @@ struct RelayStatusScreen: View {
         .listStyle(.insetGrouped)
     }
 
-    // The compact hero row that sits atop the detail list, a labeled state line so
-    // the value is never unlabeled. A connected state never offers an action, so the
-    // hero collapses to one `LabeledContent` row.
+    // The connected-state hero: the status word and a one-line subtitle, leading
+    // aligned and text only, with no icon.
     private var heroSection: some View {
         Section {
-            LabeledContent {
+            VStack(alignment: .leading, spacing: heroTitleSubtitleSpacing) {
                 Text(model.hero.title)
-            } label: {
-                Label(model.hero.title, systemImage: model.hero.symbolName)
-                    .labelStyle(.iconOnly)
+                    .font(.title3)
+                    .fontWeight(.semibold)
+                if let subtitle = model.hero.subtitle {
+                    Text(subtitle)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
             }
-            if let subtitle = model.hero.subtitle {
-                Text(subtitle)
-                    .foregroundStyle(.secondary)
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -132,47 +133,32 @@ struct RelayStatusScreen: View {
 
     private var speedSection: some View {
         Section(speedSectionTitle) {
-            LabeledContent("Down", value: formattedRate(model.downloadMbps))
-            LabeledContent("Up", value: formattedRate(model.uploadMbps))
+            valueRow(label: "Down", value: formattedRate(model.downloadMbps))
+            valueRow(label: "Up", value: formattedRate(model.uploadMbps))
         }
     }
 
     private var dataSection: some View {
         Section(dataSectionTitle) {
-            LabeledContent("Total", value: formattedBytes(model.lifetimeTotalBytes))
+            valueRow(label: "Total", value: formattedBytes(model.lifetimeTotalBytes))
         }
     }
 
     @ViewBuilder private var connectionSections: some View {
         ForEach(model.connectionSections) { section in
-            Section {
+            Section(section.title) {
                 ForEach(section.rows) { row in
-                    LabeledContent(row.label, value: row.value)
+                    valueRow(label: row.label, value: row.value)
                 }
-                if !section.secondaryRows.isEmpty {
-                    Color.clear
-                        .frame(height: secondaryGroupSpacing)
-                        .listRowBackground(Color.clear)
-                        .listRowSeparator(.hidden)
-                    ForEach(section.secondaryRows) { row in
-                        LabeledContent(row.label, value: row.value)
-                    }
-                }
-            } header: {
-                connectionSectionHeader(section)
             }
         }
     }
 
-    // The section header carries the title and its optional qualifier, both stock
-    // `Text` inside the standard `Section` header, so `DEVICE Cellular` and
-    // `RELAY WireGuard` read as one labeled header line.
-    @ViewBuilder private func connectionSectionHeader(_ section: ConnectionSection) -> some View {
-        if let qualifier = section.qualifier {
-            LabeledContent(section.title, value: qualifier)
-        } else {
-            Text(section.title)
-        }
+    // One shared value row for every field: a stock `LabeledContent` whose value
+    // wraps in full and is selectable to copy, with no truncation or custom layout.
+    private func valueRow(label: String, value: String) -> some View {
+        LabeledContent(label, value: value)
+            .textSelection(.enabled)
     }
 
     // MARK: - Bindings

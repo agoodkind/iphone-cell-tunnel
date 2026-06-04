@@ -158,8 +158,9 @@
                 routeState: snapshot.routeState,
                 peerState: snapshot.peerState,
                 localLinkInterfaceName: snapshot.localLinkInterfaceName,
-                relayPublicIPv4Address: snapshot.relayPublicIPv4Address,
-                relayPublicIPv6Address: snapshot.relayPublicIPv6Address
+                relayHost: snapshot.relayHost,
+                relayServerIPv4Address: snapshot.relayServerIPv4Address,
+                relayServerIPv6Address: snapshot.relayServerIPv6Address
             )
             lastSample = sample
             return sample
@@ -191,8 +192,9 @@
                 routeState: .notInstalled,
                 peerState: .notSelected,
                 localLinkInterfaceName: nil,
-                relayPublicIPv4Address: nil,
-                relayPublicIPv6Address: nil
+                relayHost: nil,
+                relayServerIPv4Address: nil,
+                relayServerIPv6Address: nil
             )
         }
 

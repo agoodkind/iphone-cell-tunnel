@@ -61,8 +61,9 @@
                 routeState: snapshot.routeState,
                 peerState: snapshot.peerState,
                 localLinkInterfaceName: snapshot.localLinkInterfaceName,
-                relayPublicIPv4Address: snapshot.relayPublicIPv4Address,
-                relayPublicIPv6Address: snapshot.relayPublicIPv6Address
+                relayHost: snapshot.relayHost,
+                relayServerIPv4Address: snapshot.relayServerIPv4Address,
+                relayServerIPv6Address: snapshot.relayServerIPv6Address
             )
         }
 

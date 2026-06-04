@@ -35,10 +35,12 @@ struct RelayStatusSample: Sendable {
     /// The Mac-to-iPhone link interface identifier, mapped to a defined name for
     /// display, or `nil` when the source has not surfaced it.
     var localLinkInterfaceName: String?
-    /// The public IPv4 address the internet sees via the WireGuard server.
-    var relayPublicIPv4Address: String?
-    /// The public IPv6 address the internet sees via the WireGuard server.
-    var relayPublicIPv6Address: String?
+    /// The configured WireGuard endpoint hostname, shown as the relay host.
+    var relayHost: String?
+    /// The WireGuard server's IPv4 address, the endpoint hostname resolved to A.
+    var relayServerIPv4Address: String?
+    /// The WireGuard server's IPv6 address, the endpoint hostname resolved to AAAA.
+    var relayServerIPv6Address: String?
 }
 
 // MARK: - RelayControlBackend
@@ -94,8 +96,9 @@ final class RelayController {
     var routeState: TunnelRouteState = .notInstalled
     var peerState: TunnelPeerState = .notSelected
     var localLinkInterfaceName: String?
-    var relayPublicIPv4Address: String?
-    var relayPublicIPv6Address: String?
+    var relayHost: String?
+    var relayServerIPv4Address: String?
+    var relayServerIPv6Address: String?
     var devicePublicIPv4Address: String?
     var devicePublicIPv6Address: String?
 
@@ -180,8 +183,9 @@ final class RelayController {
         routeState = sample.routeState
         peerState = sample.peerState
         localLinkInterfaceName = sample.localLinkInterfaceName
-        relayPublicIPv4Address = sample.relayPublicIPv4Address
-        relayPublicIPv6Address = sample.relayPublicIPv6Address
+        relayHost = sample.relayHost
+        relayServerIPv4Address = sample.relayServerIPv4Address
+        relayServerIPv6Address = sample.relayServerIPv6Address
         let rate = throughput.update(with: sample.counters)
         uploadMbps = rate.upload
         downloadMbps = rate.download
