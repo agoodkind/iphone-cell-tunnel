@@ -383,7 +383,8 @@ extension PhoneRelayForwarder {
         cellularWindowSaturated = false
         configuredEndpoint = nil
         state = .stopped
-        onPeerChange?(nil)
+        hasLivePeer = false
+        onPeerChange?(false)
         onStateChange?(state)
         logger.notice("phone relay forwarder stopped")
     }

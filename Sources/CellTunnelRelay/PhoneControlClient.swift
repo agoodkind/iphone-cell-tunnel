@@ -35,6 +35,9 @@ final class PhoneControlClient {
     private var statusTimer: DispatchSourceTimer?
     var redialTimer: DispatchSourceTimer?
     var isActive = false
+    // The agent control service name the phone connected to (the Mac hostname),
+    // reported as the peer name. Cleared when the link drops.
+    private var peerServiceName: String?
 
     var onSetServerEndpoint: EndpointHandler?
     var statusProvider: StatusProvider?
@@ -45,6 +48,10 @@ final class PhoneControlClient {
     /// Fired with the agent's confirmed route state, so the status path reports
     /// installed routes from the agent's truth rather than the local routing intent.
     var onRouteState: (@MainActor (Bool) -> Void)?
+    /// Fired with the connected peer's name, the agent control service the phone
+    /// dialed (the Mac hostname), or `nil` when the link drops. The displayed peer
+    /// name comes from here.
+    var onPeerName: (@MainActor (String?) -> Void)?
 
     // MARK: - Lifecycle
 
@@ -114,6 +121,9 @@ final class PhoneControlClient {
         guard connection == nil else {
             return
         }
+        if case .service(let name, _, _, _) = endpoint {
+            peerServiceName = name
+        }
         let parameters = NWParameters(tls: nil, tcp: NWProtocolTCP.Options())
         parameters.allowLocalEndpointReuse = true
         parameters.includePeerToPeer = true
@@ -139,7 +149,10 @@ final class PhoneControlClient {
     private func handle(connectionState state: NWConnection.State, connection: NWConnection) {
         switch state {
         case .ready:
-            logger.notice("control client connection ready")
+            logger.notice(
+                "control client connection ready peer=\(self.peerServiceName ?? "unknown", privacy: .public)"
+            )
+            onPeerName?(peerServiceName)
             receive(on: connection)
             startStatusLoop()
         case .waiting(let error):
@@ -171,9 +184,11 @@ final class PhoneControlClient {
     // Tells the provider the control link dropped so it can reset the stale data
     // link. Gated on `isActive` so an intentional `stop` does not trigger it.
     private func notifyConnectionDropped() {
+        peerServiceName = nil
         guard isActive else {
             return
         }
+        onPeerName?(nil)
         onConnectionDropped?()
     }
 

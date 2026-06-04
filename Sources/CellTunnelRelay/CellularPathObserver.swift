@@ -21,6 +21,7 @@ private let logger = CellTunnelLog.logger(category: .relay)
 final class CellularPathObserver: @unchecked Sendable {
     private let monitorQueue = DispatchQueue(label: "CellTunnelPhone.CellularMonitor")
     private let monitor: NWPathMonitor
+    private let requiredInterfaceType: NWInterface.InterfaceType?
     private let latestSnapshot = Mutex(CellularPathSnapshot())
 
     /// Watches a specific interface type, or the general path when
@@ -29,6 +30,7 @@ final class CellularPathObserver: @unchecked Sendable {
     /// path so a satisfied host network drives the connected status the same way a
     /// live cellular path does on device.
     init(requiredInterfaceType: NWInterface.InterfaceType?) {
+        self.requiredInterfaceType = requiredInterfaceType
         if let requiredInterfaceType {
             monitor = NWPathMonitor(requiredInterfaceType: requiredInterfaceType)
         } else {
@@ -45,12 +47,10 @@ final class CellularPathObserver: @unchecked Sendable {
             guard let self else {
                 return
             }
-            let cellularInterface = path.availableInterfaces.first { interface in
-                interface.type == .cellular
-            }
+            let egress = egressInterface(in: path)
             let addresses: (ipv4: String?, ipv6: String?)
-            if let cellularInterface {
-                addresses = Self.interfaceAddresses(named: cellularInterface.name)
+            if let egress {
+                addresses = Self.interfaceAddresses(named: egress.name)
             } else {
                 addresses = (ipv4: nil, ipv6: nil)
             }
@@ -58,23 +58,60 @@ final class CellularPathObserver: @unchecked Sendable {
                 isSatisfied: path.status == .satisfied,
                 supportsIPv4: path.supportsIPv4,
                 supportsIPv6: path.supportsIPv6,
-                interfaceName: cellularInterface?.name,
-                interfaceIndex: cellularInterface?.index,
+                interfaceName: egress?.name,
+                interfaceIndex: egress?.index,
                 ipv4Address: addresses.ipv4,
-                ipv6Address: addresses.ipv6
+                ipv6Address: addresses.ipv6,
+                transportDisplayName: egress.map(Self.transportDisplayName(for:))
             )
             latestSnapshot.withLock { $0 = newSnapshot }
             logger.info(
                 """
-                cellular path updated satisfied=\(path.status == .satisfied, privacy: .public) \
+                egress path updated satisfied=\(path.status == .satisfied, privacy: .public) \
                 ipv4=\(path.supportsIPv4, privacy: .public) \
                 ipv6=\(path.supportsIPv6, privacy: .public) \
-                interface=\(cellularInterface?.name ?? "none", privacy: .public)
+                interface=\(egressInterface?.name ?? "none", privacy: .public)
                 """
             )
         }
         monitor.start(queue: monitorQueue)
-        logger.info("cellular monitor started")
+        logger.info("egress monitor started")
+    }
+
+    // The egress interface for this path: the required type when one is set, such
+    // as the cellular radio on device, otherwise the path's primary non-loopback
+    // interface, such as Wi-Fi in the simulator.
+    private func egressInterface(in path: NWPath) -> NWInterface? {
+        let interfaces = path.availableInterfaces
+        if let requiredInterfaceType {
+            let match = interfaces.first { interface in
+                interface.type == requiredInterfaceType
+            }
+            if let match {
+                return match
+            }
+        }
+        return interfaces.first { interface in
+            interface.type != .loopback
+        }
+    }
+
+    // The egress transport by defined name, derived from the interface type.
+    private static func transportDisplayName(for interface: NWInterface) -> String {
+        switch interface.type {
+        case .cellular:
+            return "Cellular"
+        case .wifi:
+            return "Wi-Fi"
+        case .wiredEthernet:
+            return "Ethernet"
+        case .loopback:
+            return "Loopback"
+        case .other:
+            return "Other"
+        @unknown default:
+            return "Other"
+        }
     }
 
     func stop() {

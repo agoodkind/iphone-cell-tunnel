@@ -210,6 +210,6 @@ extension PhoneRelayForwarder {
             return
         }
         hasLivePeer = hasEgress
-        onPeerChange?(hasEgress ? "Mac" : nil)
+        onPeerChange?(hasEgress)
     }
 }

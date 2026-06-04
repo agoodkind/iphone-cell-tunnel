@@ -100,7 +100,9 @@ final class PhoneRelayForwarder: @unchecked Sendable {
 
     var onStateChange: (@Sendable (WireGuardDatagramRelayState) -> Void)?
     var onError: (@Sendable (String) -> Void)?
-    var onPeerChange: (@Sendable (String?) -> Void)?
+    /// Fired with whether a live Mac data link exists. It carries the liveness; the
+    /// displayed peer name comes from the control service.
+    var onPeerChange: (@Sendable (Bool) -> Void)?
     /// Fired with the carrying link's interface identifier whenever the egress
     /// choice changes, so the status screen can show which transport is in use.
     var onEgressInterfaceChange: (@Sendable (String?) -> Void)?

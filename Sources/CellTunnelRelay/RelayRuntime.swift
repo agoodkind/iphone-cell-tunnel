@@ -24,15 +24,26 @@ private let logger = CellTunnelLog.logger(category: .relay)
 private struct RelayStatusState {
     var running = false
     var lastError: String?
+    /// The peer device name shown as `Connected to`, the name of the agent's
+    /// control service the phone connected to. It is reported only while a live
+    /// data peer is up, so the screen shows it in the connected states.
     var connectedPeerName: String?
+    /// The agent's control-service name (the Mac hostname), captured when the
+    /// control link connects, and shown as the displayed peer name.
+    var controlPeerName: String?
+    /// Whether the data plane has a live peer link, from the forwarder.
+    var hasLivePeer = false
     var relayState = WireGuardDatagramRelayState.stopped.displayName
     /// Whether the agent has confirmed the program routes are installed. The agent
     /// owns the routes and reports this over the control link, so it is the truth
     /// the route state reports, not the local routing intent.
     var routeInstalled = false
-    /// The WireGuard server endpoint the agent sent over the control link, reported
-    /// as the relay's public address since device traffic egresses through it.
+    /// The WireGuard server endpoint the agent sent over the control link. The host
+    /// is shown as the relay host; the resolved addresses are the server's IPs.
     var serverEndpoint: RelayEndpoint?
+    /// The server endpoint hostname resolved to its A and AAAA records, shown as the
+    /// relay server IPv4 and IPv6.
+    var relayResolved: HostAddressResolver.Resolved?
     /// The carrying link's interface, reported as the connected-via transport.
     var localLinkInterfaceName: String?
 }
@@ -123,8 +134,9 @@ public final class RelayRuntime: @unchecked Sendable {
             connectedPeerName: state.connectedPeerName,
             relayState: state.relayState,
             localLinkInterfaceName: state.localLinkInterfaceName,
-            relayPublicIPv4Address: relayHost(state.serverEndpoint, family: .ipv4),
-            relayPublicIPv6Address: relayHost(state.serverEndpoint, family: .ipv6)
+            relayHost: state.serverEndpoint?.host,
+            relayServerIPv4Address: state.relayResolved?.ipv4,
+            relayServerIPv6Address: state.relayResolved?.ipv6
         )
     }
 
@@ -139,9 +151,12 @@ public final class RelayRuntime: @unchecked Sendable {
             self?.statusState.withLock { $0.lastError = message }
             logger.error("phone relay reported error=\(message, privacy: .public)")
         }
-        forwarder.onPeerChange = { [weak self] name in
-            self?.statusState.withLock { $0.connectedPeerName = name }
-            logger.notice("phone relay peer changed peer=\(name ?? "none", privacy: .public)")
+        forwarder.onPeerChange = { [weak self] live in
+            self?.statusState.withLock { state in
+                state.hasLivePeer = live
+                state.connectedPeerName = live ? state.controlPeerName : nil
+            }
+            logger.notice("phone relay live peer changed live=\(live, privacy: .public)")
         }
         forwarder.onEgressInterfaceChange = { [weak self] name in
             self?.statusState.withLock { $0.localLinkInterfaceName = name }
@@ -170,15 +185,31 @@ public final class RelayRuntime: @unchecked Sendable {
                 onSetServerEndpoint: { [weak self] endpoint in
                     relayForwarder.setServerEndpoint(endpoint)
                     self?.statusState.withLock { $0.serverEndpoint = endpoint }
+                    self?.resolveRelayServer(host: endpoint.host)
                 },
                 onConnectionDropped: { [weak self] in
                     relayForwarder.resetLinks()
                     // The control link dropped, so any installed routes no longer
-                    // hold; report not-installed until the agent reconfirms.
-                    self?.statusState.withLock { $0.routeInstalled = false }
+                    // hold and the peer is gone; clear both until the agent reconnects.
+                    self?.statusState.withLock { state in
+                        state.routeInstalled = false
+                        state.controlPeerName = nil
+                        state.connectedPeerName = nil
+                    }
                 },
                 onRouteState: { [weak self] installed in
                     self?.statusState.withLock { $0.routeInstalled = installed }
+                },
+                onPeerName: { [weak self] name in
+                    self?.statusState.withLock { state in
+                        state.controlPeerName = name
+                        if state.hasLivePeer {
+                            state.connectedPeerName = name
+                        }
+                    }
+                    logger.notice(
+                        "relay peer name resolved peer=\(name ?? "none", privacy: .public)"
+                    )
                 },
                 statusProvider: {
                     let lastError = self.flatMap { runtime in
@@ -197,12 +228,21 @@ public final class RelayRuntime: @unchecked Sendable {
         }
     }
 
-    // Reports the WireGuard server endpoint host for the requested family, the
-    // relay's public identity that device traffic egresses through.
-    private func relayHost(_ endpoint: RelayEndpoint?, family: RelayAddressFamily) -> String? {
-        guard let endpoint, !endpoint.host.isEmpty, endpoint.addressFamily == family else {
-            return nil
+    // Resolves the WireGuard endpoint hostname to its A and AAAA records off the
+    // MainActor and caches them, so the relay section shows the server's real
+    // addresses rather than the hostname in a family row. An IP literal resolves to
+    // itself.
+    private func resolveRelayServer(host: String) {
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let resolved = HostAddressResolver.resolve(host: host)
+            self?.statusState.withLock { $0.relayResolved = resolved }
+            logger.notice(
+                """
+                relay server resolved host=\(host, privacy: .public) \
+                hasIPv4=\(resolved.ipv4 != nil, privacy: .public) \
+                hasIPv6=\(resolved.ipv6 != nil, privacy: .public)
+                """
+            )
         }
-        return endpoint.host
     }
 }
