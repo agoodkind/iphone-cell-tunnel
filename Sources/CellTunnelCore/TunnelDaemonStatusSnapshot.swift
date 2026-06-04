@@ -319,12 +319,15 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     /// identifier (mapped to a defined name for display), or `nil` when not yet
     /// surfaced by the link source.
     public var localLinkInterfaceName: String?
-    /// The public IPv4 address the internet sees via the upstream WireGuard server,
-    /// or `nil` when not yet surfaced.
-    public var relayPublicIPv4Address: String?
-    /// The public IPv6 address the internet sees via the upstream WireGuard server,
-    /// or `nil` when not yet surfaced.
-    public var relayPublicIPv6Address: String?
+    /// The configured WireGuard endpoint hostname, shown as the relay host, or
+    /// `nil` when not yet surfaced.
+    public var relayHost: String?
+    /// The WireGuard server's IPv4 address, the endpoint hostname resolved to its A
+    /// record, or `nil` when not yet resolved.
+    public var relayServerIPv4Address: String?
+    /// The WireGuard server's IPv6 address, the endpoint hostname resolved to its
+    /// AAAA record, or `nil` when not yet resolved.
+    public var relayServerIPv6Address: String?
 
     public init(
         running: Bool = false,
@@ -341,8 +344,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         connectedPeerName: String? = nil,
         relayState: String? = nil,
         localLinkInterfaceName: String? = nil,
-        relayPublicIPv4Address: String? = nil,
-        relayPublicIPv6Address: String? = nil
+        relayHost: String? = nil,
+        relayServerIPv4Address: String? = nil,
+        relayServerIPv6Address: String? = nil
     ) {
         self.running = running
         self.routeState = routeState
@@ -358,8 +362,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         self.connectedPeerName = connectedPeerName
         self.relayState = relayState
         self.localLinkInterfaceName = localLinkInterfaceName
-        self.relayPublicIPv4Address = relayPublicIPv4Address
-        self.relayPublicIPv6Address = relayPublicIPv6Address
+        self.relayHost = relayHost
+        self.relayServerIPv4Address = relayServerIPv4Address
+        self.relayServerIPv6Address = relayServerIPv6Address
     }
 
     public var renderedOutput: String {

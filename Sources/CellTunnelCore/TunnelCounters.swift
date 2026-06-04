@@ -46,12 +46,15 @@ public struct CellularPathSnapshot: Codable, Equatable, Sendable {
     public var supportsIPv6: Bool
     public var interfaceName: String?
     public var interfaceIndex: Int?
-    /// The iPhone cellular interface IPv4 address, or `nil` when not yet surfaced
-    /// by the path source.
+    /// The device egress interface IPv4 address, or `nil` when not yet surfaced by
+    /// the path source.
     public var ipv4Address: String?
-    /// The iPhone cellular interface IPv6 address, or `nil` when not yet surfaced
-    /// by the path source.
+    /// The device egress interface IPv6 address, or `nil` when not yet surfaced by
+    /// the path source.
     public var ipv6Address: String?
+    /// The egress transport by defined name, derived from the interface type, such
+    /// as `Cellular` on a device or `Wi-Fi` in the simulator.
+    public var transportDisplayName: String?
 
     public init(
         isSatisfied: Bool = false,
@@ -60,7 +63,8 @@ public struct CellularPathSnapshot: Codable, Equatable, Sendable {
         interfaceName: String? = nil,
         interfaceIndex: Int? = nil,
         ipv4Address: String? = nil,
-        ipv6Address: String? = nil
+        ipv6Address: String? = nil,
+        transportDisplayName: String? = nil
     ) {
         self.isSatisfied = isSatisfied
         self.supportsIPv4 = supportsIPv4
@@ -69,5 +73,6 @@ public struct CellularPathSnapshot: Codable, Equatable, Sendable {
         self.interfaceIndex = interfaceIndex
         self.ipv4Address = ipv4Address
         self.ipv6Address = ipv6Address
+        self.transportDisplayName = transportDisplayName
     }
 }
