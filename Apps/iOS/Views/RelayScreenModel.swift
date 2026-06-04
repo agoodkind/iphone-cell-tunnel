@@ -81,7 +81,7 @@ struct ConnectionRow: Identifiable, Equatable {
 /// One titled group of connection rows. The connection area renders an ordered
 /// list of these, so adding a group is a data change, not a view change. A
 /// qualifier such as the egress transport or the protocol is an ordinary first
-/// row, so the header stays a plain uppercase title.
+/// row, so the header stays a plain Title Case header.
 struct ConnectionSection: Identifiable, Equatable {
     let id = UUID()
     let title: String
@@ -102,23 +102,12 @@ enum RelayScreenState: Equatable {
     case passthrough
     case routing
 
-    /// Whether the `Route traffic` switch is shown. The switch appears only once a
-    /// link to the iPhone is up.
-    var showsRouteSwitch: Bool {
-        switch self {
-        case .passthrough, .routing:
-            return true
-        case .notSetUp, .disconnected, .connecting, .noCellular, .error:
-            return false
-        }
-    }
-
-    /// Whether the routing-only `SPEED` section is shown.
+    /// Whether the routing-only `Speed` section is shown.
     var showsSpeed: Bool {
         self == .routing
     }
 
-    /// Whether the `DATA` and `CONNECTION` sections are shown. Only the connected
+    /// Whether the `Data` and `Connection` sections are shown. Only the connected
     /// states show them; every not-connected state renders a full-screen zero state
     /// instead, so a disconnected or connecting screen never shows placeholder stat
     /// and connection rows.
@@ -159,11 +148,10 @@ enum RelayHeroAction: Equatable {
 
 // MARK: - RelayScreenHero
 
-/// The hero presentation for the current state, rendered by `ContentUnavailableView`:
-/// a `Label` built from an SF Symbol and a title, a short description, and an
-/// optional action. The icon name is always an SF Symbol.
+/// The hero presentation for the current state: a status title, an optional
+/// subtitle, and an optional action. No icon is shown. Only the error state
+/// carries a subtitle, which is the runtime error message.
 struct RelayScreenHero: Equatable {
-    let symbolName: String
     let title: String
     let subtitle: String?
     let action: RelayHeroAction?
@@ -212,50 +200,19 @@ struct RelayScreenModel {
     var hero: RelayScreenHero {
         switch state {
         case .notSetUp:
-            return RelayScreenHero(
-                symbolName: "circle.dashed",
-                title: "Not set up",
-                subtitle: "Route this device's internet through your iPhone's cellular.",
-                action: .setUp
-            )
+            return RelayScreenHero(title: "Not set up", subtitle: nil, action: .setUp)
         case .disconnected:
-            return RelayScreenHero(
-                symbolName: "bolt.horizontal.circle",
-                title: "Disconnected",
-                subtitle: "Waiting for iPhone…",
-                action: nil
-            )
+            return RelayScreenHero(title: "Disconnected", subtitle: nil, action: nil)
         case .connecting:
-            return RelayScreenHero(
-                symbolName: "arrow.triangle.2.circlepath.circle",
-                title: "Connecting…",
-                subtitle: "Bringing the tunnel up…",
-                action: nil
-            )
+            return RelayScreenHero(title: "Connecting…", subtitle: nil, action: nil)
         case .passthrough:
-            return RelayScreenHero(
-                symbolName: "circle.lefthalf.filled",
-                title: "Passthrough",
-                subtitle: "Connected. Turn on Route traffic to route this device.",
-                action: nil
-            )
+            return RelayScreenHero(title: "Ready to route", subtitle: nil, action: nil)
         case .routing:
-            return RelayScreenHero(
-                symbolName: "circle.fill",
-                title: "Routing",
-                subtitle: "This device's traffic routes through the iPhone's cellular.",
-                action: nil
-            )
+            return RelayScreenHero(title: "Routing traffic", subtitle: nil, action: nil)
         case .noCellular:
-            return RelayScreenHero(
-                symbolName: "antenna.radiowaves.left.and.right.slash",
-                title: "No cellular on iPhone",
-                subtitle: "Waiting for a cellular path…",
-                action: nil
-            )
+            return RelayScreenHero(title: "No network", subtitle: nil, action: nil)
         case .error(let message):
             return RelayScreenHero(
-                symbolName: "exclamationmark.triangle",
                 title: "Something went wrong",
                 subtitle: message,
                 action: .retry
@@ -265,19 +222,19 @@ struct RelayScreenModel {
 
     // MARK: - Speed
 
-    /// The download rate, in Mbps, for the `SPEED` section.
+    /// The download rate, in Mbps, for the `Speed` section.
     var downloadMbps: Double {
         controller.downloadMbps
     }
 
-    /// The upload rate, in Mbps, for the `SPEED` section.
+    /// The upload rate, in Mbps, for the `Speed` section.
     var uploadMbps: Double {
         controller.uploadMbps
     }
 
     // MARK: - Data
 
-    /// The lifetime total bytes through the tunnel for the `DATA` section. The
+    /// The lifetime total bytes through the tunnel for the `Data` section. The
     /// controller accumulates the relay byte total across sessions, so the figure
     /// persists rather than resetting when a session restarts.
     var lifetimeTotalBytes: UInt64 {
@@ -301,7 +258,7 @@ struct RelayScreenModel {
     // The peer the phone is connected to and the link transport carrying it.
     private var connectionSection: ConnectionSection {
         ConnectionSection(
-            title: "CONNECTION",
+            title: "Connection",
             rows: [
                 ConnectionRow(label: "Connected to", value: connectedToValue),
                 ConnectionRow(label: "Connected via", value: connectedViaValue),
@@ -313,7 +270,7 @@ struct RelayScreenModel {
     // addresses on that egress interface.
     private var deviceSection: ConnectionSection {
         ConnectionSection(
-            title: "DEVICE",
+            title: "Device",
             rows: [
                 ConnectionRow(
                     label: "Egress",
@@ -334,7 +291,7 @@ struct RelayScreenModel {
     // The public addresses the internet sees from the device, from the probe.
     private var internetSection: ConnectionSection {
         ConnectionSection(
-            title: "INTERNET",
+            title: "Internet",
             rows: addressRows(
                 ipv6: controller.devicePublicIPv6Address,
                 ipv4: controller.devicePublicIPv4Address
@@ -355,7 +312,7 @@ struct RelayScreenModel {
                 ipv4: controller.relayServerIPv4Address
             )
         )
-        return ConnectionSection(title: "RELAY", rows: rows)
+        return ConnectionSection(title: "Relay", rows: rows)
     }
 
     // An IPv6 then IPv4 pair, IPv6 first per the design, each falling back to a

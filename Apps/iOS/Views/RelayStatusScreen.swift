@@ -16,18 +16,17 @@ private let logger = CellTunnelLog.logger(category: .app)
 
 private let screenTitle = "Cell Tunnel"
 private let routeTrafficLabel = "Route traffic"
-private let speedSectionTitle = "SPEED"
-private let dataSectionTitle = "DATA"
+private let speedSectionTitle = "Speed"
+private let dataSectionTitle = "Data"
 private let bytesCountStyle = ByteCountFormatStyle(style: .file, spellsOutZero: false)
-private let heroTitleSubtitleSpacing: CGFloat = 4
 
 // MARK: - RelayStatusScreen
 
 /// The one status screen, rendered the same on the iPhone and the Mac from a single
 /// `RelayScreenModel`. Every surface is a stock SwiftUI component, so the Liquid
 /// Glass look comes for free and the Mac adapts to its width through the same view
-/// tree: a `List` whose `Section`s hold `LabeledContent` rows, a `Toggle` for the
-/// one control, a plain title-and-subtitle hero in the connected states, and
+/// tree: a `List` whose `Section`s hold `LabeledContent` rows, a status title
+/// combined with the `Route traffic` toggle in the connected states, and
 /// `ContentUnavailableView` for the zero, connecting, and error states.
 struct RelayStatusScreen: View {
     @Environment(RelayController.self) private var controller
@@ -62,11 +61,11 @@ struct RelayStatusScreen: View {
 
     // MARK: - Hero
 
-    // The full-screen hero for the zero and edge states, with its SF Symbol label,
-    // its description, and the optional action button wired to a controller verb.
+    // The full-screen hero for the zero and edge states: a text title, an optional
+    // description, and the optional action button wired to a controller verb. No icon.
     private var heroView: some View {
         ContentUnavailableView {
-            Label(model.hero.title, systemImage: model.hero.symbolName)
+            Text(model.hero.title)
         } description: {
             heroDescription
         } actions: {
@@ -93,10 +92,7 @@ struct RelayStatusScreen: View {
 
     private func detailList(state: RelayScreenState) -> some View {
         List {
-            heroSection
-            if state.showsRouteSwitch {
-                routeSection
-            }
+            statusSection
             if state.showsSpeed {
                 speedSection
             }
@@ -106,26 +102,14 @@ struct RelayStatusScreen: View {
         .listStyle(.insetGrouped)
     }
 
-    // The connected-state hero: the status word and a one-line subtitle, leading
-    // aligned and text only, with no icon.
-    private var heroSection: some View {
+    // The connected-state status section: a bold status title and the one control,
+    // the `Route traffic` toggle, in one section. The detail list renders only in the
+    // connected states, which always show the toggle, so the two belong together.
+    private var statusSection: some View {
         Section {
-            VStack(alignment: .leading, spacing: heroTitleSubtitleSpacing) {
-                Text(model.hero.title)
-                    .font(.title3)
-                    .fontWeight(.semibold)
-                if let subtitle = model.hero.subtitle {
-                    Text(subtitle)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-
-    private var routeSection: some View {
-        Section {
+            Text(model.hero.title)
+                .font(.title3)
+                .fontWeight(.semibold)
             Toggle(routeTrafficLabel, isOn: routeBinding)
                 .disabled(model.state.disablesControls)
         }
@@ -136,12 +120,14 @@ struct RelayStatusScreen: View {
             valueRow(label: "Down", value: formattedRate(model.downloadMbps))
             valueRow(label: "Up", value: formattedRate(model.uploadMbps))
         }
+        .textCase(nil)
     }
 
     private var dataSection: some View {
         Section(dataSectionTitle) {
             valueRow(label: "Total", value: formattedBytes(model.lifetimeTotalBytes))
         }
+        .textCase(nil)
     }
 
     @ViewBuilder private var connectionSections: some View {
@@ -151,6 +137,7 @@ struct RelayStatusScreen: View {
                     valueRow(label: row.label, value: row.value)
                 }
             }
+            .textCase(nil)
         }
     }
 
