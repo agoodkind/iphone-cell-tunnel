@@ -19,10 +19,6 @@ final class PreviewRelayBackend: RelayControlBackend {
         await Task.yield()
     }
 
-    func stop() async {
-        await Task.yield()
-    }
-
     func sample() async -> RelayStatusSample? {
         await Task.yield()
         return nil

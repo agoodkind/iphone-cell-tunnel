@@ -24,22 +24,11 @@ private let tunnelLocalizedDescription = "Cell Tunnel"
 private let tunnelServerAddressPlaceholder = "iPhone Cellular Relay"
 private let providerMessageTimeoutSeconds: Double = 5
 
-private struct UncheckedSendableBox<Value>: @unchecked Sendable {
-    let value: Value
-
-    init(_ value: Value) {
-        self.value = value
-    }
-}
-
-private typealias ManagerListBox = UncheckedSendableBox<[NETunnelProviderManager]>
-
 // MARK: - AgentTunnelController
 
 actor AgentTunnelController {
     private var manager: NETunnelProviderManager?
     private var statusObserver: NSObjectProtocol?
-    private var latestStatus: NEVPNStatus = .invalid
     var controlListener: AgentControlListener?
     let relayBridge: AgentRelayBridge
     let relayBrowser: RelayDeviceBrowser
@@ -241,7 +230,6 @@ actor AgentTunnelController {
                 NotificationCenter.default.removeObserver(statusObserver)
                 self.statusObserver = nil
             }
-            latestStatus = .invalid
             logger.notice(
                 "agent tunnel reset removed managerCount=\(managers.count, privacy: .public)"
             )
@@ -411,7 +399,6 @@ extension AgentTunnelController {
     }
 
     private func recordStatus(_ status: NEVPNStatus) {
-        latestStatus = status
         logger.notice(
             "agent observed vpn status=\(self.statusDescription(status), privacy: .public)"
         )

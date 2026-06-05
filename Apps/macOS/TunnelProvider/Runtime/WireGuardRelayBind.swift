@@ -62,11 +62,6 @@ final class WireGuardRelayBind: WireGuardRelayBindBridge, @unchecked Sendable {
         logger.notice("relay bind inbound injector attached")
     }
 
-    func detach() {
-        transport.onReceive = nil
-        logger.notice("relay bind inbound injector detached")
-    }
-
     // The peer endpoint string is informational because RelayTransport already
     // targets the iPhone relay; wireguard-go still needs a non-empty endpoint
     // string when injecting received datagrams so its bind layer accepts them.

@@ -87,10 +87,6 @@ protocol RelayControlBackend {
     /// tunnel. The Mac leaves the agent's tunnel untouched.
     func start() async
 
-    /// Tears the platform relay session down. The Mac leaves the agent's tunnel
-    /// untouched.
-    func stop() async
-
     /// One status reading, or `nil` when the source is briefly unavailable.
     func sample() async -> RelayStatusSample?
 
@@ -159,15 +155,6 @@ final class RelayController {
         isStarting = true
         await backend.start()
         startPolling()
-    }
-
-    /// Stops the status poll, then brings the platform session down.
-    func stop() async {
-        logger.notice("relay controller stop requested")
-        stopPolling()
-        await backend.stop()
-        isRunning = false
-        isStarting = false
     }
 
     /// Suspends the status poll without touching the session, for backgrounding.

@@ -35,11 +35,6 @@
             await Task.yield()
         }
 
-        func stop() async {
-            logger.notice("agent relay backend stop: closing control client")
-            await client.shutdown()
-        }
-
         // Sends the routing choice to the agent, which installs or withdraws the
         // program routes.
         func setRouting(enabled: Bool) async {

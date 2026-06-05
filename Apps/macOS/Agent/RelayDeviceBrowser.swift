@@ -49,12 +49,6 @@ final class RelayDeviceBrowser: @unchecked Sendable {
         }
     }
 
-    func stop() {
-        queue.async { [weak self] in
-            self?.endBrowsing()
-        }
-    }
-
     func snapshot() -> [DiscoveredRelayDevice] {
         queue.sync {
             devices
@@ -83,17 +77,6 @@ final class RelayDeviceBrowser: @unchecked Sendable {
         logger.notice(
             "relay device browser started type=\(relayDeviceBonjourServiceType, privacy: .public)"
         )
-    }
-
-    private func endBrowsing() {
-        guard let nwBrowser = browser else {
-            devices.removeAll()
-            return
-        }
-        browser = nil
-        nwBrowser.cancel()
-        devices.removeAll()
-        logger.notice("relay device browser stopped")
     }
 
     private func handleStateUpdate(_ state: NWBrowser.State) {

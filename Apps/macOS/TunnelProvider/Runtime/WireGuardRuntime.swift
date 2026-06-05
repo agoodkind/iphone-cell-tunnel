@@ -34,7 +34,6 @@ enum WireGuardRuntimeError: LocalizedError {
 
 actor WireGuardRuntime {
     private var adapter: WireGuardAdapter?
-    private var relayBind: WireGuardRelayBindBridge?
     private var didStart = false
 
     func start(
@@ -49,7 +48,6 @@ actor WireGuardRuntime {
             Self.relayAdapterDiagnosticLine(logLevel: logLevel, line: line)
         }
         self.adapter = wgAdapter
-        self.relayBind = relayBind
         logger.notice("tunnel runtime adapter start scheduled")
         let outcome = await withCheckedContinuation { continuation in
             wgAdapter.start(
@@ -106,13 +104,8 @@ actor WireGuardRuntime {
             }
         }
         self.adapter = nil
-        relayBind = nil
         didStart = false
         logger.notice("tunnel runtime stop completed")
-    }
-
-    var isRunning: Bool {
-        didStart
     }
 
     private static func relayAdapterDiagnosticLine(

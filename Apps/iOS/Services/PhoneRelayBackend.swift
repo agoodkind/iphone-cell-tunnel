@@ -85,37 +85,6 @@
             }
         }
 
-        func stop() async {
-            if isSimulator {
-                await simulatorProbe.stop()
-                return
-            }
-            logger.notice("phone relay backend stop requested")
-            UIApplication.shared.isIdleTimerDisabled = false
-            guard let manager else {
-                logger.notice("phone relay backend stop ignored because no manager is loaded")
-                return
-            }
-            // On-demand keeps reconnecting the tunnel, so disable the rules and
-            // persist before stopping; start re-enables them via loadOrCreateManager.
-            manager.isOnDemandEnabled = false
-            do {
-                try await manager.saveToPreferences()
-            } catch {
-                logger.error(
-                    """
-                    phone relay backend failed disabling on-demand before stop \
-                    details=\(String(describing: error), privacy: .public) recovery=continue-stop
-                    """
-                )
-            }
-            guard let tunnelSession = manager.connection as? NETunnelProviderSession else {
-                logger.notice("phone relay backend stop ignored because session is unavailable")
-                return
-            }
-            tunnelSession.stopTunnel()
-        }
-
         // MARK: - Sampling
 
         func sample() async -> RelayStatusSample? {

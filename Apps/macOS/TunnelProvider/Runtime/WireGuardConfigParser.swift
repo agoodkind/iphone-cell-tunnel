@@ -6,10 +6,7 @@
 //  Copyright © 2026, all rights reserved.
 //
 
-import CellTunnelLog
 import Foundation
-
-private let logger = CellTunnelLog.logger(category: .daemon)
 
 // X25519 public/private key length in bytes per RFC 7748.
 private let wireGuardKeyLengthBytes = 32
@@ -22,7 +19,6 @@ private let ipv6PrefixLengthMax = 128
 private let addressPrefixSplitParts = 2
 
 enum WireGuardConfigError: LocalizedError {
-    case fileReadFailed(String)
     case invalidEndpoint(String)
     case invalidKeepalive(String)
     case invalidKey(String)
@@ -39,8 +35,6 @@ enum WireGuardConfigError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .fileReadFailed(let path):
-            return "wireguard config read failed path=\(path)"
         case .invalidEndpoint(let value):
             return "wireguard config invalid endpoint: \(value)"
         case .invalidKeepalive(let value):
@@ -82,14 +76,6 @@ struct WireGuardKey: Equatable, Sendable {
 struct WireGuardEndpoint: Equatable, Sendable {
     let host: String
     let port: UInt16
-    let isIPv6Literal: Bool
-
-    var hostPort: String {
-        if isIPv6Literal {
-            return "[\(host)]:\(port)"
-        }
-        return "\(host):\(port)"
-    }
 }
 
 // MARK: - WireGuardInterfaceSection
@@ -121,22 +107,6 @@ struct WireGuardClientConfig: Equatable, Sendable {
 // MARK: - WireGuardConfigParser
 
 enum WireGuardConfigParser {
-    static func load(from url: URL) throws -> WireGuardClientConfig {
-        let raw: String
-        do {
-            raw = try String(contentsOf: url, encoding: .utf8)
-        } catch {
-            logger.error(
-                """
-                wg tunnel config read failed path=\(url.path, privacy: .public) \
-                error=\(String(describing: error), privacy: .public)
-                """
-            )
-            throw WireGuardConfigError.fileReadFailed(url.path)
-        }
-        return try parse(raw)
-    }
-
     static func parse(_ text: String) throws -> WireGuardClientConfig {
         var interfaceSection = WireGuardInterfaceSection()
         var peerSection = WireGuardPeerSection()
@@ -330,7 +300,7 @@ enum WireGuardConfigParser {
             }
             let portString = String(value[value.index(after: afterClosing)...])
             let port = try parsePort(portString)
-            return WireGuardEndpoint(host: host, port: port, isIPv6Literal: true)
+            return WireGuardEndpoint(host: host, port: port)
         }
         guard let lastColon = value.lastIndex(of: ":") else {
             throw WireGuardConfigError.invalidEndpoint(value)
@@ -338,40 +308,8 @@ enum WireGuardConfigParser {
         let host = String(value[..<lastColon])
         let portString = String(value[value.index(after: lastColon)...])
         let port = try parsePort(portString)
-        let isIPv6 = host.contains(":")
-        return WireGuardEndpoint(host: host, port: port, isIPv6Literal: isIPv6)
+        return WireGuardEndpoint(host: host, port: port)
     }
 }
 
 // MARK: - WireGuardClientConfig
-
-extension WireGuardClientConfig {
-    func uapiConfig(endpointOverride: WireGuardEndpoint? = nil) -> String {
-        var lines: [String] = []
-        if let privateKey = interface.privateKey {
-            lines.append("private_key=\(privateKey.hexValue)")
-        }
-        if let listenPort = interface.listenPort {
-            lines.append("listen_port=\(listenPort)")
-        }
-        lines.append("replace_peers=true")
-        if let publicKey = peer.publicKey {
-            lines.append("public_key=\(publicKey.hexValue)")
-        }
-        if let presharedKey = peer.presharedKey {
-            lines.append("preshared_key=\(presharedKey.hexValue)")
-        }
-        let endpoint = endpointOverride ?? peer.endpoint
-        if let endpoint {
-            lines.append("endpoint=\(endpoint.hostPort)")
-        }
-        lines.append("replace_allowed_ips=true")
-        for prefix in peer.allowedIPs {
-            lines.append("allowed_ip=\(prefix.address)/\(prefix.prefixLength)")
-        }
-        if let keepalive = peer.persistentKeepaliveSeconds {
-            lines.append("persistent_keepalive_interval=\(keepalive)")
-        }
-        return lines.joined(separator: "\n") + "\n"
-    }
-}

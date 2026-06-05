@@ -39,12 +39,6 @@
             runtime.start()
         }
 
-        func stop() async {
-            await Task.yield()
-            logger.notice("simulator relay backend stopping in-process relay runtime")
-            runtime.stop()
-        }
-
         // MARK: - Sampling
 
         func sample() async -> RelayStatusSample? {
