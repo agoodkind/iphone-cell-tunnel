@@ -46,6 +46,11 @@ extension AgentTunnelController {
         await listener.setPeerPublicAddressHandler { addresses in
             exchange.received(addresses)
         }
+        // The iPhone carries its device name in each status push; store it so the
+        // snapshot reports it as `connectedPeerName`.
+        await listener.setPeerDeviceNameHandler { [weak self] name in
+            self?.peerName.withLock { $0 = name }
+        }
 
         controlListener = listener
         try await listener.start()
@@ -93,6 +98,8 @@ extension AgentTunnelController {
         publicRefreshTimer?.cancel()
         publicRefreshTimer = nil
         linkInfo.withLock { $0 = AgentLinkInfo() }
+        peerName.withLock { $0 = nil }
+        egressPath.withLock { $0 = EgressPath() }
         relayBridge.onEgressInterfaceChange = nil
         relayBridge.stop()
         onRelayActiveChange?(false)
@@ -115,10 +122,12 @@ extension AgentTunnelController {
     }
 
     // Watches the Mac's own default egress so a Wi-Fi switch or interface change
-    // re-probes the public address. The handler hops onto the actor.
+    // both stores the reading for the snapshot's `Device` rows and re-probes the
+    // public address. The handler hops onto the actor for the re-probe.
     func startEgressMonitor() {
         let monitor = EgressPathMonitor(requiredInterfaceType: nil)
-        monitor.onChange = { [weak self] _ in
+        monitor.onChange = { [weak self] path in
+            self?.egressPath.withLock { $0 = path }
             Task { await self?.refreshDeviceAddress() }
         }
         monitor.start()
@@ -162,6 +171,8 @@ extension AgentTunnelController {
         let publicAddresses = publicExchange?.resolved ?? PublicAddressExchange.Resolved()
         merged.devicePublicAddresses = publicAddresses.device
         merged.peerPublicAddresses = publicAddresses.peer
+        merged.connectedPeerName = peerName.withLock { $0 }
+        merged.cellularPath = CellularPathSnapshot(egress: egressPath.withLock { $0 })
         return merged
     }
 
@@ -193,8 +204,20 @@ extension AgentTunnelController {
                 await signalRouteState(true)
             }
         } else {
+            // The phone link is gone, so the connected peer name no longer holds; clear
+            // it so the snapshot stops reporting a peer that is not connected.
+            peerName.withLock { $0 = nil }
             await signalRouteState(false)
         }
+    }
+
+    // MARK: - Config reading
+
+    /// Reads the WireGuard config text at the given path, expanding a leading tilde,
+    /// so the agent can parse the server endpoint and start the control listener.
+    func readConfigText(at path: String) throws -> String {
+        let expanded = (path as NSString).expandingTildeInPath
+        return try String(contentsOf: URL(fileURLWithPath: expanded), encoding: .utf8)
     }
 
     // MARK: - Endpoint parsing

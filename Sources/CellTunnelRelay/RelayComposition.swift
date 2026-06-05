@@ -110,10 +110,15 @@ public struct RelayComposition {
     let cellular: CellularPathObserving
     let publicProbe: PublicAddressProbe
     let configuration: RelayConfiguration
+    /// This device's name, the host's `UIDevice.current.name`, carried in the status
+    /// push so the agent reports it as the connected peer. The relay framework stays
+    /// UIKit-free, so the host supplies the value.
+    let deviceName: String?
 
     /// The on-device graph: pin each connection to its physical interface. The egress
     /// interface type comes from `configuration`, the source of truth, not a literal.
     public static func pinned(
+        deviceName: String? = nil,
         configuration: RelayConfiguration = .default
     ) -> RelayComposition {
         logger.notice("relay composition built mode=\("pinned", privacy: .public)")
@@ -124,7 +129,8 @@ public struct RelayComposition {
             cellular: CellularPathObserver(
                 requiredInterfaceType: configuration.egressInterfaceType),
             publicProbe: PublicAddressProbe(),
-            configuration: configuration
+            configuration: configuration,
+            deviceName: deviceName
         )
     }
 
@@ -132,6 +138,7 @@ public struct RelayComposition {
     /// is no cellular radio, so the egress is unpinned; the carrying-link preference
     /// still comes from `configuration`.
     public static func hostNetwork(
+        deviceName: String? = nil,
         configuration: RelayConfiguration = .default
     ) -> RelayComposition {
         logger.notice("relay composition built mode=\("host-network", privacy: .public)")
@@ -141,7 +148,8 @@ public struct RelayComposition {
             probe: RelayPathProbe(),
             cellular: CellularPathObserver(requiredInterfaceType: nil),
             publicProbe: PublicAddressProbe(),
-            configuration: configuration
+            configuration: configuration,
+            deviceName: deviceName
         )
     }
 }

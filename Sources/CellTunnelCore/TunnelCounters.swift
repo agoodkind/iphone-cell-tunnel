@@ -75,4 +75,20 @@ public struct CellularPathSnapshot: Codable, Equatable, Sendable {
         self.ipv6Address = ipv6Address
         self.transportDisplayName = transportDisplayName
     }
+
+    /// Maps a shared egress reading to the status snapshot, renaming the address pair
+    /// into the per-family fields. Both the iPhone cellular observer and the Mac agent
+    /// build their `Device` rows through this one mapping.
+    public init(egress: EgressPath) {
+        self.init(
+            isSatisfied: egress.isSatisfied,
+            supportsIPv4: egress.supportsIPv4,
+            supportsIPv6: egress.supportsIPv6,
+            interfaceName: egress.interfaceName,
+            interfaceIndex: egress.interfaceIndex,
+            ipv4Address: egress.addresses.ipv4,
+            ipv6Address: egress.addresses.ipv6,
+            transportDisplayName: egress.transportDisplayName
+        )
+    }
 }

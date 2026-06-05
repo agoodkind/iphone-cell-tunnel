@@ -79,6 +79,9 @@ actor AgentControlListener {
     /// Invoked with the iPhone's measured public address received over the control
     /// link, so the public-address exchange stores it as the peer's address.
     private var onPeerPublicAddress: (@Sendable (AddressPair) -> Void)?
+    /// Invoked with the iPhone's device name carried in its status push, so the
+    /// controller reports it as the connected peer name.
+    private var onPeerDeviceName: (@Sendable (String) -> Void)?
     /// This host's latest measured public address, set by the controller as it
     /// probes. It is sent on each accepted control connection once that connection's
     /// handshake completes, so a freshly connected peer receives it at once.
@@ -292,6 +295,7 @@ actor AgentControlListener {
                 hasCellularPath=\(snapshot.hasCellularPath, privacy: .public)
                 """
             )
+            surface(status: snapshot)
             try await awaitAcknowledge(on: connection, requestKind: requestKind)
         case .publicAddress(let payload):
             onPeerPublicAddress?(payload.addresses)
@@ -356,8 +360,49 @@ actor AgentControlListener {
     private func continueReceiveLoop(on connection: NWConnection) {
         startReceiveLoop(on: connection)
     }
+}
 
-    private func handleStreamPayload(_ data: Data) {
+// MARK: - Handlers and public-address send
+
+extension AgentControlListener {
+    func tcpOptions() -> NWProtocolTCP.Options {
+        let options = NWProtocolTCP.Options()
+        options.enableKeepalive = true
+        options.keepaliveIdle = tcpKeepaliveIdleSeconds
+        options.keepaliveInterval = tcpKeepaliveIntervalSeconds
+        options.keepaliveCount = tcpKeepaliveRetryCount
+        options.noDelay = true
+        return options
+    }
+
+    /// Registers the routing-choice handler before the listener starts.
+    func setRoutingHandler(_ handler: @escaping @Sendable (Bool) -> Void) {
+        onSetRoutingEnabled = handler
+    }
+
+    /// Registers the peer-public-address handler before the listener starts.
+    func setPeerPublicAddressHandler(_ handler: @escaping @Sendable (AddressPair) -> Void) {
+        onPeerPublicAddress = handler
+    }
+
+    /// Registers the peer-device-name handler before the listener starts.
+    func setPeerDeviceNameHandler(_ handler: @escaping @Sendable (String) -> Void) {
+        onPeerDeviceName = handler
+    }
+
+    /// Surfaces the fields a received status carries to the controller: the iPhone's
+    /// device name when present. Both the pre-acknowledge status and the status-loop
+    /// status flow through here, so the surfacing lives in one place.
+    func surface(status snapshot: RelayControlMessage.Status) {
+        if let deviceName = snapshot.deviceName, !deviceName.isEmpty {
+            onPeerDeviceName?(deviceName)
+        }
+    }
+
+    /// Decodes one framed message from the status receive loop and routes it: a status
+    /// push surfaces its fields, a routing change drives the handler, a public address
+    /// updates the exchange, and the rest are logged.
+    func handleStreamPayload(_ data: Data) {
         let message: RelayControlMessage
         do {
             message = try RelayControlMessageCodec.decode(data)
@@ -375,6 +420,7 @@ actor AgentControlListener {
                 interface=\(snapshot.cellularInterface ?? "none", privacy: .public)
                 """
             )
+            surface(status: snapshot)
         case .error(let failure):
             logger.error(
                 """
@@ -404,30 +450,6 @@ actor AgentControlListener {
             )
             onPeerPublicAddress?(payload.addresses)
         }
-    }
-}
-
-// MARK: - Handlers and public-address send
-
-extension AgentControlListener {
-    func tcpOptions() -> NWProtocolTCP.Options {
-        let options = NWProtocolTCP.Options()
-        options.enableKeepalive = true
-        options.keepaliveIdle = tcpKeepaliveIdleSeconds
-        options.keepaliveInterval = tcpKeepaliveIntervalSeconds
-        options.keepaliveCount = tcpKeepaliveRetryCount
-        options.noDelay = true
-        return options
-    }
-
-    /// Registers the routing-choice handler before the listener starts.
-    func setRoutingHandler(_ handler: @escaping @Sendable (Bool) -> Void) {
-        onSetRoutingEnabled = handler
-    }
-
-    /// Registers the peer-public-address handler before the listener starts.
-    func setPeerPublicAddressHandler(_ handler: @escaping @Sendable (AddressPair) -> Void) {
-        onPeerPublicAddress = handler
     }
 
     /// Records this host's latest measured public address, sent on each accepted

@@ -75,6 +75,9 @@ public final class RelayRuntime: @unchecked Sendable {
     private var publicExchange: PublicAddressExchange?
     private var publicRefreshTimer: DispatchSourceTimer?
     private let preferredCarryingInterface: String?
+    /// This device's name, supplied by the host, sent in each status push so the
+    /// agent reports it as the connected peer.
+    private let deviceName: String?
     private let statusState = Mutex(RelayStatusState())
 
     public init(composition: RelayComposition) {
@@ -84,6 +87,7 @@ public final class RelayRuntime: @unchecked Sendable {
         probe = composition.probe
         publicProbe = composition.publicProbe
         preferredCarryingInterface = composition.configuration.preferredCarryingInterface
+        deviceName = composition.deviceName
     }
 
     // MARK: - Lifecycle
@@ -218,6 +222,20 @@ public final class RelayRuntime: @unchecked Sendable {
         )
     }
 
+    // Builds one status push from the live cellular path, the forwarder metrics, the
+    // last error, and the host-supplied device name, which the iPhone sends to the
+    // agent so the agent reports this device as the connected peer.
+    private func currentStatusPush(deviceName: String?) -> RelayControlMessage.Status {
+        let cellularPath = cellular.snapshot
+        return RelayControlMessage.Status(
+            hasCellularPath: cellularPath.isSatisfied,
+            cellularInterface: cellularPath.interfaceName,
+            lastError: statusState.withLock { $0.lastError },
+            counters: forwarder.metrics.snapshot(),
+            deviceName: deviceName
+        )
+    }
+
     // MARK: - Wiring
 
     private func configureForwarderCallbacks() {
@@ -265,7 +283,7 @@ public final class RelayRuntime: @unchecked Sendable {
     private func startControlClient() {
         let client = self.control
         let relayForwarder = self.forwarder
-        let observer = self.cellular
+        let hostDeviceName = self.deviceName
         Task { @MainActor [weak self] in
             client.configure(
                 onSetServerEndpoint: { [weak self] endpoint in
@@ -299,17 +317,12 @@ public final class RelayRuntime: @unchecked Sendable {
                         "relay peer name resolved peer=\(name ?? "none", privacy: .public)"
                     )
                 },
-                statusProvider: {
-                    let lastError = self.flatMap { runtime in
-                        runtime.statusState.withLock { $0.lastError }
-                    }
-                    let cellularPath = observer.snapshot
-                    return RelayControlMessage.Status(
-                        hasCellularPath: cellularPath.isSatisfied,
-                        cellularInterface: cellularPath.interfaceName,
-                        lastError: lastError,
-                        counters: relayForwarder.metrics.snapshot()
-                    )
+                statusProvider: { [weak self, hostDeviceName] in
+                    self?.currentStatusPush(deviceName: hostDeviceName)
+                        ?? RelayControlMessage.Status(
+                            hasCellularPath: false,
+                            deviceName: hostDeviceName
+                        )
                 }
             )
             client.setPeerPublicAddressHandler { [weak self] addresses in

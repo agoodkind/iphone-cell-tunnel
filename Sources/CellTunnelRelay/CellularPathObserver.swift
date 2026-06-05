@@ -48,7 +48,7 @@ final class CellularPathObserver: @unchecked Sendable {
             guard let self else {
                 return
             }
-            latestSnapshot.withLock { $0 = Self.snapshot(from: path) }
+            latestSnapshot.withLock { $0 = CellularPathSnapshot(egress: path) }
             pathChangeHandler.withLock { $0 }?()
         }
         monitor.start()
@@ -59,20 +59,5 @@ final class CellularPathObserver: @unchecked Sendable {
         monitor.stop()
         latestSnapshot.withLock { $0 = CellularPathSnapshot() }
         logger.info("cellular path observer stopped")
-    }
-
-    // Maps the shared egress reading to the cellular status snapshot the screen
-    // renders, renaming the address pair into the snapshot's per-family fields.
-    private static func snapshot(from path: EgressPath) -> CellularPathSnapshot {
-        CellularPathSnapshot(
-            isSatisfied: path.isSatisfied,
-            supportsIPv4: path.supportsIPv4,
-            supportsIPv6: path.supportsIPv6,
-            interfaceName: path.interfaceName,
-            interfaceIndex: path.interfaceIndex,
-            ipv4Address: path.addresses.ipv4,
-            ipv6Address: path.addresses.ipv6,
-            transportDisplayName: path.transportDisplayName
-        )
     }
 }

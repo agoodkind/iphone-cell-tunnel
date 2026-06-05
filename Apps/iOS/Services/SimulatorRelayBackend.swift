@@ -11,6 +11,7 @@
     import CellTunnelLog
     import CellTunnelRelay
     import Foundation
+    import UIKit
 
     private let logger = CellTunnelLog.logger(category: .relay)
 
@@ -26,7 +27,9 @@
     /// connection egresses over the host network instead of a pinned interface.
     @MainActor
     final class SimulatorRelayBackend: RelayControlBackend {
-        private let runtime = RelayRuntime(composition: .hostNetwork())
+        private let runtime = RelayRuntime(
+            composition: .hostNetwork(deviceName: UIDevice.current.name)
+        )
 
         // MARK: - Lifecycle
 

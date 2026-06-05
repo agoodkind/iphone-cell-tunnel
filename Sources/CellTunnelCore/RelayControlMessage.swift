@@ -80,18 +80,24 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
         public var cellularInterface: String?
         public var lastError: String?
         public var counters: TunnelCounters?
+        /// The sending device's name, the iPhone's `UIDevice.current.name`, supplied
+        /// by the host. The agent reports it as the connected peer name, so the Mac
+        /// shows which iPhone is connected.
+        public var deviceName: String?
 
         public init(
             hasCellularPath: Bool,
             cellularInterface: String? = nil,
             lastError: String? = nil,
             counters: TunnelCounters? = nil,
+            deviceName: String? = nil,
             version: Int = relayControlWireVersion
         ) {
             self.hasCellularPath = hasCellularPath
             self.cellularInterface = cellularInterface
             self.lastError = lastError
             self.counters = counters
+            self.deviceName = deviceName
             self.version = version
         }
     }

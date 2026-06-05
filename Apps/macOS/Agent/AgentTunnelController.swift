@@ -48,6 +48,14 @@ actor AgentTunnelController {
     /// read into the served snapshot. Nonisolated because the `Mutex` is its own
     /// synchronization and the bridge callback runs off the actor.
     nonisolated let linkInfo = Mutex(AgentLinkInfo())
+    /// The connected iPhone's name, written from the listener's status handler off
+    /// the actor and read into the served snapshot as `connectedPeerName`. Cleared
+    /// when the phone link drops.
+    nonisolated let peerName = Mutex<String?>(nil)
+    /// The Mac's latest egress reading, written from the egress monitor off the actor
+    /// and mapped into the served snapshot's `cellularPath`, so the Mac `Device`
+    /// section reports the Mac's own egress.
+    nonisolated let egressPath = Mutex(EgressPath())
     /// The public-address exchange with the iPhone, read into the served snapshot.
     var publicExchange: PublicAddressExchange?
     /// Watches the Mac's own egress path so a Wi-Fi or interface change re-probes the
@@ -495,11 +503,6 @@ extension AgentTunnelController {
             peerState: configured ? .wireGuardConfigured : .notSelected,
             lastError: status == .invalid ? "vpn configuration not approved" : nil
         )
-    }
-
-    func readConfigText(at path: String) throws -> String {
-        let expanded = (path as NSString).expandingTildeInPath
-        return try String(contentsOf: URL(fileURLWithPath: expanded), encoding: .utf8)
     }
 }
 

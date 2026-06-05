@@ -47,8 +47,16 @@ private struct UncheckedSendableBox<Value>: @unchecked Sendable {
 /// Extension host has no launchable `nehelper`.
 final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     // This Network Extension is the device composition root: it builds the pinned
-    // graph, where each connection binds to its physical interface.
-    private let runtime = RelayRuntime(composition: .pinned())
+    // graph, where each connection binds to its physical interface. The device name
+    // comes from the app group the host app published it to, since the extension has
+    // no UIKit to read `UIDevice.current.name` itself.
+    private let runtime = RelayRuntime(
+        composition: .pinned(
+            deviceName: resolvedRelayServiceDeviceName(
+                defaults: UserDefaults(suiteName: cellTunnelAppGroupIdentifier) ?? .standard
+            )
+        )
+    )
 
     // Held so the stop can complete after teardown finishes; invoked once.
     private var stopCompletion: (() -> Void)?
