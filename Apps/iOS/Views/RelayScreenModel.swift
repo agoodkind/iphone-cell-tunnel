@@ -7,12 +7,18 @@
 //
 
 import CellTunnelCore
+import CellTunnelLog
 import SwiftUI
+
+private let logger = CellTunnelLog.logger(category: .app)
 
 // MARK: - Constants
 
 private let emptyValuePlaceholder = "(none)"
 private let wireGuardProtocolName = "WireGuard"
+private let dataSectionTitle = "Data"
+private let currentSpeedSectionTitle = "Current Speed"
+private let bytesCountStyle = ByteCountFormatStyle(style: .file, spellsOutZero: false)
 
 // MARK: - ConnectionRow
 
@@ -155,9 +161,22 @@ struct RelayScreenModel {
         }
     }
 
-    /// Whether the `Route traffic` switch reads as on. On means routing.
-    var routeTrafficEnabled: Bool {
-        controller.routeState == .installed
+    /// The `Route traffic` switch binding: it reads the routing state and writes the
+    /// user's choice through the controller, which forwards it to the agent. Both the
+    /// iPhone list and the Mac dashboard bind the switch to this, so the glue lives once.
+    var routeTrafficBinding: Binding<Bool> {
+        Binding(
+            get: { controller.routeState == .installed },
+            set: { newValue in
+                Task { await controller.setRouteTraffic(enabled: newValue) }
+            }
+        )
+    }
+
+    /// Brings the relay session up, the action behind both `Set Up` and `Retry`.
+    func startSession() {
+        logger.notice("relay screen start requested")
+        Task { await controller.start() }
     }
 
     // MARK: - Action
@@ -184,49 +203,102 @@ struct RelayScreenModel {
         return message
     }
 
-    // MARK: - Current Speed
+    // MARK: - Sections
 
-    /// The download rate, in Mbps, for the `Current Speed` section.
-    var downloadMbps: Double {
-        controller.downloadMbps
-    }
-
-    /// The upload rate, in Mbps, for the `Current Speed` section.
-    var uploadMbps: Double {
-        controller.uploadMbps
+    /// Every section the status screen renders, in order: the lifetime `Data`, the
+    /// live `Current Speed` while routing, then the connection sections that have a
+    /// value. Both the iPhone list and the Mac dashboard render this one list, so the
+    /// section set and ordering live in one place.
+    var sections: [ConnectionSection] {
+        var result = [dataSection]
+        if let currentSpeedSection {
+            result.append(currentSpeedSection)
+        }
+        result.append(contentsOf: connectionSections)
+        return result
     }
 
     // MARK: - Data
 
-    /// The lifetime bytes sent, received, and their sum for the `Data` section. The
-    /// controller accumulates each direction across sessions, so the figures persist
-    /// rather than resetting when a session restarts.
-    var lifetimeTransferredBytes: UInt64 {
-        controller.lifetimeTransferredBytes
+    // The lifetime bytes sent, received, and their sum. The controller accumulates
+    // each direction across sessions, so the figures persist across a restart.
+    private var dataSection: ConnectionSection {
+        ConnectionSection(
+            title: dataSectionTitle,
+            rows: [
+                ConnectionRow(
+                    label: "Transferred",
+                    value: formattedBytes(controller.lifetimeTransferredBytes)
+                ),
+                ConnectionRow(
+                    label: "Received",
+                    value: formattedBytes(controller.lifetimeReceivedBytes)
+                ),
+                ConnectionRow(
+                    label: "Total",
+                    value: formattedBytes(controller.lifetimeTotalBytes)
+                ),
+            ]
+        )
     }
 
-    var lifetimeReceivedBytes: UInt64 {
-        controller.lifetimeReceivedBytes
-    }
+    // MARK: - Current Speed
 
-    var lifetimeTotalBytes: UInt64 {
-        controller.lifetimeTotalBytes
+    // The live Up and Down rates, shown only in the routing state where the Mac's
+    // traffic crosses the tunnel; `nil` otherwise so the section is absent.
+    private var currentSpeedSection: ConnectionSection? {
+        guard state.showsSpeed else {
+            return nil
+        }
+        return ConnectionSection(
+            title: currentSpeedSectionTitle,
+            rows: [
+                ConnectionRow(label: "Up", value: formattedRate(controller.uploadMbps)),
+                ConnectionRow(label: "Down", value: formattedRate(controller.downloadMbps)),
+            ]
+        )
     }
 
     // MARK: - Connection
 
-    /// The ordered connection sections that have something to show. A section with no
-    /// known value collapses, so a not-connected screen shows only what it knows and
-    /// the sections animate in and out as values arrive. A section counts as having
-    /// data when any non-qualifier row holds a value other than the placeholder.
+    /// The ordered connection sections that have something to show, each carrying only
+    /// its visible rows. A section with no known value collapses and a placeholder row
+    /// is dropped, so a not-connected screen shows only what it knows and no `(none)`
+    /// row appears; the sections animate in and out as values arrive. A section counts
+    /// as having data when any non-qualifier row holds a value other than the
+    /// placeholder, and a qualifier such as the protocol stays whenever its section does.
     var connectionSections: [ConnectionSection] {
-        [connectionSection, deviceSection, peerSection, relaySection].filter(hasData)
+        [connectionSection, deviceSection, peerSection, relaySection]
+            .filter(hasData)
+            .map(visibleRows)
     }
 
     private func hasData(_ section: ConnectionSection) -> Bool {
         section.rows.contains { row in
             !row.isQualifier && row.value != emptyValuePlaceholder
         }
+    }
+
+    private func visibleRows(_ section: ConnectionSection) -> ConnectionSection {
+        ConnectionSection(
+            title: section.title,
+            rows: section.rows.filter { row in
+                row.isQualifier || row.value != emptyValuePlaceholder
+            }
+        )
+    }
+
+    // MARK: - Formatting
+
+    private func formattedRate(_ value: Double) -> String {
+        String(format: "%.1f Mbps", value)
+    }
+
+    // ByteCountFormatStyle formats Int64, so the unsigned lifetime total is clamped
+    // into the signed range before formatting; real byte totals stay well inside it.
+    private func formattedBytes(_ value: UInt64) -> String {
+        let clamped = Int64(min(value, UInt64(Int64.max)))
+        return bytesCountStyle.format(clamped)
     }
 
     // The peer the phone is connected to, the carrying link transport with its raw

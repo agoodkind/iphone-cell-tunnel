@@ -10,12 +10,17 @@ import SwiftUI
 
 // MARK: - PhoneContentView
 
-/// The root content view for both platforms. It hosts the one shared status screen,
-/// which reads the `RelayController` from the environment, so the iPhone and the Mac
-/// render the same screen from the same source.
+/// The root content view. Both platforms read the same `RelayController` from the
+/// environment; only the layout diverges. The iPhone renders the list-form
+/// `RelayStatusScreen`, and the Mac renders the sidebar-and-dashboard
+/// `MacStatusScreen`.
 struct PhoneContentView: View {
     var body: some View {
-        RelayStatusScreen()
+        #if targetEnvironment(macCatalyst)
+            MacStatusScreen()
+        #else
+            RelayStatusScreen()
+        #endif
     }
 }
 

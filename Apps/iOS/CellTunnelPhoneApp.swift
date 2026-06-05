@@ -12,6 +12,13 @@ import SwiftUI
 
 private let logger = CellTunnelLog.logger(category: .app)
 
+#if targetEnvironment(macCatalyst)
+    private let macWindowDefaultWidth: CGFloat = 760
+    private let macWindowDefaultHeight: CGFloat = 520
+    private let macWindowMinimumWidth: CGFloat = 600
+    private let macWindowMinimumHeight: CGFloat = 420
+#endif
+
 // MARK: - CellTunnelPhoneApp
 
 /// The app entry point for both platforms. The iPhone build drives the on-device
@@ -58,7 +65,15 @@ struct CellTunnelPhoneApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     handleScenePhase(phase)
                 }
+                #if targetEnvironment(macCatalyst)
+                    // The Mac window opens wide enough for the sidebar and the card grid,
+                    // and resists shrinking below a usable two-pane width.
+                    .frame(minWidth: macWindowMinimumWidth, minHeight: macWindowMinimumHeight)
+                #endif
         }
+        #if targetEnvironment(macCatalyst)
+            .defaultSize(width: macWindowDefaultWidth, height: macWindowDefaultHeight)
+        #endif
     }
 
     // The tunnel is always-on via on-demand, so backgrounding never stops it; it
