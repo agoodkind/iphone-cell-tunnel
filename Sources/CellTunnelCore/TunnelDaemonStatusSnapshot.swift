@@ -315,10 +315,24 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     public var cellularPath: CellularPathSnapshot?
     public var connectedPeerName: String?
     public var relayState: String?
-    /// The Mac-to-iPhone link transport carrying traffic, by raw interface
-    /// identifier (mapped to a defined name for display), or `nil` when not yet
-    /// surfaced by the link source.
+    /// The carrying link's raw interface identifier, shown beside its transport
+    /// class on the `Connected via` row, or `nil` when no link is up.
     public var localLinkInterfaceName: String?
+    /// The carrying link's transport class, the source of the `Connected via`
+    /// transport word, or `nil` when no link is up.
+    public var localLinkClass: RelayLinkClass?
+    /// This host's effective public address, measured by its own probe, shown under
+    /// `Device / Public`, or `nil` before the probe answers.
+    public var devicePublicAddresses: AddressPair?
+    /// The peer's effective public address, received over the control link, shown
+    /// under `Peer / Public`, or `nil` before the peer reports it.
+    public var peerPublicAddresses: AddressPair?
+    /// The carrying interface's own addresses on this host, shown under
+    /// `Connection / Local link`, or `nil` when no link is up.
+    public var localLinkAddresses: AddressPair?
+    /// The peer's address on the carrying link, the connection's remote endpoint,
+    /// shown under `Connection / Peer link`, or `nil` when no link is up.
+    public var peerLinkAddresses: AddressPair?
     /// The configured WireGuard endpoint hostname, shown as the relay host, or
     /// `nil` when not yet surfaced.
     public var relayHost: String?
@@ -344,6 +358,11 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         connectedPeerName: String? = nil,
         relayState: String? = nil,
         localLinkInterfaceName: String? = nil,
+        localLinkClass: RelayLinkClass? = nil,
+        devicePublicAddresses: AddressPair? = nil,
+        peerPublicAddresses: AddressPair? = nil,
+        localLinkAddresses: AddressPair? = nil,
+        peerLinkAddresses: AddressPair? = nil,
         relayHost: String? = nil,
         relayServerIPv4Address: String? = nil,
         relayServerIPv6Address: String? = nil
@@ -362,6 +381,11 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         self.connectedPeerName = connectedPeerName
         self.relayState = relayState
         self.localLinkInterfaceName = localLinkInterfaceName
+        self.localLinkClass = localLinkClass
+        self.devicePublicAddresses = devicePublicAddresses
+        self.peerPublicAddresses = peerPublicAddresses
+        self.localLinkAddresses = localLinkAddresses
+        self.peerLinkAddresses = peerLinkAddresses
         self.relayHost = relayHost
         self.relayServerIPv4Address = relayServerIPv4Address
         self.relayServerIPv6Address = relayServerIPv6Address

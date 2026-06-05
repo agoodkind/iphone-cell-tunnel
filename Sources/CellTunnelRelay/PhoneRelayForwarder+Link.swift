@@ -194,14 +194,20 @@ extension PhoneRelayForwarder {
         let chosen = RelayLinkPolicy.chooseCarrying(
             preferred: preferredInterface, openLinks: Array(openReady)
         )
+        let carryingConnection = chosen.flatMap { macLinks[$0]?.connection }
         if chosen != egressInterfaceName {
+            let chosenClass = chosen.flatMap { macLinks[$0]?.linkClass }
+            let localAddresses =
+                carryingConnection?.currentPath?.localEndpoint?.addressPair ?? .empty
+            let peerAddresses =
+                carryingConnection?.currentPath?.remoteEndpoint?.addressPair ?? .empty
             logger.notice(
                 "phone relay carrying link interface=\(chosen ?? "none", privacy: .public)"
             )
-            onEgressInterfaceChange?(chosen)
+            onEgressInterfaceChange?(chosen, chosenClass, localAddresses, peerAddresses)
         }
         egressInterfaceName = chosen
-        egressConnection = chosen.flatMap { macLinks[$0]?.connection }
+        egressConnection = carryingConnection
         updatePeerState(hasEgress: egressConnection != nil)
     }
 
@@ -211,5 +217,21 @@ extension PhoneRelayForwarder {
         }
         hasLivePeer = hasEgress
         onPeerChange?(hasEgress)
+    }
+
+    /// Sets the carrying-link interface override from the configuration, off the
+    /// packet path. Nil restores score-order selection. The value originates in
+    /// `RelayConfiguration`, the source of truth, not a literal here.
+    func applyPreferredInterface(_ name: String?) {
+        queue.async { [weak self] in
+            guard let self else {
+                return
+            }
+            preferredInterface = name
+            logger.notice(
+                "phone relay preferred interface set name=\(name ?? "none", privacy: .public)"
+            )
+            recomputeEgress()
+        }
     }
 }

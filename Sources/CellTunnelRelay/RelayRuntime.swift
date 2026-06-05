@@ -15,6 +15,7 @@ import Synchronization
 // MARK: - Constants
 
 private let logger = CellTunnelLog.logger(category: .relay)
+private let publicAddressRefreshIntervalSeconds = 60
 
 // MARK: - RelayStatusState
 
@@ -44,8 +45,12 @@ private struct RelayStatusState {
     /// The server endpoint hostname resolved to its A and AAAA records, shown as the
     /// relay server IPv4 and IPv6.
     var relayResolved: HostAddressResolver.Resolved?
-    /// The carrying link's interface, reported as the connected-via transport.
+    /// The carrying link's interface, transport class, and addresses, reported on the
+    /// `Connection` section.
     var localLinkInterfaceName: String?
+    var localLinkClass: RelayLinkClass?
+    var localLinkAddresses: AddressPair?
+    var peerLinkAddresses: AddressPair?
 }
 
 // MARK: - RelayRuntime
@@ -66,6 +71,10 @@ public final class RelayRuntime: @unchecked Sendable {
     private let control: RelayControlChannel
     private let cellular: CellularPathObserving
     private let probe: RelayDiscovering
+    private let publicProbe: PublicAddressProbe
+    private var publicExchange: PublicAddressExchange?
+    private var publicRefreshTimer: DispatchSourceTimer?
+    private let preferredCarryingInterface: String?
     private let statusState = Mutex(RelayStatusState())
 
     public init(composition: RelayComposition) {
@@ -73,6 +82,8 @@ public final class RelayRuntime: @unchecked Sendable {
         control = composition.control
         cellular = composition.cellular
         probe = composition.probe
+        publicProbe = composition.publicProbe
+        preferredCarryingInterface = composition.configuration.preferredCarryingInterface
     }
 
     // MARK: - Lifecycle
@@ -81,27 +92,88 @@ public final class RelayRuntime: @unchecked Sendable {
     /// status callbacks, the discovery probe that feeds the forwarder, and the
     /// control client that dials the agent for the WireGuard server endpoint.
     public func start() {
+        buildPublicExchange()
+        cellular.setPathChangeHandler { [weak self] in
+            self?.refreshDevicePublicAddress()
+        }
         cellular.start()
         configureForwarderCallbacks()
         forwarder.start()
+        forwarder.applyPreferredInterface(preferredCarryingInterface)
         configureTransportSelection()
         startControlClient()
+        startPublicRefreshTimer()
         statusState.withLock { $0.running = true }
         logger.notice("relay runtime started")
+    }
+
+    // Builds the public-address exchange: a probe-and-hold value with no connection
+    // state. The runtime probes this device and sends the result over the control
+    // link on each trigger, and stores the peer's address received over that link.
+    private func buildPublicExchange() {
+        publicExchange = PublicAddressExchange(probe: publicProbe)
+    }
+
+    // Probes this device's public address and sends it to the agent over the control
+    // link. Driven by the control connection becoming ready, an egress path change,
+    // and the periodic backstop, so the address stays current as the network moves.
+    private func refreshDevicePublicAddress() {
+        guard let exchange = publicExchange else {
+            return
+        }
+        let channel = control
+        Task {
+            let device = await exchange.probeDevice()
+            await MainActor.run { channel.sendPublicAddress(device) }
+        }
+    }
+
+    // A repeating dispatch timer re-probes the public address on a slow backstop, so
+    // a missed path event cannot leave the displayed address stale. Off the main
+    // thread, so the handler is `@Sendable` and hops as needed.
+    private func startPublicRefreshTimer() {
+        publicRefreshTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(
+            deadline: .now() + .seconds(publicAddressRefreshIntervalSeconds),
+            repeating: .seconds(publicAddressRefreshIntervalSeconds)
+        )
+        timer.setEventHandler { @Sendable [weak self] in
+            self?.refreshDevicePublicAddress()
+        }
+        timer.resume()
+        publicRefreshTimer = timer
+        logger.notice(
+            """
+            public address refresh timer started \
+            intervalSeconds=\(publicAddressRefreshIntervalSeconds, privacy: .public)
+            """
+        )
+    }
+
+    private func stopPublicRefreshTimer() {
+        publicRefreshTimer?.cancel()
+        publicRefreshTimer = nil
     }
 
     /// Tears the relay down and resets the status to stopped.
     public func stop() {
         let client = self.control
         Task { @MainActor in client.stop() }
+        stopPublicRefreshTimer()
         probe.stop()
         forwarder.stop()
         cellular.stop()
+        publicExchange = nil
         statusState.withLock { state in
             state.running = false
             state.connectedPeerName = nil
             state.relayState = WireGuardDatagramRelayState.stopped.displayName
             state.routeInstalled = false
+            state.localLinkInterfaceName = nil
+            state.localLinkClass = nil
+            state.localLinkAddresses = nil
+            state.peerLinkAddresses = nil
         }
         logger.notice("relay runtime torn down")
     }
@@ -124,6 +196,7 @@ public final class RelayRuntime: @unchecked Sendable {
     /// path, and the forwarder metrics.
     public func statusSnapshot() -> TunnelDaemonStatusSnapshot {
         let state = statusState.withLock { $0 }
+        let publicAddresses = publicExchange?.resolved ?? PublicAddressExchange.Resolved()
         return TunnelDaemonStatusSnapshot(
             running: state.running,
             routeState: state.routeInstalled ? .installed : .notInstalled,
@@ -134,6 +207,11 @@ public final class RelayRuntime: @unchecked Sendable {
             connectedPeerName: state.connectedPeerName,
             relayState: state.relayState,
             localLinkInterfaceName: state.localLinkInterfaceName,
+            localLinkClass: state.localLinkClass,
+            devicePublicAddresses: publicAddresses.device,
+            peerPublicAddresses: publicAddresses.peer,
+            localLinkAddresses: state.localLinkAddresses,
+            peerLinkAddresses: state.peerLinkAddresses,
             relayHost: state.serverEndpoint?.host,
             relayServerIPv4Address: state.relayResolved?.ipv4,
             relayServerIPv6Address: state.relayResolved?.ipv6
@@ -158,10 +236,18 @@ public final class RelayRuntime: @unchecked Sendable {
             }
             logger.notice("phone relay live peer changed live=\(live, privacy: .public)")
         }
-        forwarder.onEgressInterfaceChange = { [weak self] name in
-            self?.statusState.withLock { $0.localLinkInterfaceName = name }
+        forwarder.onEgressInterfaceChange = { [weak self] name, linkClass, local, peer in
+            self?.statusState.withLock { state in
+                state.localLinkInterfaceName = name
+                state.localLinkClass = linkClass
+                state.localLinkAddresses = local
+                state.peerLinkAddresses = peer
+            }
             logger.notice(
-                "phone relay egress interface changed interface=\(name ?? "none", privacy: .public)"
+                """
+                phone relay carrying link interface=\(name ?? "none", privacy: .public) \
+                class=\(linkClass?.rawValue ?? "none", privacy: .public)
+                """
             )
         }
     }
@@ -190,7 +276,9 @@ public final class RelayRuntime: @unchecked Sendable {
                 onConnectionDropped: { [weak self] in
                     relayForwarder.resetLinks()
                     // The control link dropped, so any installed routes no longer
-                    // hold and the peer is gone; clear both until the agent reconnects.
+                    // hold and the peer is gone; clear the route, the peer name, and
+                    // the peer's public address until the agent reconnects.
+                    self?.publicExchange?.clearPeer()
                     self?.statusState.withLock { state in
                         state.routeInstalled = false
                         state.controlPeerName = nil
@@ -224,6 +312,12 @@ public final class RelayRuntime: @unchecked Sendable {
                     )
                 }
             )
+            client.setPeerPublicAddressHandler { [weak self] addresses in
+                self?.publicExchange?.received(addresses)
+            }
+            client.setConnectionReadyHandler { [weak self] in
+                self?.refreshDevicePublicAddress()
+            }
             client.start()
         }
     }

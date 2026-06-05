@@ -103,9 +103,13 @@ final class PhoneRelayForwarder: @unchecked Sendable {
     /// Fired with whether a live Mac data link exists. It carries the liveness; the
     /// displayed peer name comes from the control service.
     var onPeerChange: (@Sendable (Bool) -> Void)?
-    /// Fired with the carrying link's interface identifier whenever the egress
-    /// choice changes, so the status screen can show which transport is in use.
-    var onEgressInterfaceChange: (@Sendable (String?) -> Void)?
+    /// Fired whenever the carrying link changes, with its interface identifier, its
+    /// transport class, and the local and peer addresses of the carrying connection.
+    /// Both address pairs come from the same connection's path endpoints, so the
+    /// `Connection` rows describe one connection rather than mixing an interface
+    /// address with an endpoint address.
+    var onEgressInterfaceChange:
+        (@Sendable (String?, RelayLinkClass?, AddressPair, AddressPair) -> Void)?
 
     // MARK: - Initialization
 

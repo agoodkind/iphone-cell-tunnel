@@ -30,9 +30,12 @@ protocol RelayControlChannel: Sendable {
         onPeerName: @escaping @MainActor (String?) -> Void,
         statusProvider: @escaping @MainActor () -> RelayControlMessage.Status
     )
+    func setPeerPublicAddressHandler(_ handler: @escaping @MainActor (AddressPair) -> Void)
+    func setConnectionReadyHandler(_ handler: @escaping @MainActor () -> Void)
     func start()
     func stop()
     func sendRoutingEnabled(_ enabled: Bool)
+    func sendPublicAddress(_ addresses: AddressPair)
 }
 
 // MARK: - PhoneControlClient
@@ -50,6 +53,14 @@ extension PhoneControlClient: RelayControlChannel {
         self.onRouteState = onRouteState
         self.onPeerName = onPeerName
         self.statusProvider = statusProvider
+    }
+
+    func setPeerPublicAddressHandler(_ handler: @escaping @MainActor (AddressPair) -> Void) {
+        onPeerPublicAddress = handler
+    }
+
+    func setConnectionReadyHandler(_ handler: @escaping @MainActor () -> Void) {
+        onConnectionReady = handler
     }
 }
 
@@ -78,6 +89,7 @@ extension RelayPathProbe: RelayDiscovering {
 protocol CellularPathObserving: Sendable {
     var snapshot: CellularPathSnapshot { get }
 
+    func setPathChangeHandler(_ handler: @escaping @Sendable () -> Void)
     func start()
     func stop()
 }
@@ -96,26 +108,40 @@ public struct RelayComposition {
     let control: RelayControlChannel
     let probe: RelayDiscovering
     let cellular: CellularPathObserving
+    let publicProbe: PublicAddressProbe
+    let configuration: RelayConfiguration
 
-    /// The on-device graph: pin each connection to its physical interface.
-    public static func pinned() -> RelayComposition {
+    /// The on-device graph: pin each connection to its physical interface. The egress
+    /// interface type comes from `configuration`, the source of truth, not a literal.
+    public static func pinned(
+        configuration: RelayConfiguration = .default
+    ) -> RelayComposition {
         logger.notice("relay composition built mode=\("pinned", privacy: .public)")
         return RelayComposition(
-            binder: PinnedInterfaceBinder(),
+            binder: PinnedInterfaceBinder(egressInterfaceType: configuration.egressInterfaceType),
             control: PhoneControlClient(),
             probe: RelayPathProbe(),
-            cellular: CellularPathObserver(requiredInterfaceType: .cellular)
+            cellular: CellularPathObserver(
+                requiredInterfaceType: configuration.egressInterfaceType),
+            publicProbe: PublicAddressProbe(),
+            configuration: configuration
         )
     }
 
-    /// The in-process simulator graph: reach every peer over the host network.
-    public static func hostNetwork() -> RelayComposition {
+    /// The in-process simulator graph: reach every peer over the host network. There
+    /// is no cellular radio, so the egress is unpinned; the carrying-link preference
+    /// still comes from `configuration`.
+    public static func hostNetwork(
+        configuration: RelayConfiguration = .default
+    ) -> RelayComposition {
         logger.notice("relay composition built mode=\("host-network", privacy: .public)")
         return RelayComposition(
             binder: HostNetworkInterfaceBinder(),
             control: PhoneControlClient(),
             probe: RelayPathProbe(),
-            cellular: CellularPathObserver(requiredInterfaceType: nil)
+            cellular: CellularPathObserver(requiredInterfaceType: nil),
+            publicProbe: PublicAddressProbe(),
+            configuration: configuration
         )
     }
 }

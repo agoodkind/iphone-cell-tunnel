@@ -18,6 +18,18 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 private let tcpKeepaliveIdleSeconds = 10
 private let tcpKeepaliveIntervalSeconds = 5
 private let tcpKeepaliveRetryCount = 3
+private let fallbackHostName = "Cell Tunnel Mac"
+
+// MARK: - Stable host name
+
+/// The machine name used for the relay Bonjour services, the ComputerName. It does
+/// not read `ProcessInfo.processInfo.hostName`, which returns the transient mDNS
+/// hostname; with Cloudflare WARP running that is `connectivity-check.warp-svc`, so
+/// the iPhone would show that instead of the Mac. The ComputerName is a stable
+/// system setting, so the peer name stays correct.
+func stableHostName() -> String {
+    Host.current().localizedName ?? fallbackHostName
+}
 
 // MARK: - Errors
 
@@ -64,14 +76,16 @@ actor AgentControlListener {
     /// Invoked with the user's routing choice when the iPhone pushes it over the
     /// control link, so the controller can install or withdraw the program routes.
     private var onSetRoutingEnabled: (@Sendable (Bool) -> Void)?
+    /// Invoked with the iPhone's measured public address received over the control
+    /// link, so the public-address exchange stores it as the peer's address.
+    private var onPeerPublicAddress: (@Sendable (AddressPair) -> Void)?
+    /// This host's latest measured public address, set by the controller as it
+    /// probes. It is sent on each accepted control connection once that connection's
+    /// handshake completes, so a freshly connected peer receives it at once.
+    private var latestDeviceAddress = AddressPair.empty
 
     init(serverEndpoint: RelayEndpoint) {
         self.serverEndpoint = serverEndpoint
-    }
-
-    /// Registers the routing-choice handler before the listener starts.
-    func setRoutingHandler(_ handler: @escaping @Sendable (Bool) -> Void) {
-        onSetRoutingEnabled = handler
     }
 
     // MARK: - Lifecycle
@@ -122,7 +136,7 @@ actor AgentControlListener {
             throw AgentControlListenerError.listenerFailed(error.localizedDescription)
         }
 
-        let serviceName = ProcessInfo.processInfo.hostName
+        let serviceName = stableHostName()
         nwListener.service = NWListener.Service(
             name: serviceName,
             type: relayControlServiceType
@@ -151,34 +165,33 @@ actor AgentControlListener {
             endpoint=\(String(describing: newConnection.endpoint), privacy: .public)
             """
         )
-        connection?.cancel()
-        connection = newConnection
+        let previous = connection
         newConnection.stateUpdateHandler = { state in
             applyAcceptedConnectionState(state)
         }
         newConnection.start(queue: connectionQueue)
         do {
             try await sendSetServerEndpoint(on: newConnection)
+            // The handshake completed, so promote this connection to the primary and
+            // retire any prior one. A transient connection that loses the dial race
+            // and never handshakes is dropped in the catch without disturbing the
+            // live connection, so a multi-interface dial does not tear down a good link.
+            connection = newConnection
+            previous?.cancel()
             startReceiveLoop(on: newConnection)
+            if !latestDeviceAddress.isEmpty {
+                await sendPublicAddress(latestDeviceAddress, on: newConnection)
+            }
         } catch {
             logger.error(
                 """
                 agent control handshake failed \
                 error=\(error.localizedDescription, privacy: .public) \
-                recovery=await-next-connection
+                recovery=drop-this-connection
                 """
             )
+            newConnection.cancel()
         }
-    }
-
-    private func tcpOptions() -> NWProtocolTCP.Options {
-        let options = NWProtocolTCP.Options()
-        options.enableKeepalive = true
-        options.keepaliveIdle = tcpKeepaliveIdleSeconds
-        options.keepaliveInterval = tcpKeepaliveIntervalSeconds
-        options.keepaliveCount = tcpKeepaliveRetryCount
-        options.noDelay = true
-        return options
     }
 
     // MARK: - Handshake
@@ -280,6 +293,9 @@ actor AgentControlListener {
                 """
             )
             try await awaitAcknowledge(on: connection, requestKind: requestKind)
+        case .publicAddress(let payload):
+            onPeerPublicAddress?(payload.addresses)
+            try await awaitAcknowledge(on: connection, requestKind: requestKind)
         default:
             throw AgentControlListenerError.acknowledgeMissing
         }
@@ -378,6 +394,73 @@ actor AgentControlListener {
             onSetRoutingEnabled?(payload.enabled)
         case .routeState:
             logger.debug("agent control received unexpected route-state from peer")
+        case .publicAddress(let payload):
+            logger.notice(
+                """
+                agent control received peer public address \
+                ipv4=\(payload.addresses.ipv4 ?? "none", privacy: .public) \
+                ipv6=\(payload.addresses.ipv6 ?? "none", privacy: .public)
+                """
+            )
+            onPeerPublicAddress?(payload.addresses)
+        }
+    }
+}
+
+// MARK: - Handlers and public-address send
+
+extension AgentControlListener {
+    func tcpOptions() -> NWProtocolTCP.Options {
+        let options = NWProtocolTCP.Options()
+        options.enableKeepalive = true
+        options.keepaliveIdle = tcpKeepaliveIdleSeconds
+        options.keepaliveInterval = tcpKeepaliveIntervalSeconds
+        options.keepaliveCount = tcpKeepaliveRetryCount
+        options.noDelay = true
+        return options
+    }
+
+    /// Registers the routing-choice handler before the listener starts.
+    func setRoutingHandler(_ handler: @escaping @Sendable (Bool) -> Void) {
+        onSetRoutingEnabled = handler
+    }
+
+    /// Registers the peer-public-address handler before the listener starts.
+    func setPeerPublicAddressHandler(_ handler: @escaping @Sendable (AddressPair) -> Void) {
+        onPeerPublicAddress = handler
+    }
+
+    /// Records this host's latest measured public address, sent on each accepted
+    /// connection once its handshake completes.
+    func setDeviceAddress(_ addresses: AddressPair) {
+        latestDeviceAddress = addresses
+    }
+
+    /// Sends this host's measured public address on the current control connection.
+    /// Used by the path-change, routing, and periodic refresh triggers. A no-op when
+    /// no iPhone is connected.
+    func sendPublicAddressToCurrent(_ addresses: AddressPair) async {
+        guard let connection else {
+            return
+        }
+        await sendPublicAddress(addresses, on: connection)
+    }
+
+    /// Sends this host's measured public address on a specific control connection,
+    /// so a freshly accepted connection carries it as part of its own handshake.
+    func sendPublicAddress(_ addresses: AddressPair, on connection: NWConnection) async {
+        do {
+            try await send(
+                .publicAddress(RelayControlMessage.PublicAddress(addresses: addresses)),
+                on: connection
+            )
+        } catch {
+            logger.error(
+                """
+                agent control public address send failed \
+                error=\(error.localizedDescription, privacy: .public) recovery=await-next-change
+                """
+            )
         }
     }
 }

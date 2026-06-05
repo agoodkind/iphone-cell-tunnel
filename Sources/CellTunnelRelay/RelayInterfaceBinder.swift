@@ -29,14 +29,16 @@ protocol RelayInterfaceBinder: Sendable {
 
 // MARK: - PinnedInterfaceBinder
 
-/// Pins each connection to its physical interface: the cellular radio for the
-/// server socket, and the discovered interface for each Mac link. This is the
-/// on-device behavior, where each interface is a distinct physical path.
+/// Pins each connection to its physical interface: the configured egress interface
+/// type for the server socket, and the discovered interface for each Mac link. This
+/// is the on-device behavior, where each interface is a distinct physical path. The
+/// egress interface type is injected from `RelayConfiguration`, never hardcoded here.
 struct PinnedInterfaceBinder: RelayInterfaceBinder {
     let egressDescription = "pinned to physical interface"
+    let egressInterfaceType: NWInterface.InterfaceType
 
     func configureServerParameters(_ parameters: NWParameters) {
-        parameters.requiredInterfaceType = .cellular
+        parameters.requiredInterfaceType = egressInterfaceType
     }
 
     func configureLinkParameters(_ parameters: NWParameters, for interface: RelayMacInterface) {

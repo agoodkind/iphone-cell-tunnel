@@ -17,12 +17,12 @@ import Foundation
 /// duty-cycles its radio in availability windows. Cellular, loopback, and other
 /// cannot carry the Mac-to-iPhone link and exist only so the interface mapping
 /// is total.
-public enum RelayLinkClass: String, Sendable, CaseIterable {
+public enum RelayLinkClass: String, Codable, Sendable, Equatable, CaseIterable {
     case cellular
     case loopback
     case other
-    case peerToPeer
-    case wifiLan
+    case peerToPeer = "peer-to-peer"
+    case wifiLan = "wifi-lan"
     case wired
 
     /// Whether this class can carry the Mac-to-iPhone relay link. The probe emits
@@ -34,6 +34,26 @@ public enum RelayLinkClass: String, Sendable, CaseIterable {
             true
         case .cellular, .loopback, .other:
             false
+        }
+    }
+
+    /// The transport name shown on the status screen, the one place a class maps to
+    /// a user-facing word. The `Connected via` row renders this for the carrying
+    /// link's class.
+    public var displayName: String {
+        switch self {
+        case .wired:
+            "Wired"
+        case .wifiLan:
+            "Wi-Fi"
+        case .peerToPeer:
+            "Peer-to-Peer"
+        case .cellular:
+            "Cellular"
+        case .loopback:
+            "Loopback"
+        case .other:
+            "Other"
         }
     }
 }

@@ -12,6 +12,7 @@ import Foundation
 import WireGuardKit
 
 private let logger = CellTunnelLog.logger(category: .daemon)
+private let publicAddressRefreshIntervalSeconds = 60
 
 // MARK: - Control link hosting
 
@@ -35,15 +36,45 @@ extension AgentTunnelController {
         await listener.setRoutingHandler { [weak self] enabled in
             Task { await self?.setRoutingEnabled(enabled) }
         }
+
+        // The public-address exchange holds this host's and the iPhone's measured
+        // public addresses; the snapshot reads both so the Mac shows `Device / Public`
+        // and `Peer / Public`. The controller probes this host on its triggers and
+        // the listener sends the result; the listener stores the iPhone's address here.
+        let exchange = PublicAddressExchange()
+        publicExchange = exchange
+        await listener.setPeerPublicAddressHandler { addresses in
+            exchange.received(addresses)
+        }
+
         controlListener = listener
         try await listener.start()
+
+        startEgressMonitor()
+        startPublicRefreshTimer()
+        // Warm the cached device address so the first connection carries it, and a
+        // late-completing probe re-sends to whatever connection is then current.
+        Task { await self.refreshDeviceAddress() }
+
+        // The bridge reports the carrying link; store its interface, class, and
+        // addresses for the snapshot the same way the iPhone does.
+        relayBridge.onEgressInterfaceChange = { [weak self] name, linkClass, local, peer in
+            self?.linkInfo.withLock { current in
+                current = AgentLinkInfo(
+                    interfaceName: name,
+                    linkClass: linkClass,
+                    localAddresses: local,
+                    peerAddresses: peer
+                )
+            }
+        }
         relayBridge.onPhoneConnected = { [weak self] in
             Task { await self?.handlePhoneLink(up: true) }
         }
         relayBridge.onPhoneDisconnected = { [weak self] in
             Task { await self?.handlePhoneLink(up: false) }
         }
-        relayBridge.start(serviceName: ProcessInfo.processInfo.hostName)
+        relayBridge.start(serviceName: stableHostName())
         onRelayActiveChange?(true)
         logger.notice(
             """
@@ -56,9 +87,82 @@ extension AgentTunnelController {
     func stopControlListener() async {
         await controlListener?.stop()
         controlListener = nil
+        publicExchange = nil
+        egressMonitor?.stop()
+        egressMonitor = nil
+        publicRefreshTimer?.cancel()
+        publicRefreshTimer = nil
+        linkInfo.withLock { $0 = AgentLinkInfo() }
+        relayBridge.onEgressInterfaceChange = nil
         relayBridge.stop()
         onRelayActiveChange?(false)
         logger.notice("agent control link cleared on tunnel stop")
+    }
+
+    // MARK: - Public-address refresh
+
+    /// Probes the Mac's public address and sends it to the iPhone over the control
+    /// link. Driven by the listener starting, the Mac's egress path changing, a
+    /// routing toggle, and a periodic backstop, so the served address stays current.
+    func refreshDeviceAddress() async {
+        guard let exchange = publicExchange else {
+            return
+        }
+        let device = await exchange.probeDevice()
+        await controlListener?.setDeviceAddress(device)
+        await controlListener?.sendPublicAddressToCurrent(device)
+        logger.notice("agent refreshed device public address")
+    }
+
+    // Watches the Mac's own default egress so a Wi-Fi switch or interface change
+    // re-probes the public address. The handler hops onto the actor.
+    func startEgressMonitor() {
+        let monitor = EgressPathMonitor(requiredInterfaceType: nil)
+        monitor.onChange = { [weak self] _ in
+            Task { await self?.refreshDeviceAddress() }
+        }
+        monitor.start()
+        egressMonitor = monitor
+        logger.notice("agent egress monitor started")
+    }
+
+    // A repeating dispatch timer re-probes the public address on a slow backstop, so
+    // a missed path event cannot leave the served address stale. The handler is
+    // `@Sendable` and hops onto the actor.
+    func startPublicRefreshTimer() {
+        publicRefreshTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(
+            deadline: .now() + .seconds(publicAddressRefreshIntervalSeconds),
+            repeating: .seconds(publicAddressRefreshIntervalSeconds)
+        )
+        timer.setEventHandler { @Sendable [weak self] in
+            Task { await self?.refreshDeviceAddress() }
+        }
+        timer.resume()
+        publicRefreshTimer = timer
+        logger.notice(
+            """
+            agent public address refresh timer started \
+            intervalSeconds=\(publicAddressRefreshIntervalSeconds, privacy: .public)
+            """
+        )
+    }
+
+    /// Fills the served snapshot with the agent-side link and public-address fields,
+    /// the same `Connection`, `Device / Public`, and `Peer / Public` rows the iPhone
+    /// reports, which the Mac extension's snapshot does not carry.
+    func augmented(_ status: TunnelDaemonStatusSnapshot) -> TunnelDaemonStatusSnapshot {
+        var merged = status
+        let link = linkInfo.withLock { $0 }
+        merged.localLinkInterfaceName = link.interfaceName
+        merged.localLinkClass = link.linkClass
+        merged.localLinkAddresses = link.localAddresses
+        merged.peerLinkAddresses = link.peerAddresses
+        let publicAddresses = publicExchange?.resolved ?? PublicAddressExchange.Resolved()
+        merged.devicePublicAddresses = publicAddresses.device
+        merged.peerPublicAddresses = publicAddresses.peer
+        return merged
     }
 
     // MARK: - Routing control

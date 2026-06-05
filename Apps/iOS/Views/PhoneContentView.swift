@@ -25,8 +25,7 @@ struct PhoneContentView: View {
             RelayController(
                 backend: PreviewRelayBackend(),
                 throughput: ThroughputCalculator(),
-                lifetimeStore: LifetimeDataStore(),
-                publicProbe: PublicAddressProbe()
+                lifetimeStore: LifetimeDataStore()
             )
         )
 }

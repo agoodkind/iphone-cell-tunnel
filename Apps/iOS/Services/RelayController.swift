@@ -32,15 +32,47 @@ struct RelayStatusSample: Sendable {
     var routeState: TunnelRouteState
     /// Whether a WireGuard peer is configured, which gates the connected states.
     var peerState: TunnelPeerState
-    /// The Mac-to-iPhone link interface identifier, mapped to a defined name for
-    /// display, or `nil` when the source has not surfaced it.
+    /// The carrying link's raw interface identifier and transport class, shown on the
+    /// `Connected via` row.
     var localLinkInterfaceName: String?
+    var localLinkClass: RelayLinkClass?
+    /// This device's and the peer's public addresses, shown under `Device / Public`
+    /// and `Peer / Public`.
+    var devicePublicAddresses: AddressPair
+    var peerPublicAddresses: AddressPair
+    /// The carrying link's local and peer addresses, shown under `Connection`.
+    var localLinkAddresses: AddressPair
+    var peerLinkAddresses: AddressPair
     /// The configured WireGuard endpoint hostname, shown as the relay host.
     var relayHost: String?
     /// The WireGuard server's IPv4 address, the endpoint hostname resolved to A.
     var relayServerIPv4Address: String?
     /// The WireGuard server's IPv6 address, the endpoint hostname resolved to AAAA.
     var relayServerIPv6Address: String?
+
+    /// Maps a daemon status snapshot to one sample. Every backend builds its sample
+    /// here, so the snapshot-to-sample mapping lives in one place; a backend applies
+    /// only its own override afterward. Counters read from whichever side the snapshot
+    /// carries, so the one mapping serves the iPhone and the Mac.
+    init(snapshot: TunnelDaemonStatusSnapshot) {
+        isRunning = snapshot.running
+        relayStateDescription = snapshot.relayState ?? relayStoppedStateText
+        connectedPeerName = snapshot.connectedPeerName
+        cellularPath = snapshot.cellularPath ?? CellularPathSnapshot()
+        counters = snapshot.phoneCounters ?? snapshot.macCounters ?? TunnelCounters()
+        lastError = snapshot.lastError
+        routeState = snapshot.routeState
+        peerState = snapshot.peerState
+        localLinkInterfaceName = snapshot.localLinkInterfaceName
+        localLinkClass = snapshot.localLinkClass
+        devicePublicAddresses = snapshot.devicePublicAddresses ?? .empty
+        peerPublicAddresses = snapshot.peerPublicAddresses ?? .empty
+        localLinkAddresses = snapshot.localLinkAddresses ?? .empty
+        peerLinkAddresses = snapshot.peerLinkAddresses ?? .empty
+        relayHost = snapshot.relayHost
+        relayServerIPv4Address = snapshot.relayServerIPv4Address
+        relayServerIPv6Address = snapshot.relayServerIPv6Address
+    }
 }
 
 // MARK: - RelayControlBackend
@@ -81,13 +113,17 @@ final class RelayController {
     private var pollTask: Task<Void, Never>?
     private var throughput: ThroughputCalculator
     private var lifetimeStore: LifetimeDataStore
-    private let publicProbe: PublicAddressProbe
-    private var didProbePublicAddress = false
 
     var isRunning = false
+    /// Whether a start has been requested but the session is not yet running, so the
+    /// screen can show `Starting relay…` distinct from a stopped session. Set when
+    /// `start()` is called and cleared once a sample reports the session running.
+    var isStarting = false
     var connectedPeerName: String?
     var cellularPath = CellularPathSnapshot()
     var counters = TunnelCounters()
+    var lifetimeTransferredBytes: UInt64 = 0
+    var lifetimeReceivedBytes: UInt64 = 0
     var lifetimeTotalBytes: UInt64 = 0
     var uploadMbps: Double = 0
     var downloadMbps: Double = 0
@@ -96,22 +132,23 @@ final class RelayController {
     var routeState: TunnelRouteState = .notInstalled
     var peerState: TunnelPeerState = .notSelected
     var localLinkInterfaceName: String?
+    var localLinkClass: RelayLinkClass?
+    var localLinkAddresses = AddressPair.empty
+    var peerLinkAddresses = AddressPair.empty
+    var devicePublicAddresses = AddressPair.empty
+    var peerPublicAddresses = AddressPair.empty
     var relayHost: String?
     var relayServerIPv4Address: String?
     var relayServerIPv6Address: String?
-    var devicePublicIPv4Address: String?
-    var devicePublicIPv6Address: String?
 
     init(
         backend: any RelayControlBackend,
         throughput: ThroughputCalculator,
-        lifetimeStore: LifetimeDataStore,
-        publicProbe: PublicAddressProbe
+        lifetimeStore: LifetimeDataStore
     ) {
         self.backend = backend
         self.throughput = throughput
         self.lifetimeStore = lifetimeStore
-        self.publicProbe = publicProbe
     }
 
     // MARK: - Lifecycle
@@ -119,6 +156,7 @@ final class RelayController {
     /// Brings the platform session up, then starts the status poll.
     func start() async {
         logger.notice("relay controller start requested")
+        isStarting = true
         await backend.start()
         startPolling()
     }
@@ -129,6 +167,7 @@ final class RelayController {
         stopPolling()
         await backend.stop()
         isRunning = false
+        isStarting = false
     }
 
     /// Suspends the status poll without touching the session, for backgrounding.
@@ -173,48 +212,36 @@ final class RelayController {
 
     private func apply(_ sample: RelayStatusSample) {
         isRunning = sample.isRunning
+        if sample.isRunning {
+            isStarting = false
+        }
         connectedPeerName = sample.connectedPeerName
         cellularPath = sample.cellularPath
         counters = sample.counters
-        lifetimeTotalBytes = lifetimeStore.total(
-            sessionTotal: sample.counters.relayBytesIn &+ sample.counters.relayBytesOut)
+        let lifetime = lifetimeStore.totals(
+            sessionTransferred: sample.counters.relayBytesIn,
+            sessionReceived: sample.counters.relayBytesOut
+        )
+        lifetimeTransferredBytes = lifetime.transferred
+        lifetimeReceivedBytes = lifetime.received
+        lifetimeTotalBytes = lifetime.total
         lastError = sample.lastError
         relayStateDescription = sample.relayStateDescription
         routeState = sample.routeState
         peerState = sample.peerState
         localLinkInterfaceName = sample.localLinkInterfaceName
+        localLinkClass = sample.localLinkClass
+        localLinkAddresses = sample.localLinkAddresses
+        peerLinkAddresses = sample.peerLinkAddresses
+        devicePublicAddresses = sample.devicePublicAddresses
+        peerPublicAddresses = sample.peerPublicAddresses
         relayHost = sample.relayHost
         relayServerIPv4Address = sample.relayServerIPv4Address
         relayServerIPv6Address = sample.relayServerIPv6Address
         let rate = throughput.update(with: sample.counters)
         uploadMbps = rate.upload
         downloadMbps = rate.download
-        updatePublicAddressProbe()
         logger.debug("relay controller sample applied running=\(self.isRunning, privacy: .public)")
-    }
-
-    // Probes this device's public addresses once per live connection and clears
-    // them when the connection drops, so the device public rows reflect the current
-    // session.
-    private func updatePublicAddressProbe() {
-        guard connectedPeerName != nil else {
-            didProbePublicAddress = false
-            devicePublicIPv4Address = nil
-            devicePublicIPv6Address = nil
-            return
-        }
-        guard !didProbePublicAddress else {
-            return
-        }
-        didProbePublicAddress = true
-        Task { @MainActor [weak self] in
-            guard let self else {
-                return
-            }
-            let result = await publicProbe.probe()
-            devicePublicIPv4Address = result.ipv4
-            devicePublicIPv6Address = result.ipv6
-        }
     }
 
     // MARK: - Routing control

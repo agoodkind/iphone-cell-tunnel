@@ -99,13 +99,19 @@ extension AgentRelayBridge {
             RelayLinkSnapshot(interfaceName: link.interfaceName, linkClass: link.linkClass)
         }
         let chosen = RelayLinkPolicy.chooseCarrying(preferred: nil, openLinks: Array(openLinks))
+        let carryingConnection = chosen.flatMap { phoneLinks[$0]?.connection }
         if chosen != egressInterfaceName {
+            let chosenClass = chosen.flatMap { phoneLinks[$0]?.linkClass }
+            let carryingPath = carryingConnection?.currentPath
+            let localAddresses = carryingPath?.localEndpoint?.addressPair ?? .empty
+            let peerAddresses = carryingPath?.remoteEndpoint?.addressPair ?? .empty
             logger.notice(
                 "agent relay bridge carrying link interface=\(chosen ?? "none", privacy: .public)"
             )
+            onEgressInterfaceChange?(chosen, chosenClass, localAddresses, peerAddresses)
         }
         egressInterfaceName = chosen
-        egressConnection = chosen.flatMap { phoneLinks[$0]?.connection }
+        egressConnection = carryingConnection
     }
 
     // MARK: - Interface derivation

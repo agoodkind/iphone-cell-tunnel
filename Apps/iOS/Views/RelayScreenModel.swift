@@ -14,78 +14,33 @@ import SwiftUI
 private let emptyValuePlaceholder = "(none)"
 private let wireGuardProtocolName = "WireGuard"
 
-// MARK: - LocalLinkTransport
-
-/// The Mac-to-iPhone link transport, by defined name. Raw interface identifiers
-/// such as `en0` or `pdp_ip0` never reach the screen; they map to one of these
-/// cases first, so the connection rows always read a stable user-facing name.
-enum LocalLinkTransport: Equatable {
-    case ethernet
-    case peerToPeer
-    case unknown
-    case usb
-    case wiFi
-
-    /// Maps a raw interface identifier to a defined transport. The mapping follows
-    /// the link transports the architecture describes: a CDC-NCM Ethernet-over-USB
-    /// link, a USB-C Ethernet adapter, Wi-Fi LAN, and AWDL peer-to-peer.
-    static func from(interfaceName: String?) -> LocalLinkTransport {
-        guard let interfaceName, !interfaceName.isEmpty else {
-            return .unknown
-        }
-        let lowercased = interfaceName.lowercased()
-        if lowercased.hasPrefix("en") {
-            return .wiFi
-        }
-        if lowercased.hasPrefix("awdl") || lowercased.hasPrefix("llw") {
-            return .peerToPeer
-        }
-        if lowercased.contains("ncm") || lowercased.contains("usb") {
-            return .usb
-        }
-        if lowercased.hasPrefix("bridge") || lowercased.hasPrefix("eth") {
-            return .ethernet
-        }
-        return .unknown
-    }
-
-    /// The user-facing name shown on the `Connected via` row.
-    var displayName: String {
-        switch self {
-        case .usb:
-            return "USB"
-        case .wiFi:
-            return "Wi-Fi"
-        case .peerToPeer:
-            return "Peer-to-Peer"
-        case .ethernet:
-            return "Ethernet"
-        case .unknown:
-            return emptyValuePlaceholder
-        }
-    }
-}
-
 // MARK: - ConnectionRow
 
 /// One label-and-value line inside a connection section. Rendering is data-driven,
-/// so a new primitive becomes a new row with no change to the views.
+/// so a new primitive becomes a new row with no change to the views. The label is
+/// the stable identity, so a list change animates instead of replacing the row. A
+/// qualifier row carries a constant such as the protocol name and does not count as
+/// data when deciding whether its section has anything to show.
 struct ConnectionRow: Identifiable, Equatable {
-    let id = UUID()
     let label: String
     let value: String
+    var isQualifier = false
+
+    var id: String { label }
 }
 
 // MARK: - ConnectionSection
 
 /// One titled group of connection rows. The connection area renders an ordered
-/// list of these, so adding a group is a data change, not a view change. A
-/// qualifier such as the egress transport or the protocol is an ordinary first
-/// row, so the header stays a plain Title Case header.
+/// list of these, so adding a group is a data change, not a view change. The title
+/// is the stable identity, so a section collapsing or appearing animates. A
+/// qualifier such as the egress transport or the protocol is an ordinary first row,
+/// so the header stays a plain Title Case header.
 struct ConnectionSection: Identifiable, Equatable {
-    let id = UUID()
     let title: String
     let rows: [ConnectionRow]
+
+    var id: String { title }
 }
 
 // MARK: - RelayScreenState
@@ -101,41 +56,36 @@ enum RelayScreenState: Equatable {
     case notSetUp
     case passthrough
     case routing
+    case starting
 
-    /// Whether the routing-only `Speed` section is shown.
+    /// Whether the routing-only `Current Speed` section is shown.
     var showsSpeed: Bool {
         self == .routing
     }
 
-    /// Whether the `Data` and `Connection` sections are shown. Only the connected
-    /// states show them; every not-connected state renders a full-screen zero state
-    /// instead, so a disconnected or connecting screen never shows placeholder stat
-    /// and connection rows.
-    var showsTunnelDetail: Bool {
+    /// Whether the routing switch is disabled. It is enabled only when the peer link
+    /// is up and routing can actually be turned on, the `passthrough` and `routing`
+    /// states; every other state disables it.
+    var disablesControls: Bool {
         switch self {
         case .passthrough, .routing:
-            return true
-        case .notSetUp, .disconnected, .connecting, .noCellular, .error:
             return false
+        case .connecting, .disconnected, .error, .noCellular, .notSetUp, .starting:
+            return true
         }
-    }
-
-    /// Whether controls are disabled, used while connecting.
-    var disablesControls: Bool {
-        self == .connecting
     }
 }
 
 // MARK: - RelayHeroAction
 
-/// The optional call to action a hero offers, rendered as the `ContentUnavailableView`
-/// action button. Each case maps to one controller operation, so the view holds no
-/// branching of its own.
+/// The optional call to action for the current state, rendered as a button row in
+/// the status section. Each case maps to one controller operation, so the view holds
+/// no branching of its own.
 enum RelayHeroAction: Equatable {
     case retry
     case setUp
 
-    /// The button title shown inside the hero.
+    /// The button title shown in the action row.
     var title: String {
         switch self {
         case .retry:
@@ -146,23 +96,12 @@ enum RelayHeroAction: Equatable {
     }
 }
 
-// MARK: - RelayScreenHero
-
-/// The hero presentation for the current state: a status title, an optional
-/// subtitle, and an optional action. No icon is shown. Only the error state
-/// carries a subtitle, which is the runtime error message.
-struct RelayScreenHero: Equatable {
-    let title: String
-    let subtitle: String?
-    let action: RelayHeroAction?
-}
-
 // MARK: - RelayScreenModel
 
 /// The one source the status screen renders from, on both the iPhone and the Mac.
 /// It reads the observable `RelayController` and derives the screen state, the
-/// hero, and the data-driven sections, so the views hold no platform branches and
-/// no display logic of their own.
+/// optional action, and the data-driven sections, so the views hold no platform
+/// branches and no display logic of their own.
 @MainActor
 struct RelayScreenModel {
     let controller: RelayController
@@ -173,6 +112,9 @@ struct RelayScreenModel {
     var state: RelayScreenState {
         if let error = controller.lastError, !error.isEmpty {
             return .error(error)
+        }
+        if controller.isStarting, !controller.isRunning {
+            return .starting
         }
         guard controller.peerState != .notSelected || controller.isRunning else {
             return .notSetUp
@@ -189,113 +131,145 @@ struct RelayScreenModel {
         return controller.routeState == .installed ? .routing : .passthrough
     }
 
+    /// The lifecycle status shown as the switch's left label. The wording names each
+    /// phase, separating the relay coming up from reaching the peer, and reads as not
+    /// routing in passthrough.
+    var statusLabel: String {
+        switch state {
+        case .notSetUp:
+            return "Not set up"
+        case .starting:
+            return "Starting relay…"
+        case .disconnected:
+            return "Disconnected"
+        case .connecting:
+            return "Connecting to peer…"
+        case .noCellular:
+            return "No network"
+        case .passthrough:
+            return "Ready to route"
+        case .routing:
+            return "Routing"
+        case .error:
+            return "Error"
+        }
+    }
+
     /// Whether the `Route traffic` switch reads as on. On means routing.
     var routeTrafficEnabled: Bool {
         controller.routeState == .installed
     }
 
-    // MARK: - Hero
+    // MARK: - Action
 
-    /// The hero for the current state.
-    var hero: RelayScreenHero {
+    /// The optional action for the current state: `Set Up` before a session exists,
+    /// `Retry` after an error, nil otherwise. Shown as a row in the status section,
+    /// since the screen is always the full list rather than a centered hero.
+    var heroAction: RelayHeroAction? {
         switch state {
         case .notSetUp:
-            return RelayScreenHero(title: "Not set up", subtitle: nil, action: .setUp)
-        case .disconnected:
-            return RelayScreenHero(title: "Disconnected", subtitle: nil, action: nil)
-        case .connecting:
-            return RelayScreenHero(title: "Connecting…", subtitle: nil, action: nil)
-        case .passthrough:
-            return RelayScreenHero(title: "Ready to route", subtitle: nil, action: nil)
-        case .routing:
-            return RelayScreenHero(title: "Routing traffic", subtitle: nil, action: nil)
-        case .noCellular:
-            return RelayScreenHero(title: "No network", subtitle: nil, action: nil)
-        case .error(let message):
-            return RelayScreenHero(
-                title: "Something went wrong",
-                subtitle: message,
-                action: .retry
-            )
+            return .setUp
+        case .error:
+            return .retry
+        default:
+            return nil
         }
     }
 
-    // MARK: - Speed
+    /// The runtime error message when the state is an error, shown as a row.
+    var errorMessage: String? {
+        guard case .error(let message) = state else {
+            return nil
+        }
+        return message
+    }
 
-    /// The download rate, in Mbps, for the `Speed` section.
+    // MARK: - Current Speed
+
+    /// The download rate, in Mbps, for the `Current Speed` section.
     var downloadMbps: Double {
         controller.downloadMbps
     }
 
-    /// The upload rate, in Mbps, for the `Speed` section.
+    /// The upload rate, in Mbps, for the `Current Speed` section.
     var uploadMbps: Double {
         controller.uploadMbps
     }
 
     // MARK: - Data
 
-    /// The lifetime total bytes through the tunnel for the `Data` section. The
-    /// controller accumulates the relay byte total across sessions, so the figure
-    /// persists rather than resetting when a session restarts.
+    /// The lifetime bytes sent, received, and their sum for the `Data` section. The
+    /// controller accumulates each direction across sessions, so the figures persist
+    /// rather than resetting when a session restarts.
+    var lifetimeTransferredBytes: UInt64 {
+        controller.lifetimeTransferredBytes
+    }
+
+    var lifetimeReceivedBytes: UInt64 {
+        controller.lifetimeReceivedBytes
+    }
+
     var lifetimeTotalBytes: UInt64 {
         controller.lifetimeTotalBytes
     }
 
     // MARK: - Connection
 
-    /// The ordered connection sections for the current state. Empty when the tunnel
-    /// detail is hidden. The device and relay address groups appear once connected,
-    /// even before their addresses are known, so the zero state is a labeled
-    /// placeholder rather than a missing group. IPv6 always lists before IPv4, and
-    /// every value falls back to a defined placeholder so no row is ever blank.
+    /// The ordered connection sections that have something to show. A section with no
+    /// known value collapses, so a not-connected screen shows only what it knows and
+    /// the sections animate in and out as values arrive. A section counts as having
+    /// data when any non-qualifier row holds a value other than the placeholder.
     var connectionSections: [ConnectionSection] {
-        guard state.showsTunnelDetail else {
-            return []
+        [connectionSection, deviceSection, peerSection, relaySection].filter(hasData)
+    }
+
+    private func hasData(_ section: ConnectionSection) -> Bool {
+        section.rows.contains { row in
+            !row.isQualifier && row.value != emptyValuePlaceholder
         }
-        return [connectionSection, deviceSection, internetSection, relaySection]
     }
 
-    // The peer the phone is connected to and the link transport carrying it.
+    // The peer the phone is connected to, the carrying link transport with its raw
+    // interface, and the link's local and peer addresses. The link is one connection
+    // over one family, so each end is one address, not an IPv6/IPv4 pair.
     private var connectionSection: ConnectionSection {
-        ConnectionSection(
-            title: "Connection",
-            rows: [
-                ConnectionRow(label: "Connected to", value: connectedToValue),
-                ConnectionRow(label: "Connected via", value: connectedViaValue),
-            ]
-        )
+        let rows = [
+            ConnectionRow(label: "Connected to", value: connectedToValue),
+            ConnectionRow(label: "Connected via", value: connectedViaValue),
+            ConnectionRow(
+                label: "Local link",
+                value: nonEmptyOrPlaceholder(controller.localLinkAddresses.preferredAddress)
+            ),
+            ConnectionRow(
+                label: "Peer link",
+                value: nonEmptyOrPlaceholder(controller.peerLinkAddresses.preferredAddress)
+            ),
+        ]
+        return ConnectionSection(title: "Connection", rows: rows)
     }
 
-    // The iPhone egress: the transport it reaches the internet over, and the
-    // addresses on that egress interface.
+    // This device: the egress transport with its interface id, the egress interface
+    // addresses, and this device's effective public address.
     private var deviceSection: ConnectionSection {
-        ConnectionSection(
-            title: "Device",
-            rows: [
-                ConnectionRow(
-                    label: "Egress",
-                    value: nonEmptyOrPlaceholder(controller.cellularPath.transportDisplayName)
-                ),
-                ConnectionRow(
-                    label: "IPv6",
-                    value: nonEmptyOrPlaceholder(controller.cellularPath.ipv6Address)
-                ),
-                ConnectionRow(
-                    label: "IPv4",
-                    value: nonEmptyOrPlaceholder(controller.cellularPath.ipv4Address)
-                ),
-            ]
+        let egress = ConnectionRow(
+            label: "Egress",
+            value: transportLabel(
+                controller.cellularPath.transportDisplayName,
+                interface: controller.cellularPath.interfaceName
+            )
         )
+        var rows = [egress]
+        rows.append(contentsOf: addressRows(prefix: "Interface", egressInterfaceAddresses))
+        rows.append(contentsOf: addressRows(prefix: "Public", controller.devicePublicAddresses))
+        return ConnectionSection(title: "Device", rows: rows)
     }
 
-    // The public addresses the internet sees from the device, from the probe.
-    private var internetSection: ConnectionSection {
+    // The peer's effective public address, measured by the peer and received over the
+    // control link.
+    private var peerSection: ConnectionSection {
         ConnectionSection(
-            title: "Internet",
-            rows: addressRows(
-                ipv6: controller.devicePublicIPv6Address,
-                ipv4: controller.devicePublicIPv4Address
-            )
+            title: "Peer",
+            rows: addressRows(prefix: "Public", controller.peerPublicAddresses)
         )
     }
 
@@ -303,24 +277,40 @@ struct RelayScreenModel {
     // server's addresses resolved from that hostname.
     private var relaySection: ConnectionSection {
         var rows = [
-            ConnectionRow(label: "Protocol", value: wireGuardProtocolName),
+            ConnectionRow(label: "Protocol", value: wireGuardProtocolName, isQualifier: true),
             ConnectionRow(label: "Host", value: nonEmptyOrPlaceholder(controller.relayHost)),
         ]
-        rows.append(
-            contentsOf: addressRows(
-                ipv6: controller.relayServerIPv6Address,
-                ipv4: controller.relayServerIPv4Address
-            )
-        )
+        rows.append(contentsOf: addressRows(prefix: "", relayServerAddresses))
         return ConnectionSection(title: "Relay", rows: rows)
     }
 
+    // The egress interface addresses and the resolved relay server addresses, the two
+    // pairs the controller carries as separate fields, wrapped so every pair renders
+    // through one builder.
+    private var egressInterfaceAddresses: AddressPair {
+        AddressPair(
+            ipv4: controller.cellularPath.ipv4Address,
+            ipv6: controller.cellularPath.ipv6Address
+        )
+    }
+
+    private var relayServerAddresses: AddressPair {
+        AddressPair(
+            ipv4: controller.relayServerIPv4Address,
+            ipv6: controller.relayServerIPv6Address
+        )
+    }
+
     // An IPv6 then IPv4 pair, IPv6 first per the design, each falling back to a
-    // labeled placeholder so no row is blank.
-    private func addressRows(ipv6: String?, ipv4: String?) -> [ConnectionRow] {
-        [
-            ConnectionRow(label: "IPv6", value: nonEmptyOrPlaceholder(ipv6)),
-            ConnectionRow(label: "IPv4", value: nonEmptyOrPlaceholder(ipv4)),
+    // labeled placeholder so no row is blank. The prefix names the pair's origin
+    // (`Interface`, `Public`, `Local link`, `Peer link`); an empty prefix labels the
+    // bare `IPv6`/`IPv4` of the relay server.
+    private func addressRows(prefix: String, _ pair: AddressPair) -> [ConnectionRow] {
+        let ipv6Label = prefix.isEmpty ? "IPv6" : "\(prefix) IPv6"
+        let ipv4Label = prefix.isEmpty ? "IPv4" : "\(prefix) IPv4"
+        return [
+            ConnectionRow(label: ipv6Label, value: nonEmptyOrPlaceholder(pair.ipv6)),
+            ConnectionRow(label: ipv4Label, value: nonEmptyOrPlaceholder(pair.ipv4)),
         ]
     }
 
@@ -329,7 +319,23 @@ struct RelayScreenModel {
     }
 
     private var connectedViaValue: String {
-        LocalLinkTransport.from(interfaceName: controller.localLinkInterfaceName).displayName
+        transportLabel(
+            controller.localLinkClass?.displayName,
+            interface: controller.localLinkInterfaceName
+        )
+    }
+
+    // `name (interface)`, or `name` alone when the interface id is absent, falling
+    // back to the placeholder when the transport name is absent. Both `Egress` and
+    // `Connected via` render the transport-with-id format through this.
+    private func transportLabel(_ name: String?, interface: String?) -> String {
+        guard let name, !name.isEmpty else {
+            return emptyValuePlaceholder
+        }
+        guard let interface, !interface.isEmpty else {
+            return name
+        }
+        return "\(name) (\(interface))"
     }
 
     private func nonEmptyOrPlaceholder(_ value: String?) -> String {

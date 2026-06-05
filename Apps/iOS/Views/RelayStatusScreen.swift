@@ -15,9 +15,8 @@ private let logger = CellTunnelLog.logger(category: .app)
 // MARK: - Constants
 
 private let screenTitle = "Cell Tunnel"
-private let routeTrafficLabel = "Route traffic"
-private let speedSectionTitle = "Speed"
 private let dataSectionTitle = "Data"
+private let currentSpeedSectionTitle = "Current Speed"
 private let bytesCountStyle = ByteCountFormatStyle(style: .file, spellsOutZero: false)
 
 // MARK: - RelayStatusScreen
@@ -25,9 +24,9 @@ private let bytesCountStyle = ByteCountFormatStyle(style: .file, spellsOutZero: 
 /// The one status screen, rendered the same on the iPhone and the Mac from a single
 /// `RelayScreenModel`. Every surface is a stock SwiftUI component, so the Liquid
 /// Glass look comes for free and the Mac adapts to its width through the same view
-/// tree: a `List` whose `Section`s hold `LabeledContent` rows, a status title
-/// combined with the `Route traffic` toggle in the connected states, and
-/// `ContentUnavailableView` for the zero, connecting, and error states.
+/// tree. It is always the full list: a `List` whose `Section`s hold `LabeledContent`
+/// rows, with the `Route traffic` toggle in the first section. A not-connected screen
+/// is the same layout with placeholder values rather than a centered state.
 struct RelayStatusScreen: View {
     @Environment(RelayController.self) private var controller
 
@@ -38,94 +37,65 @@ struct RelayStatusScreen: View {
     // MARK: - Body
 
     var body: some View {
-        let state = model.state
         NavigationStack {
-            content(state: state)
+            detailList
                 .navigationTitle(screenTitle)
-                .navigationBarTitleDisplayMode(state.showsTunnelDetail ? .large : .inline)
-        }
-    }
-
-    // The states with no tunnel detail render as a full-screen
-    // `ContentUnavailableView`, the documented hero and zero-state component, under an
-    // inline title so the empty state owns the screen rather than sitting below a
-    // large left-aligned title. The states with detail render the hero plus the data
-    // sections inside one `List` beneath the large title.
-    @ViewBuilder private func content(state: RelayScreenState) -> some View {
-        if state.showsTunnelDetail {
-            detailList(state: state)
-        } else {
-            heroView
-        }
-    }
-
-    // MARK: - Hero
-
-    // The full-screen hero for the zero and edge states: a text title, an optional
-    // description, and the optional action button wired to a controller verb. No icon.
-    private var heroView: some View {
-        ContentUnavailableView {
-            Text(model.hero.title)
-        } description: {
-            heroDescription
-        } actions: {
-            heroAction
-        }
-    }
-
-    @ViewBuilder private var heroDescription: some View {
-        if let subtitle = model.hero.subtitle {
-            Text(subtitle)
-        }
-    }
-
-    @ViewBuilder private var heroAction: some View {
-        if let action = model.hero.action {
-            Button(action.title) {
-                perform(action)
-            }
-            .disabled(model.state.disablesControls)
+                .navigationBarTitleDisplayMode(.large)
         }
     }
 
     // MARK: - Detail list
 
-    private func detailList(state: RelayScreenState) -> some View {
+    private var detailList: some View {
         List {
             statusSection
-            if state.showsSpeed {
-                speedSection
-            }
             dataSection
+            if model.state.showsSpeed {
+                currentSpeedSection
+            }
             connectionSections
         }
         .listStyle(.insetGrouped)
+        .animation(.default, value: model.state)
     }
 
-    // The connected-state status section: a bold status title and the one control,
-    // the `Route traffic` toggle, in one section. The detail list renders only in the
-    // connected states, which always show the toggle, so the two belong together.
-    private var statusSection: some View {
+    // The status section: the one routing switch, whose left label is the live
+    // lifecycle status, plus the error message and the Set Up or Retry action as rows
+    // when the state calls for them. The switch is disabled unless the peer link is
+    // up, so routing cannot be requested with no peer to carry it.
+    @ViewBuilder private var statusSection: some View {
         Section {
-            Text(model.hero.title)
-                .font(.title3)
-                .fontWeight(.semibold)
-            Toggle(routeTrafficLabel, isOn: routeBinding)
+            Toggle(model.statusLabel, isOn: routeBinding)
                 .disabled(model.state.disablesControls)
+            if let message = model.errorMessage {
+                Text(message)
+            }
+            if let action = model.heroAction {
+                Button(action.title) {
+                    perform(action)
+                }
+                .disabled(model.state.disablesControls)
+            }
         }
     }
 
-    private var speedSection: some View {
-        Section(speedSectionTitle) {
-            valueRow(label: "Down", value: formattedRate(model.downloadMbps))
-            valueRow(label: "Up", value: formattedRate(model.uploadMbps))
+    // The Data section carries the lifetime byte totals: sent, received, and their
+    // sum. The live rate lives in its own `Current Speed` section.
+    private var dataSection: some View {
+        Section(dataSectionTitle) {
+            valueRow(label: "Transferred", value: formattedBytes(model.lifetimeTransferredBytes))
+            valueRow(label: "Received", value: formattedBytes(model.lifetimeReceivedBytes))
+            valueRow(label: "Total", value: formattedBytes(model.lifetimeTotalBytes))
         }
         .textCase(nil)
     }
 
-    private var dataSection: some View {
-        Section(dataSectionTitle) {
-            valueRow(label: "Total", value: formattedBytes(model.lifetimeTotalBytes))
+    // The Current Speed section carries the live Up and Down rates, shown in the
+    // routing state where the Mac's traffic crosses the tunnel.
+    private var currentSpeedSection: some View {
+        Section(currentSpeedSectionTitle) {
+            valueRow(label: "Up", value: formattedRate(model.uploadMbps))
+            valueRow(label: "Down", value: formattedRate(model.downloadMbps))
         }
         .textCase(nil)
     }
@@ -209,8 +179,7 @@ struct RelayStatusScreen: View {
             RelayController(
                 backend: PreviewRelayBackend(),
                 throughput: ThroughputCalculator(),
-                lifetimeStore: LifetimeDataStore(),
-                publicProbe: PublicAddressProbe()
+                lifetimeStore: LifetimeDataStore()
             )
         )
 }

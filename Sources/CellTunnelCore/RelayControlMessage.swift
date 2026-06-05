@@ -15,10 +15,25 @@ public let relayControlWireVersion: Int = 1
 public enum RelayControlMessage: Codable, Sendable, Equatable {
     case acknowledge(Acknowledge)
     case error(Failure)
+    case publicAddress(PublicAddress)
     case routeState(RouteState)
     case setRoutingEnabled(SetRoutingEnabled)
     case setServerEndpoint(SetServerEndpoint)
     case status(Status)
+
+    /// Carries one endpoint's measured public address to the peer over the control
+    /// link, sent both directions. Each side stores the received pair as the peer's
+    /// public address; the screen shows it so the user can compare the routed device
+    /// against the relay server.
+    public struct PublicAddress: Codable, Sendable, Equatable {
+        public var version: Int
+        public var addresses: AddressPair
+
+        public init(addresses: AddressPair, version: Int = relayControlWireVersion) {
+            self.addresses = addresses
+            self.version = version
+        }
+    }
 
     /// Carries the user's passthrough-versus-routing choice from the iPhone app to
     /// the agent over the control link. The agent installs the program routes only
@@ -121,6 +136,8 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
             return "error"
         case .routeState:
             return "route-state"
+        case .publicAddress:
+            return "public-address"
         }
     }
 
@@ -137,6 +154,8 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
         case .error(let payload):
             return payload.version
         case .routeState(let payload):
+            return payload.version
+        case .publicAddress(let payload):
             return payload.version
         }
     }

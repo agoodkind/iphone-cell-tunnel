@@ -62,6 +62,12 @@ final class AgentRelayBridge: @unchecked Sendable {
     /// transition and withdraw on the one-to-0 transition.
     var onPhoneConnected: (@Sendable () -> Void)?
     var onPhoneDisconnected: (@Sendable () -> Void)?
+    /// Fired whenever the carrying link changes, with its interface identifier, its
+    /// transport class, and the local and peer addresses of the carrying connection,
+    /// so the agent reports the same `Connection` rows the iPhone does. Both address
+    /// pairs come from the same connection's path endpoints.
+    var onEgressInterfaceChange:
+        (@Sendable (String?, RelayLinkClass?, AddressPair, AddressPair) -> Void)?
 
     // MARK: - Lifecycle
 

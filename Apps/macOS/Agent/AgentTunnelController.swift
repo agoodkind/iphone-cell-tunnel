@@ -10,6 +10,7 @@ import CellTunnelCore
 import CellTunnelLog
 import Foundation
 @preconcurrency import NetworkExtension
+import Synchronization
 import WireGuardKit
 
 // MARK: - Constants
@@ -42,6 +43,19 @@ actor AgentTunnelController {
     var controlListener: AgentControlListener?
     let relayBridge: AgentRelayBridge
     let relayBrowser: RelayDeviceBrowser
+
+    /// The carrying link info, written from the bridge's egress callback off-actor and
+    /// read into the served snapshot. Nonisolated because the `Mutex` is its own
+    /// synchronization and the bridge callback runs off the actor.
+    nonisolated let linkInfo = Mutex(AgentLinkInfo())
+    /// The public-address exchange with the iPhone, read into the served snapshot.
+    var publicExchange: PublicAddressExchange?
+    /// Watches the Mac's own egress path so a Wi-Fi or interface change re-probes the
+    /// public address.
+    var egressMonitor: EgressPathMonitor?
+    /// Re-probes the public address on a slow backstop while the listener is up, so a
+    /// missed path event cannot leave the served address stale.
+    var publicRefreshTimer: DispatchSourceTimer?
 
     init(relayBridge: AgentRelayBridge, relayBrowser: RelayDeviceBrowser) {
         self.relayBridge = relayBridge
@@ -295,9 +309,9 @@ actor AgentTunnelController {
     ) async throws -> AgentControlResponse {
         let response = try await forward(request: .status, on: manager, operationName: "status")
         if let status = response.status {
-            return AgentControlResponse(status: status)
+            return AgentControlResponse(status: augmented(status))
         }
-        return AgentControlResponse(status: snapshot(from: manager))
+        return AgentControlResponse(status: augmented(snapshot(from: manager)))
     }
 }
 
@@ -415,6 +429,9 @@ extension AgentTunnelController {
             // The extension applied the route change, so report the confirmed state
             // to the iPhone over the control link.
             await controlListener?.sendRouteState(installed)
+            // Routing on or off changes which egress the Mac's own traffic takes, so
+            // its public address can change; re-probe and re-send it.
+            await refreshDeviceAddress()
         } catch {
             logger.error(
                 """

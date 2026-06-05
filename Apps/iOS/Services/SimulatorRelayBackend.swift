@@ -14,10 +14,6 @@
 
     private let logger = CellTunnelLog.logger(category: .relay)
 
-    // MARK: - Constants
-
-    private let relayStoppedStateText = "Stopped"
-
     // MARK: - SimulatorRelayBackend
 
     /// Hosts the real relay runtime in-process for the iOS Simulator, where the
@@ -50,21 +46,7 @@
 
         func sample() async -> RelayStatusSample? {
             await Task.yield()
-            let snapshot = runtime.statusSnapshot()
-            return RelayStatusSample(
-                isRunning: snapshot.running,
-                relayStateDescription: snapshot.relayState ?? relayStoppedStateText,
-                connectedPeerName: snapshot.connectedPeerName,
-                cellularPath: snapshot.cellularPath ?? CellularPathSnapshot(),
-                counters: snapshot.phoneCounters ?? TunnelCounters(),
-                lastError: snapshot.lastError,
-                routeState: snapshot.routeState,
-                peerState: snapshot.peerState,
-                localLinkInterfaceName: snapshot.localLinkInterfaceName,
-                relayHost: snapshot.relayHost,
-                relayServerIPv4Address: snapshot.relayServerIPv4Address,
-                relayServerIPv6Address: snapshot.relayServerIPv6Address
-            )
+            return RelayStatusSample(snapshot: runtime.statusSnapshot())
         }
 
         // MARK: - Routing

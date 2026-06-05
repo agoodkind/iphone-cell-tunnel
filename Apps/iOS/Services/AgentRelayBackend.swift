@@ -13,10 +13,6 @@
 
     private let logger = CellTunnelLog.logger(category: .relay)
 
-    // MARK: - Constants
-
-    private let relayStoppedStateText = "Stopped"
-
     // MARK: - AgentRelayBackend
 
     /// Drives the Mac relay UI by reading the headless agent over XPC. The agent
@@ -66,7 +62,7 @@
         func sample() async -> RelayStatusSample? {
             do {
                 let snapshot = try await client.status()
-                return makeSample(snapshot: snapshot)
+                return RelayStatusSample(snapshot: snapshot)
             } catch {
                 logger.error(
                     """
@@ -76,23 +72,6 @@
                 )
                 return nil
             }
-        }
-
-        private func makeSample(snapshot: TunnelDaemonStatusSnapshot) -> RelayStatusSample {
-            RelayStatusSample(
-                isRunning: snapshot.running,
-                relayStateDescription: snapshot.relayState ?? relayStoppedStateText,
-                connectedPeerName: snapshot.connectedPeerName,
-                cellularPath: snapshot.cellularPath ?? CellularPathSnapshot(),
-                counters: snapshot.macCounters ?? TunnelCounters(),
-                lastError: snapshot.lastError,
-                routeState: snapshot.routeState,
-                peerState: snapshot.peerState,
-                localLinkInterfaceName: snapshot.localLinkInterfaceName,
-                relayHost: snapshot.relayHost,
-                relayServerIPv4Address: snapshot.relayServerIPv4Address,
-                relayServerIPv6Address: snapshot.relayServerIPv6Address
-            )
         }
     }
 

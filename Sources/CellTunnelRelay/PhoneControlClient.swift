@@ -52,6 +52,14 @@ final class PhoneControlClient {
     /// dialed (the Mac hostname), or `nil` when the link drops. The displayed peer
     /// name comes from here.
     var onPeerName: (@MainActor (String?) -> Void)?
+    /// Fired with the peer's measured public address received over the control link,
+    /// shown as the peer's public IP.
+    var onPeerPublicAddress: (@MainActor (AddressPair) -> Void)?
+    /// Fired when the control connection reaches ready, so the public-address
+    /// exchange sends this device's address over a link that now exists. The data
+    /// link comes up on its own timeline, so the send is driven by the control link
+    /// becoming ready rather than the data peer going live.
+    var onConnectionReady: (@MainActor () -> Void)?
 
     // MARK: - Lifecycle
 
@@ -155,6 +163,7 @@ final class PhoneControlClient {
             onPeerName?(peerServiceName)
             receive(on: connection)
             startStatusLoop()
+            onConnectionReady?()
         case .waiting(let error):
             logger.error(
                 "control client connection waiting error=\(error.localizedDescription, privacy: .public)"
@@ -264,6 +273,14 @@ final class PhoneControlClient {
             return
         }
 
+        dispatch(decoded, on: connection)
+    }
+}
+
+// MARK: - Dispatch and send
+
+extension PhoneControlClient {
+    private func dispatch(_ decoded: RelayControlMessage, on connection: NWConnection) {
         switch decoded {
         case .setServerEndpoint(let payload):
             logger.notice(
@@ -298,10 +315,17 @@ final class PhoneControlClient {
                 "control received route-state installed=\(payload.installed, privacy: .public)"
             )
             onRouteState?(payload.installed)
+        case .publicAddress(let payload):
+            logger.notice(
+                """
+                control received peer public address \
+                ipv4=\(payload.addresses.ipv4 ?? "none", privacy: .public) \
+                ipv6=\(payload.addresses.ipv6 ?? "none", privacy: .public)
+                """
+            )
+            onPeerPublicAddress?(payload.addresses)
         }
     }
-
-    // MARK: - Send
 
     /// Pushes the user's routing choice to the agent over the control link. Without
     /// a live control connection the choice is dropped, since the agent learns the
@@ -315,6 +339,26 @@ final class PhoneControlClient {
             RelayControlMessage.SetRoutingEnabled(enabled: enabled))
         send(message, on: connection)
         logger.notice("control client sent routing enabled=\(enabled, privacy: .public)")
+    }
+
+    /// Sends this device's measured public address to the agent over the control
+    /// link. Dropped without a live connection; the exchange re-sends when the link
+    /// re-establishes and the peer reconnects.
+    func sendPublicAddress(_ addresses: AddressPair) {
+        guard let connection else {
+            logger.notice("control client public address dropped: no control connection")
+            return
+        }
+        let message = RelayControlMessage.publicAddress(
+            RelayControlMessage.PublicAddress(addresses: addresses))
+        send(message, on: connection)
+        logger.notice(
+            """
+            control client sent public address \
+            ipv4=\(addresses.ipv4 ?? "none", privacy: .public) \
+            ipv6=\(addresses.ipv6 ?? "none", privacy: .public)
+            """
+        )
     }
 
     private func send(_ message: RelayControlMessage, on connection: NWConnection) {

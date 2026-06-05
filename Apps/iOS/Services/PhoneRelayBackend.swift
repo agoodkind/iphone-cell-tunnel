@@ -20,7 +20,6 @@
     private let tunnelProviderBundleSuffix = ".Tunnel"
     private let tunnelServerAddress = "Cell Tunnel"
     private let tunnelLocalizedDescription = "Cell Tunnel"
-    private let relayStoppedStateText = "Stopped"
     private let invalidConfigurationError = "vpn configuration not approved"
     private let providerMessageTimeoutSeconds: Double = 5
 
@@ -148,20 +147,9 @@
         private func makeSample(
             snapshot: TunnelDaemonStatusSnapshot, connectionStatus: NEVPNStatus
         ) -> RelayStatusSample {
-            let sample = RelayStatusSample(
-                isRunning: snapshot.running || isConnectionRunning(connectionStatus),
-                relayStateDescription: snapshot.relayState ?? relayStoppedStateText,
-                connectedPeerName: snapshot.connectedPeerName,
-                cellularPath: snapshot.cellularPath ?? CellularPathSnapshot(),
-                counters: snapshot.phoneCounters ?? TunnelCounters(),
-                lastError: snapshot.lastError,
-                routeState: snapshot.routeState,
-                peerState: snapshot.peerState,
-                localLinkInterfaceName: snapshot.localLinkInterfaceName,
-                relayHost: snapshot.relayHost,
-                relayServerIPv4Address: snapshot.relayServerIPv4Address,
-                relayServerIPv6Address: snapshot.relayServerIPv6Address
-            )
+            var merged = snapshot
+            merged.running = snapshot.running || isConnectionRunning(connectionStatus)
+            let sample = RelayStatusSample(snapshot: merged)
             lastSample = sample
             return sample
         }
@@ -182,20 +170,7 @@
         }
 
         private func emptySample() -> RelayStatusSample {
-            RelayStatusSample(
-                isRunning: false,
-                relayStateDescription: relayStoppedStateText,
-                connectedPeerName: nil,
-                cellularPath: CellularPathSnapshot(),
-                counters: TunnelCounters(),
-                lastError: nil,
-                routeState: .notInstalled,
-                peerState: .notSelected,
-                localLinkInterfaceName: nil,
-                relayHost: nil,
-                relayServerIPv4Address: nil,
-                relayServerIPv6Address: nil
-            )
+            RelayStatusSample(snapshot: TunnelDaemonStatusSnapshot())
         }
 
         private func errorSample(message: String) -> RelayStatusSample {
