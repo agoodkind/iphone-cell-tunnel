@@ -18,6 +18,10 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 
 private let providerConfigWireGuardKey = "wireguardConfig"
 
+// The relay protocol name surfaced on the status `Protocol` row. This provider is a
+// WireGuard provider, so it is one of the few producers that names the protocol.
+private let relayProtocolName = "WireGuard"
+
 // The Mac tunnel extension reaches the relay data plane by dialing the agent on
 // the loopback interface. The agent hosts the relay listener and bridges to the
 // iPhone, because a listener inside this extension cannot receive inbound.
@@ -221,6 +225,10 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             // The agent owns the routing choice and translates it into setRouteState,
             // so the Mac extension never receives this request directly.
             return ProviderControlResponse(status: currentStatusSnapshot())
+        case .selectPeer:
+            // The agent owns relay discovery and selection, so the Mac extension never
+            // receives this request directly.
+            return ProviderControlResponse(status: currentStatusSnapshot())
         case .discoverySnapshot:
             // Discovery is owned by the agent; the extension holds no browser.
             return ProviderControlResponse(discovery: TunnelDiscoverySnapshot())
@@ -331,7 +339,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
             macCounters: relayMetrics.snapshot(),
             relayHost: serverEndpoint?.host,
             relayServerIPv4Address: resolvedServerAddresses?.ipv4,
-            relayServerIPv6Address: resolvedServerAddresses?.ipv6
+            relayServerIPv6Address: resolvedServerAddresses?.ipv6,
+            relayProtocol: relayProtocolName
         )
     }
 

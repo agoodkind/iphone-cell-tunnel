@@ -7,11 +7,12 @@
 //
 
 import CellTunnelCore
+import Foundation
 
 // MARK: - PreviewRelayBackend
 
 /// A no-op backend so the SwiftUI previews can build a `RelayController` without a
-/// platform session. It answers no status, which renders the not-set-up state. The
+/// platform session. It answers no status, which renders the no-peers state. The
 /// yields keep the no-op functions real suspension points for the async contract.
 @MainActor
 final class PreviewRelayBackend: RelayControlBackend {
@@ -25,6 +26,14 @@ final class PreviewRelayBackend: RelayControlBackend {
     }
 
     func setRouting(enabled _: Bool) async {
+        await Task.yield()
+    }
+
+    func selectPeer(id _: String) async {
+        await Task.yield()
+    }
+
+    func installTunnel(configURL _: URL) async {
         await Task.yield()
     }
 }

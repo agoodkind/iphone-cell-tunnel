@@ -342,6 +342,10 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     /// The WireGuard server's IPv6 address, the endpoint hostname resolved to its
     /// AAAA record, or `nil` when not yet resolved.
     public var relayServerIPv6Address: String?
+    /// The relay tunnel protocol name, shown as the status `Protocol` qualifier, set
+    /// only by the WireGuard providers that build the snapshot, or `nil` elsewhere so
+    /// the status surface reads the producer's value rather than a hardcoded literal.
+    public var relayProtocol: String?
 
     public init(
         running: Bool = false,
@@ -365,7 +369,8 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         peerLinkAddresses: AddressPair? = nil,
         relayHost: String? = nil,
         relayServerIPv4Address: String? = nil,
-        relayServerIPv6Address: String? = nil
+        relayServerIPv6Address: String? = nil,
+        relayProtocol: String? = nil
     ) {
         self.running = running
         self.routeState = routeState
@@ -389,6 +394,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         self.relayHost = relayHost
         self.relayServerIPv4Address = relayServerIPv4Address
         self.relayServerIPv6Address = relayServerIPv6Address
+        self.relayProtocol = relayProtocol
     }
 
     public var renderedOutput: String {

@@ -32,6 +32,18 @@ struct RelayStatusSample: Sendable {
     var routeState: TunnelRouteState
     /// Whether a WireGuard peer is configured, which gates the connected states.
     var peerState: TunnelPeerState
+    /// Whether a tunnel profile is saved, the gate between the install-tunnel setup
+    /// tier and the running states. Derived from `peerState` and overridable by a
+    /// backend that knows its own manager presence.
+    var isTunnelInstalled: Bool
+    /// The peers discovery currently sees, the selected peer's id, and the discovery
+    /// phase, surfaced from the snapshot's discovery section.
+    var discoveredPeers: [TunnelRelayService]
+    var selectedPeerID: String?
+    var discoveryPhase: TunnelDiscoveryPhase
+    /// The relay tunnel protocol name shown on the status `Protocol` row, set by the
+    /// WireGuard producers, or `nil` before a snapshot names it.
+    var relayProtocol: String?
     /// The carrying link's raw interface identifier and transport class, shown on the
     /// `Connected via` row.
     var localLinkInterfaceName: String?
@@ -63,6 +75,11 @@ struct RelayStatusSample: Sendable {
         lastError = snapshot.lastError
         routeState = snapshot.routeState
         peerState = snapshot.peerState
+        isTunnelInstalled = snapshot.peerState != .notSelected
+        discoveredPeers = snapshot.discovery.services
+        selectedPeerID = snapshot.discovery.selectedServiceID
+        discoveryPhase = snapshot.discovery.phase
+        relayProtocol = snapshot.relayProtocol
         localLinkInterfaceName = snapshot.localLinkInterfaceName
         localLinkClass = snapshot.localLinkClass
         devicePublicAddresses = snapshot.devicePublicAddresses ?? .empty
@@ -94,6 +111,14 @@ protocol RelayControlBackend {
     /// passthrough. The choice reaches the agent, which owns the routes, over the
     /// platform's control path.
     func setRouting(enabled: Bool) async
+
+    /// Selects the discovered peer to connect to. The Mac forwards the choice to the
+    /// agent; the iPhone records it and dials that peer over the control link.
+    func selectPeer(id: String) async
+
+    /// Installs the tunnel profile from an imported configuration. The Mac hands the
+    /// config to the agent's start path; the iPhone saves its own tunnel manager.
+    func installTunnel(configURL: URL) async
 }
 
 // MARK: - RelayController
@@ -106,15 +131,21 @@ protocol RelayControlBackend {
 @Observable
 final class RelayController {
     private let backend: any RelayControlBackend
+    private let installState: InstallationState
+    private let deviceProbe: DeviceEgressProbe?
     private var pollTask: Task<Void, Never>?
     private var throughput: ThroughputCalculator
     private var lifetimeStore: LifetimeDataStore
+    // The latest device egress and public address from the backend snapshot and from
+    // the app's own probe, kept apart so one recompute picks the right source: the
+    // backend's values while the relay carries the device's traffic, the probe's
+    // otherwise.
+    private var backendCellularPath = CellularPathSnapshot()
+    private var backendDevicePublicAddresses = AddressPair.empty
+    private var probeCellularPath = CellularPathSnapshot()
+    private var probeDevicePublicAddresses = AddressPair.empty
 
     var isRunning = false
-    /// Whether a start has been requested but the session is not yet running, so the
-    /// screen can show `Starting relay…` distinct from a stopped session. Set when
-    /// `start()` is called and cleared once a sample reports the session running.
-    var isStarting = false
     var connectedPeerName: String?
     var cellularPath = CellularPathSnapshot()
     var counters = TunnelCounters()
@@ -127,6 +158,23 @@ final class RelayController {
     var relayStateDescription = relayStoppedStateText
     var routeState: TunnelRouteState = .notInstalled
     var peerState: TunnelPeerState = .notSelected
+    /// Whether the background agent is installed, the gate to the install-agent setup
+    /// tier. Always true on the iPhone, where there is no separate agent; on the Mac
+    /// it tracks the install state.
+    var isAgentInstalled = true
+    /// Whether a tunnel profile is saved, the gate to the install-tunnel setup tier.
+    var isTunnelInstalled = false
+    /// Whether the agent install is registered but awaiting the user's Login Items
+    /// approval, surfaced so the setup screen can route them to System Settings.
+    var isAgentApprovalPending = false
+    /// The peers discovery currently sees, the selected peer's id, and the discovery
+    /// phase, the inputs to the peers list and the no-peer states.
+    var discoveredPeers: [TunnelRelayService] = []
+    var selectedPeerID: String?
+    var discoveryPhase: TunnelDiscoveryPhase = .stopped
+    /// The relay tunnel protocol name shown on the status `Protocol` row, read from
+    /// the snapshot's producer rather than a hardcoded literal.
+    var relayProtocol: String?
     var localLinkInterfaceName: String?
     var localLinkClass: RelayLinkClass?
     var localLinkAddresses = AddressPair.empty
@@ -140,21 +188,65 @@ final class RelayController {
     init(
         backend: any RelayControlBackend,
         throughput: ThroughputCalculator,
-        lifetimeStore: LifetimeDataStore
+        lifetimeStore: LifetimeDataStore,
+        installState: InstallationState = InstallationState(),
+        deviceProbe: DeviceEgressProbe? = nil
     ) {
         self.backend = backend
         self.throughput = throughput
         self.lifetimeStore = lifetimeStore
+        self.installState = installState
+        self.deviceProbe = deviceProbe
     }
 
     // MARK: - Lifecycle
 
-    /// Brings the platform session up, then starts the status poll.
+    /// Brings the platform session up, starts the app's own egress probe, then starts
+    /// the status poll.
     func start() async {
         logger.notice("relay controller start requested")
-        isStarting = true
+        startDeviceProbe()
         await backend.start()
         startPolling()
+    }
+
+    // Wires the app's egress probe to the device-value recompute and starts it for
+    // the app lifetime, so the `Device` rows show the app's own egress before the
+    // relay runs and whenever the relay does not carry the device's traffic.
+    private func startDeviceProbe() {
+        guard let deviceProbe else {
+            logger.notice("relay controller device probe absent; skipping start")
+            return
+        }
+        deviceProbe.onUpdate = { [weak self] path, publicAddresses in
+            Task { @MainActor [weak self] in
+                self?.applyProbe(cellularPath: path, publicAddresses: publicAddresses)
+            }
+        }
+        deviceProbe.start()
+        logger.notice("relay controller device probe started")
+    }
+
+    private func applyProbe(cellularPath: CellularPathSnapshot, publicAddresses: AddressPair) {
+        probeCellularPath = cellularPath
+        probeDevicePublicAddresses = publicAddresses
+        recomputeDeviceValues()
+    }
+
+    // Picks the device egress and public address source: the backend snapshot while
+    // the relay runs and carries a value, otherwise the app's own probe. The
+    // `Interface` rows follow from the chosen `cellularPath`.
+    private func recomputeDeviceValues() {
+        if isRunning, backendCellularPath.interfaceName != nil {
+            cellularPath = backendCellularPath
+        } else {
+            cellularPath = probeCellularPath
+        }
+        if isRunning, !backendDevicePublicAddresses.isEmpty {
+            devicePublicAddresses = backendDevicePublicAddresses
+        } else {
+            devicePublicAddresses = probeDevicePublicAddresses
+        }
     }
 
     /// Suspends the status poll without touching the session, for backgrounding.
@@ -182,6 +274,9 @@ final class RelayController {
                 }
                 if let sample = await backend.sample() {
                     apply(sample)
+                    refreshInstallState(agentReachable: true)
+                } else {
+                    refreshInstallState(agentReachable: false)
                 }
                 guard !Task.isCancelled else {
                     return
@@ -199,11 +294,8 @@ final class RelayController {
 
     private func apply(_ sample: RelayStatusSample) {
         isRunning = sample.isRunning
-        if sample.isRunning {
-            isStarting = false
-        }
         connectedPeerName = sample.connectedPeerName
-        cellularPath = sample.cellularPath
+        backendCellularPath = sample.cellularPath
         counters = sample.counters
         let lifetime = lifetimeStore.totals(
             sessionTransferred: sample.counters.relayBytesIn,
@@ -216,19 +308,33 @@ final class RelayController {
         relayStateDescription = sample.relayStateDescription
         routeState = sample.routeState
         peerState = sample.peerState
+        isTunnelInstalled = sample.isTunnelInstalled
+        discoveredPeers = sample.discoveredPeers
+        selectedPeerID = sample.selectedPeerID
+        discoveryPhase = sample.discoveryPhase
+        relayProtocol = sample.relayProtocol
         localLinkInterfaceName = sample.localLinkInterfaceName
         localLinkClass = sample.localLinkClass
         localLinkAddresses = sample.localLinkAddresses
         peerLinkAddresses = sample.peerLinkAddresses
-        devicePublicAddresses = sample.devicePublicAddresses
+        backendDevicePublicAddresses = sample.devicePublicAddresses
         peerPublicAddresses = sample.peerPublicAddresses
         relayHost = sample.relayHost
         relayServerIPv4Address = sample.relayServerIPv4Address
         relayServerIPv6Address = sample.relayServerIPv6Address
+        recomputeDeviceValues()
         let rate = throughput.update(with: sample.counters)
         uploadMbps = rate.upload
         downloadMbps = rate.download
         logger.debug("relay controller sample applied running=\(self.isRunning, privacy: .public)")
+    }
+
+    // Refreshes the agent install state each poll, so the install-agent setup tier
+    // appears on a Mac with no agent and clears once the agent answers or is enabled.
+    private func refreshInstallState(agentReachable: Bool) {
+        installState.refresh(agentReachable: agentReachable)
+        isAgentInstalled = installState.isAgentInstalled
+        isAgentApprovalPending = installState.isApprovalPending
     }
 
     // MARK: - Routing control
@@ -241,6 +347,37 @@ final class RelayController {
         logger.notice(
             "relay controller route traffic requested enabled=\(enabled, privacy: .public)")
         await backend.setRouting(enabled: enabled)
+    }
+
+    // MARK: - Peer selection
+
+    /// Selects the discovered peer to connect to. The next status snapshot reflects
+    /// the selection and, once the link is up, moves the screen to passthrough.
+    func selectPeer(id: String) async {
+        logger.notice("relay controller select peer id=\(id, privacy: .public)")
+        await backend.selectPeer(id: id)
+    }
+
+    // MARK: - Setup actions
+
+    /// Registers the background agent, the install-agent setup action. Mac only; the
+    /// iPhone has no separate agent, so the install state holds it as always present.
+    func installAgent() {
+        logger.notice("relay controller install agent requested")
+        installState.registerAgent()
+    }
+
+    /// Opens Login Items so the user can approve a registered-but-pending agent.
+    func openLoginItems() {
+        logger.notice("relay controller open login items requested")
+        installState.openLoginItems()
+    }
+
+    /// Installs the tunnel profile from an imported configuration, the install-tunnel
+    /// setup action. The backend hands it to the platform's start path.
+    func installTunnel(configURL: URL) async {
+        logger.notice("relay controller install tunnel requested")
+        await backend.installTunnel(configURL: configURL)
     }
 
     /// Spaces polls without `Task.sleep` by resuming off a dispatch queue after the

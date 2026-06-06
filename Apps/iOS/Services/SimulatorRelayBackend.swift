@@ -56,6 +56,26 @@
                 "simulator relay backend routing enabled=\(enabled, privacy: .public)")
             runtime.setRoutingEnabled(enabled)
         }
+
+        // MARK: - Peer selection
+
+        // Records the chosen Mac control service and dials it through the in-process
+        // runtime's control link.
+        func selectPeer(id: String) async {
+            await Task.yield()
+            logger.notice("simulator relay backend select peer id=\(id, privacy: .public)")
+            runtime.selectPeer(id: id)
+        }
+
+        // MARK: - Tunnel install
+
+        // The in-process relay needs no saved profile and no WireGuard config, so the
+        // install action just brings the runtime up.
+        func installTunnel(configURL _: URL) async {
+            await Task.yield()
+            logger.notice("simulator relay backend install tunnel: starting runtime")
+            runtime.start()
+        }
     }
 
 #endif

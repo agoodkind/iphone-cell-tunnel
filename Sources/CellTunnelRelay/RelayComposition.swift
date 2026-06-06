@@ -32,10 +32,19 @@ protocol RelayControlChannel: Sendable {
     )
     func setPeerPublicAddressHandler(_ handler: @escaping @MainActor (AddressPair) -> Void)
     func setConnectionReadyHandler(_ handler: @escaping @MainActor () -> Void)
+    /// Reports the Mac agent control services the browser currently sees, each a
+    /// selectable peer. The engine stores them for the served snapshot and decides
+    /// which one to dial.
+    func setServicesChangedHandler(
+        _ handler: @escaping @MainActor ([TunnelRelayService]) -> Void
+    )
     func start()
     func stop()
     func sendRoutingEnabled(_ enabled: Bool)
     func sendPublicAddress(_ addresses: AddressPair)
+    /// Dials the discovered service with the given id, dropping any existing
+    /// connection to a different peer, so selection drives which Mac the iPhone joins.
+    func selectService(id: String)
 }
 
 // MARK: - PhoneControlClient
@@ -61,6 +70,12 @@ extension PhoneControlClient: RelayControlChannel {
 
     func setConnectionReadyHandler(_ handler: @escaping @MainActor () -> Void) {
         onConnectionReady = handler
+    }
+
+    func setServicesChangedHandler(
+        _ handler: @escaping @MainActor ([TunnelRelayService]) -> Void
+    ) {
+        onServicesChanged = handler
     }
 }
 

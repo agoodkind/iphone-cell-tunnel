@@ -38,6 +38,14 @@ final class PhoneControlClient {
     // The agent control service name the phone connected to (the Mac hostname),
     // reported as the peer name. Cleared when the link drops.
     private var peerServiceName: String?
+    // The dialable endpoint for each discovered service id, so a selection resolves
+    // to the endpoint to dial without re-browsing.
+    private var serviceEndpoints: [String: NWEndpoint] = [:]
+    // The service id the user (or the single-peer auto-select) chose to dial.
+    private var selectedServiceID: String?
+    // The service id of the live connection, so a selection change to a different
+    // peer drops the old link before dialing the new one.
+    private var connectedServiceID: String?
 
     var onSetServerEndpoint: EndpointHandler?
     var statusProvider: StatusProvider?
@@ -60,6 +68,10 @@ final class PhoneControlClient {
     /// link comes up on its own timeline, so the send is driven by the control link
     /// becoming ready rather than the data peer going live.
     var onConnectionReady: (@MainActor () -> Void)?
+    /// Fired with the Mac agent control services the browser currently sees, each a
+    /// selectable peer. The engine stores them for the served snapshot and decides
+    /// which one to dial.
+    var onServicesChanged: (@MainActor ([TunnelRelayService]) -> Void)?
 
     // MARK: - Lifecycle
 
@@ -79,14 +91,9 @@ final class PhoneControlClient {
             }
         }
         nwBrowser.browseResultsChangedHandler = { [weak self] results, _ in
-            for result in results {
-                if case .service = result.endpoint {
-                    let endpoint = result.endpoint
-                    Task { @MainActor [weak self] in
-                        self?.connectIfNeeded(to: endpoint)
-                    }
-                    return
-                }
+            let endpoints = results.map(\.endpoint)
+            Task { @MainActor [weak self] in
+                self?.applyBrowseResults(endpoints)
             }
         }
         nwBrowser.start(queue: queue)
@@ -104,6 +111,7 @@ final class PhoneControlClient {
         statusTimer = nil
         connection?.cancel()
         connection = nil
+        connectedServiceID = nil
         browser?.cancel()
         browser = nil
         logger.notice("control client stopped")
@@ -125,10 +133,79 @@ final class PhoneControlClient {
         }
     }
 
-    private func connectIfNeeded(to endpoint: NWEndpoint) {
+    // Maps the browse results to selectable services, surfaces them, and dials the
+    // resolved target. The user's selection wins when its service is still present;
+    // otherwise a single discovered peer is auto-selected and dialed, matching the
+    // agent's single-peer behavior. With several peers and no selection, nothing is
+    // dialed until the user picks one.
+    private func applyBrowseResults(_ endpoints: [NWEndpoint]) {
+        var services: [TunnelRelayService] = []
+        var endpointsByID: [String: NWEndpoint] = [:]
+        for endpoint in endpoints {
+            guard case let .service(name, type, domain, interface) = endpoint else {
+                continue
+            }
+            let interfaceIndex = interface.map { Int($0.index) } ?? 0
+            let identifier = "\(name).\(type).\(domain)#\(interfaceIndex)"
+            endpointsByID[identifier] = endpoint
+            services.append(
+                TunnelRelayService(
+                    id: identifier,
+                    serviceName: name,
+                    serviceType: type,
+                    domain: domain,
+                    interfaceIndex: interfaceIndex,
+                    hostName: "",
+                    endpoints: [],
+                    preferredEndpoint: nil,
+                    isSelected: identifier == selectedServiceID
+                )
+            )
+        }
+        serviceEndpoints = endpointsByID
+        onServicesChanged?(services)
+        redialSelectedIfNeeded()
+    }
+
+    // Redials the standing selection after a browse refresh, so a peer that dropped
+    // and reappeared reconnects without the user reselecting. The engine owns the
+    // initial selection decision; this only re-establishes an existing choice.
+    private func redialSelectedIfNeeded() {
+        guard let selectedServiceID, connection == nil,
+            let endpoint = serviceEndpoints[selectedServiceID]
+        else {
+            return
+        }
+        connectIfNeeded(to: endpoint, id: selectedServiceID)
+    }
+
+    /// Records the user's chosen service and dials it, dropping a live connection to a
+    /// different peer first, so selection drives which Mac the iPhone joins.
+    func selectService(id: String) {
+        selectedServiceID = id
+        guard let endpoint = serviceEndpoints[id] else {
+            logger.notice(
+                "control client selection deferred id=\(id, privacy: .public) reason=not-yet-discovered"
+            )
+            return
+        }
+        if connectedServiceID == id, connection != nil {
+            return
+        }
+        if connection != nil {
+            connection?.cancel()
+            connection = nil
+            connectedServiceID = nil
+        }
+        connectIfNeeded(to: endpoint, id: id)
+        logger.notice("control client dialing selected peer id=\(id, privacy: .public)")
+    }
+
+    private func connectIfNeeded(to endpoint: NWEndpoint, id: String) {
         guard connection == nil else {
             return
         }
+        connectedServiceID = id
         if case .service(let name, _, _, _) = endpoint {
             peerServiceName = name
         }
@@ -194,6 +271,7 @@ final class PhoneControlClient {
     // link. Gated on `isActive` so an intentional `stop` does not trigger it.
     private func notifyConnectionDropped() {
         peerServiceName = nil
+        connectedServiceID = nil
         guard isActive else {
             return
         }

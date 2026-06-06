@@ -13,6 +13,7 @@ public let providerControlWireVersion = 1
 public enum ProviderControlRequest: Codable, Sendable {
     case discoverySnapshot
     case reloadConfig(text: String)
+    case selectPeer(id: String)
     case setRouteState(installed: Bool)
     case setRoutingEnabled(enabled: Bool)
     case status
@@ -21,12 +22,14 @@ public enum ProviderControlRequest: Codable, Sendable {
         case configText
         case installed
         case kind
+        case peerID
         case routingEnabled
     }
 
     private enum Kind: String, Codable {
         case discoverySnapshot
         case reloadConfig
+        case selectPeer
         case setRouteState
         case setRoutingEnabled
         case status
@@ -41,6 +44,9 @@ public enum ProviderControlRequest: Codable, Sendable {
         case .reloadConfig:
             let text = try container.decode(String.self, forKey: .configText)
             self = .reloadConfig(text: text)
+        case .selectPeer:
+            let id = try container.decode(String.self, forKey: .peerID)
+            self = .selectPeer(id: id)
         case .setRouteState:
             let installed = try container.decode(Bool.self, forKey: .installed)
             self = .setRouteState(installed: installed)
@@ -60,6 +66,9 @@ public enum ProviderControlRequest: Codable, Sendable {
         case .reloadConfig(let text):
             try container.encode(Kind.reloadConfig, forKey: .kind)
             try container.encode(text, forKey: .configText)
+        case .selectPeer(let id):
+            try container.encode(Kind.selectPeer, forKey: .kind)
+            try container.encode(id, forKey: .peerID)
         case .setRouteState(let installed):
             try container.encode(Kind.setRouteState, forKey: .kind)
             try container.encode(installed, forKey: .installed)

@@ -118,9 +118,17 @@
         ) -> RelayStatusSample {
             var merged = snapshot
             merged.running = snapshot.running || isConnectionRunning(connectionStatus)
-            let sample = RelayStatusSample(snapshot: merged)
+            var sample = RelayStatusSample(snapshot: merged)
+            sample.isTunnelInstalled = hasInstalledTunnel
             lastSample = sample
             return sample
+        }
+
+        // On the iPhone the tunnel is installed once its own provider manager is saved
+        // with a protocol configuration, independent of the running state, so the
+        // setup tier clears as soon as the profile exists.
+        private var hasInstalledTunnel: Bool {
+            manager?.protocolConfiguration != nil
         }
 
         // Reuses the last good reading so a momentary missing payload does not blank
@@ -129,6 +137,7 @@
         private func fallbackSample(connectionStatus: NEVPNStatus) -> RelayStatusSample {
             var sample = lastSample ?? emptySample()
             sample.isRunning = isConnectionRunning(connectionStatus)
+            sample.isTunnelInstalled = hasInstalledTunnel
             if connectionStatus == .invalid {
                 sample.lastError = invalidConfigurationError
             }
@@ -243,6 +252,48 @@
                     """
                 )
             }
+        }
+
+        // MARK: - Peer selection
+
+        // Forwards the peer selection to the extension's relay runtime over a provider
+        // message, which dials the chosen Mac control service.
+        func selectPeer(id: String) async {
+            if isSimulator {
+                await simulatorProbe.selectPeer(id: id)
+                return
+            }
+            guard let session else {
+                logger.notice("phone relay backend peer selection ignored: no session")
+                return
+            }
+            do {
+                let payload = try JSONEncoder().encode(
+                    ProviderControlEnvelope(request: .selectPeer(id: id)))
+                _ = try await sendProviderMessage(payload, on: session)
+                logger.notice(
+                    "phone relay backend peer selection sent id=\(id, privacy: .public)")
+            } catch {
+                logger.error(
+                    """
+                    phone relay backend peer selection failed \
+                    details=\(String(describing: error), privacy: .public) recovery=keep-state
+                    """
+                )
+            }
+        }
+
+        // MARK: - Tunnel install
+
+        // The iPhone tunnel carries no WireGuard config, so installing it saves and
+        // starts the provider manager through the existing start path.
+        func installTunnel(configURL _: URL) async {
+            if isSimulator {
+                await simulatorProbe.installTunnel(configURL: URL(fileURLWithPath: "/"))
+                return
+            }
+            logger.notice("phone relay backend install tunnel: starting session")
+            await start()
         }
 
         private func sendStatusRequest(

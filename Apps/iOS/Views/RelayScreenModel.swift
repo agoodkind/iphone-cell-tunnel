@@ -15,7 +15,7 @@ private let logger = CellTunnelLog.logger(category: .app)
 // MARK: - Constants
 
 private let emptyValuePlaceholder = "(none)"
-private let wireGuardProtocolName = "WireGuard"
+private let openLoginItemsTitle = "Open Login Items"
 private let dataSectionTitle = "Data"
 private let currentSpeedSectionTitle = "Current Speed"
 private let bytesCountStyle = ByteCountFormatStyle(style: .file, spellsOutZero: false)
@@ -33,6 +33,12 @@ struct ConnectionRow: Identifiable, Equatable {
     var isQualifier = false
 
     var id: String { label }
+
+    /// Whether the value has not arrived yet, so the Mac renders the row as a redacted
+    /// skeleton placeholder rather than the literal placeholder text.
+    var isPlaceholder: Bool {
+        value == emptyValuePlaceholder
+    }
 }
 
 // MARK: - ConnectionSection
@@ -49,55 +55,174 @@ struct ConnectionSection: Identifiable, Equatable {
     var id: String { title }
 }
 
-// MARK: - RelayScreenState
+// MARK: - RelayUITier
 
-/// The single state that drives the whole status screen. Every case has a defined
-/// zero state in the section data the model builds, so the views never render an
-/// unlabeled value.
-enum RelayScreenState: Equatable {
-    case connecting
-    case disconnected
+/// Which screen the status renders. The two setup states take over the whole screen
+/// with a single guided action; every other state shows the reduced dashboard with
+/// its rows, peers, and action.
+enum RelayUITier: Equatable {
+    case full
+    case reduced
+}
+
+// MARK: - RelayStatus
+
+/// The relay status, the single value the whole status screen renders from. The seven
+/// cases are the canonical states shared by the iPhone and the Mac, a set rather than
+/// a precedence chain. The type owns its UI tier, its label, whether routing is
+/// available, whether the live speed shows, and the offered action, so the views never
+/// infer state from a pile of separate flags. The labels are neutral placeholders, not
+/// final copy, and never use the banned words.
+enum RelayStatus: Equatable {
     case error(String)
-    case noCellular
-    case notSetUp
+    case noAgent
+    case noPeerSelected
+    case noPeersFound
+    case noTunnelInstalled
     case passthrough
-    case routing
-    case starting
+    case relayEnabled
 
-    /// Whether the routing-only `Current Speed` section is shown.
-    var showsSpeed: Bool {
-        self == .routing
+    /// Builds the status from named, single-purpose inputs. A failure wins; then the
+    /// agent must be present, then a saved tunnel, then a discovered peer, then a
+    /// selected and established peer link, since the relay cannot carry traffic without
+    /// the link; with the link up, routing on is relaying and routing off is
+    /// passthrough. `isAgentInstalled` is always true on the iPhone.
+    init(
+        errorMessage: String?,
+        isAgentInstalled: Bool,
+        isTunnelInstalled: Bool,
+        peersFound: Bool,
+        isPeerConnected: Bool,
+        isRouting: Bool,
+        peerSelected: Bool
+    ) {
+        if let errorMessage, !errorMessage.isEmpty {
+            self = .error(errorMessage)
+        } else if !isAgentInstalled {
+            self = .noAgent
+        } else if !isTunnelInstalled {
+            self = .noTunnelInstalled
+        } else if !peersFound {
+            self = .noPeersFound
+        } else if !peerSelected || !isPeerConnected {
+            self = .noPeerSelected
+        } else if isRouting {
+            self = .relayEnabled
+        } else {
+            self = .passthrough
+        }
     }
 
-    /// Whether the routing switch is disabled. It is enabled only when the peer link
-    /// is up and routing can actually be turned on, the `passthrough` and `routing`
-    /// states; every other state disables it.
-    var disablesControls: Bool {
+    /// Which screen renders this state: a full guided setup for the two install states,
+    /// the reduced dashboard for everything else.
+    var uiTier: RelayUITier {
         switch self {
-        case .passthrough, .routing:
-            return false
-        case .connecting, .disconnected, .error, .noCellular, .notSetUp, .starting:
-            return true
+        case .noAgent, .noTunnelInstalled:
+            return .full
+        case .error, .noPeerSelected, .noPeersFound, .passthrough, .relayEnabled:
+            return .reduced
         }
+    }
+
+    /// The neutral status word shown as the switch's left label and the reduced-tier
+    /// status line.
+    var label: String {
+        switch self {
+        case .error:
+            return "Error"
+        case .noAgent:
+            return "Agent not installed"
+        case .noPeerSelected:
+            return "No peer selected"
+        case .noPeersFound:
+            return "Searching for peers"
+        case .noTunnelInstalled:
+            return "Tunnel not installed"
+        case .passthrough:
+            return "Passthrough"
+        case .relayEnabled:
+            return "Relay on"
+        }
+    }
+
+    /// Whether the routing switch is usable. Only the two established-link states let
+    /// the user choose passthrough versus relaying; the rest disable the switch.
+    var allowsRouting: Bool {
+        switch self {
+        case .passthrough, .relayEnabled:
+            return true
+        case .error, .noAgent, .noPeerSelected, .noPeersFound, .noTunnelInstalled:
+            return false
+        }
+    }
+
+    /// Whether the live `Current Speed` section shows, only while relaying.
+    var showsSpeed: Bool {
+        self == .relayEnabled
+    }
+
+    /// The optional offered action for the current state. Passthrough and relaying
+    /// offer no action beyond the routing switch itself.
+    var action: RelayHeroAction? {
+        switch self {
+        case .error:
+            return .retry
+        case .noAgent:
+            return .installAgent
+        case .noTunnelInstalled:
+            return .installTunnel
+        case .noPeerSelected:
+            return .selectPeer
+        case .noPeersFound, .passthrough, .relayEnabled:
+            return nil
+        }
+    }
+
+    /// The error message when the status is an error, otherwise nil.
+    var errorMessage: String? {
+        guard case .error(let message) = self else {
+            return nil
+        }
+        return message
     }
 }
 
 // MARK: - RelayHeroAction
 
-/// The optional call to action for the current state, rendered as a button row in
-/// the status section. Each case maps to one controller operation, so the view holds
-/// no branching of its own.
+/// The offered call to action for the current state. Each case maps to one controller
+/// operation, so the view holds no branching of its own. `selectPeer` is offered by
+/// the reduced-tier peers list rather than a single button.
 enum RelayHeroAction: Equatable {
+    case installAgent
+    case installTunnel
     case retry
-    case setUp
+    case selectPeer
 
     /// The button title shown in the action row.
     var title: String {
         switch self {
+        case .installAgent:
+            return "Install Agent"
+        case .installTunnel:
+            return "Install Tunnel"
         case .retry:
             return "Retry"
-        case .setUp:
-            return "Set Up"
+        case .selectPeer:
+            return "Select Peer"
+        }
+    }
+
+    /// The SF Symbol shown beside the action on the setup screen.
+    var systemImage: String {
+        switch self {
+        case .installAgent:
+            return "gearshape.2"
+        case .installTunnel:
+            return "arrow.down.doc"
+        case .retry:
+            return "arrow.clockwise"
+        case .selectPeer:
+            return "person.crop.circle.badge.checkmark"
         }
     }
 }
@@ -112,53 +237,27 @@ enum RelayHeroAction: Equatable {
 struct RelayScreenModel {
     let controller: RelayController
 
-    // MARK: - State
+    // MARK: - Status
 
-    /// The derived screen state from the controller's published status.
-    var state: RelayScreenState {
-        if let error = controller.lastError, !error.isEmpty {
-            return .error(error)
-        }
-        if controller.isStarting, !controller.isRunning {
-            return .starting
-        }
-        guard controller.peerState != .notSelected || controller.isRunning else {
-            return .notSetUp
-        }
-        guard controller.isRunning else {
-            return .disconnected
-        }
-        if controller.connectedPeerName == nil {
-            return .connecting
-        }
-        if !controller.cellularPath.isSatisfied {
-            return .noCellular
-        }
-        return controller.routeState == .installed ? .routing : .passthrough
+    /// The relay status, built from the controller's published signals through named,
+    /// single-purpose inputs. The relay can carry traffic only with the peer, so the
+    /// peer is the gate; the local interface flag (`isRunning`) is not an input. Both
+    /// screens read `status.label`, `status.allowsRouting`, and `status.showsSpeed`.
+    var status: RelayStatus {
+        RelayStatus(
+            errorMessage: controller.lastError,
+            isAgentInstalled: controller.isAgentInstalled,
+            isTunnelInstalled: controller.isTunnelInstalled,
+            peersFound: !controller.discoveredPeers.isEmpty,
+            isPeerConnected: controller.connectedPeerName != nil,
+            isRouting: controller.routeState == .installed,
+            peerSelected: controller.selectedPeerID != nil
+        )
     }
 
-    /// The lifecycle status shown as the switch's left label. The wording names each
-    /// phase, separating the relay coming up from reaching the peer, and reads as not
-    /// routing in passthrough.
-    var statusLabel: String {
-        switch state {
-        case .notSetUp:
-            return "Not set up"
-        case .starting:
-            return "Starting relay…"
-        case .disconnected:
-            return "Disconnected"
-        case .connecting:
-            return "Connecting to peer…"
-        case .noCellular:
-            return "No network"
-        case .passthrough:
-            return "Ready to route"
-        case .routing:
-            return "Routing"
-        case .error:
-            return "Error"
-        }
+    /// Which screen the status renders: full guided setup or the reduced dashboard.
+    var uiTier: RelayUITier {
+        status.uiTier
     }
 
     /// The `Route traffic` switch binding: it reads the routing state and writes the
@@ -173,7 +272,7 @@ struct RelayScreenModel {
         )
     }
 
-    /// Brings the relay session up, the action behind both `Set Up` and `Retry`.
+    /// Brings the relay session up, the action behind `Retry`.
     func startSession() {
         logger.notice("relay screen start requested")
         Task { await controller.start() }
@@ -181,26 +280,69 @@ struct RelayScreenModel {
 
     // MARK: - Action
 
-    /// The optional action for the current state: `Set Up` before a session exists,
-    /// `Retry` after an error, nil otherwise. Shown as a row in the status section,
-    /// since the screen is always the full list rather than a centered hero.
+    /// The optional offered action for the current status, owned by the status itself.
     var heroAction: RelayHeroAction? {
-        switch state {
-        case .notSetUp:
-            return .setUp
-        case .error:
-            return .retry
-        default:
-            return nil
+        status.action
+    }
+
+    /// Installs the background agent, or opens Login Items when the agent is registered
+    /// but awaiting approval. The install-agent setup action.
+    func installAgent() {
+        logger.notice("relay screen install agent requested")
+        if controller.isAgentApprovalPending {
+            controller.openLoginItems()
+        } else {
+            controller.installAgent()
         }
     }
 
-    /// The runtime error message when the state is an error, shown as a row.
-    var errorMessage: String? {
-        guard case .error(let message) = state else {
-            return nil
+    /// Installs the tunnel profile from the imported configuration. The install-tunnel
+    /// setup action.
+    func installTunnel(configURL: URL) {
+        logger.notice("relay screen install tunnel requested")
+        Task { await controller.installTunnel(configURL: configURL) }
+    }
+
+    /// Selects the discovered peer to connect to, the reduced-tier peers control.
+    func selectPeer(id: String) {
+        logger.notice("relay screen select peer requested")
+        Task { await controller.selectPeer(id: id) }
+    }
+
+    /// The title for the setup screen's primary action, deferring to the agent
+    /// approval state when the agent is registered but pending.
+    var setupActionTitle: String {
+        if status.action == .installAgent, controller.isAgentApprovalPending {
+            return openLoginItemsTitle
         }
-        return message
+        return status.action?.title ?? ""
+    }
+
+    /// The runtime error message when the status is an error, shown as a row.
+    var errorMessage: String? {
+        status.errorMessage
+    }
+
+    // MARK: - Peers
+
+    /// The discovered peers, the selected peer's id, and whether the peers group shows.
+    /// The group appears while discovery is searching and while a peer is unselected,
+    /// so the user can pick a Mac to relay through.
+    var discoveredPeers: [TunnelRelayService] {
+        controller.discoveredPeers
+    }
+
+    var selectedPeerID: String? {
+        controller.selectedPeerID
+    }
+
+    var showsPeers: Bool {
+        switch status {
+        case .noPeersFound, .noPeerSelected:
+            return true
+        case .error, .noAgent, .noTunnelInstalled, .passthrough, .relayEnabled:
+            return false
+        }
     }
 
     // MARK: - Sections
@@ -216,6 +358,28 @@ struct RelayScreenModel {
         }
         result.append(contentsOf: connectionSections)
         return result
+    }
+
+    // MARK: - Mac
+
+    /// Every section in order for the Mac, with placeholder rows dropped but empty
+    /// sections kept, so the Mac shows its full structure rather than collapsing to a
+    /// single card. The iPhone uses `sections`, which drops empty sections entirely.
+    var macSections: [ConnectionSection] {
+        var result = [dataSection]
+        if let currentSpeedSection {
+            result.append(currentSpeedSection)
+        }
+        let connection = [deviceSection, peerSection, relaySection]
+        result.append(contentsOf: connection.map(macRows))
+        return result
+    }
+
+    // A section that has a real value drops its placeholder rows; a section with no
+    // value keeps its full rows so the Mac can render them as redacted skeletons, which
+    // shows the structure without printing a placeholder string.
+    private func macRows(_ section: ConnectionSection) -> ConnectionSection {
+        hasData(section) ? visibleRows(section) : section
     }
 
     // MARK: - Data
@@ -244,10 +408,10 @@ struct RelayScreenModel {
 
     // MARK: - Current Speed
 
-    // The live Up and Down rates, shown only in the routing state where the Mac's
-    // traffic crosses the tunnel; `nil` otherwise so the section is absent.
+    // The live Up and Down rates, shown only while relaying, where the Mac's traffic
+    // crosses the tunnel; `nil` otherwise so the section is absent.
     private var currentSpeedSection: ConnectionSection? {
-        guard state.showsSpeed else {
+        guard status.showsSpeed else {
             return nil
         }
         return ConnectionSection(
@@ -268,7 +432,7 @@ struct RelayScreenModel {
     /// as having data when any non-qualifier row holds a value other than the
     /// placeholder, and a qualifier such as the protocol stays whenever its section does.
     var connectionSections: [ConnectionSection] {
-        [connectionSection, deviceSection, peerSection, relaySection]
+        [deviceSection, peerSection, relaySection]
             .filter(hasData)
             .map(visibleRows)
     }
@@ -301,27 +465,9 @@ struct RelayScreenModel {
         return bytesCountStyle.format(clamped)
     }
 
-    // The peer the phone is connected to, the carrying link transport with its raw
-    // interface, and the link's local and peer addresses. The link is one connection
-    // over one family, so each end is one address, not an IPv6/IPv4 pair.
-    private var connectionSection: ConnectionSection {
-        let rows = [
-            ConnectionRow(label: "Connected to", value: connectedToValue),
-            ConnectionRow(label: "Connected via", value: connectedViaValue),
-            ConnectionRow(
-                label: "Local link",
-                value: nonEmptyOrPlaceholder(controller.localLinkAddresses.preferredAddress)
-            ),
-            ConnectionRow(
-                label: "Peer link",
-                value: nonEmptyOrPlaceholder(controller.peerLinkAddresses.preferredAddress)
-            ),
-        ]
-        return ConnectionSection(title: "Connection", rows: rows)
-    }
-
     // This device: the egress transport with its interface id, the egress interface
-    // addresses, and this device's effective public address.
+    // addresses, this device's own address on the carrying link, and its public
+    // address. Every row is a local-side fact, so they share the one card.
     private var deviceSection: ConnectionSection {
         let egress = ConnectionRow(
             label: "Egress",
@@ -332,24 +478,41 @@ struct RelayScreenModel {
         )
         var rows = [egress]
         rows.append(contentsOf: addressRows(prefix: "Interface", egressInterfaceAddresses))
+        rows.append(
+            ConnectionRow(
+                label: "Local link",
+                value: nonEmptyOrPlaceholder(controller.localLinkAddresses.preferredAddress)
+            )
+        )
         rows.append(contentsOf: addressRows(prefix: "Public", controller.devicePublicAddresses))
         return ConnectionSection(title: "Device", rows: rows)
     }
 
-    // The peer's effective public address, measured by the peer and received over the
-    // control link.
+    // The other device: the connected peer name, the carrying transport with its raw
+    // interface, the peer's address on the carrying link, and the peer's public
+    // address. Every row is a fact about the peer, so they share the one card.
     private var peerSection: ConnectionSection {
-        ConnectionSection(
-            title: "Peer",
-            rows: addressRows(prefix: "Public", controller.peerPublicAddresses)
-        )
+        var rows = [
+            ConnectionRow(label: "Connected to", value: connectedToValue),
+            ConnectionRow(label: "Connected via", value: connectedViaValue),
+            ConnectionRow(
+                label: "Peer link",
+                value: nonEmptyOrPlaceholder(controller.peerLinkAddresses.preferredAddress)
+            ),
+        ]
+        rows.append(contentsOf: addressRows(prefix: "Public", controller.peerPublicAddresses))
+        return ConnectionSection(title: "Peer", rows: rows)
     }
 
     // The WireGuard relay: the protocol, the configured endpoint hostname, and the
     // server's addresses resolved from that hostname.
     private var relaySection: ConnectionSection {
         var rows = [
-            ConnectionRow(label: "Protocol", value: wireGuardProtocolName, isQualifier: true),
+            ConnectionRow(
+                label: "Protocol",
+                value: nonEmptyOrPlaceholder(controller.relayProtocol),
+                isQualifier: true
+            ),
             ConnectionRow(label: "Host", value: nonEmptyOrPlaceholder(controller.relayHost)),
         ]
         rows.append(contentsOf: addressRows(prefix: "", relayServerAddresses))

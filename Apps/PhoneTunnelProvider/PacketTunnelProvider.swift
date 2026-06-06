@@ -175,6 +175,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         case .setRoutingEnabled(let enabled):
             runtime.setRoutingEnabled(enabled)
             return ProviderControlResponse(status: runtime.statusSnapshot())
+        case .selectPeer(let id):
+            runtime.selectPeer(id: id)
+            return ProviderControlResponse(status: runtime.statusSnapshot())
         case .discoverySnapshot:
             return ProviderControlResponse(discovery: TunnelDiscoverySnapshot())
         }

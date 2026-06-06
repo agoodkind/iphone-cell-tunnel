@@ -17,6 +17,11 @@ import Synchronization
 private let logger = CellTunnelLog.logger(category: .relay)
 private let publicAddressRefreshIntervalSeconds = 60
 
+// The relay protocol name surfaced on the status `Protocol` row. The iPhone relay
+// carries WireGuard datagrams for the Mac, so it is one of the few producers that
+// names the protocol on the served snapshot.
+private let relayProtocolName = "WireGuard"
+
 // MARK: - RelayStatusState
 
 /// The latest relay observations the forwarder and the control client push
@@ -51,6 +56,12 @@ private struct RelayStatusState {
     var localLinkClass: RelayLinkClass?
     var localLinkAddresses: AddressPair?
     var peerLinkAddresses: AddressPair?
+    /// The Mac agent control services the iPhone has discovered over the local link,
+    /// each a selectable peer, surfaced in the served snapshot's `discovery.services`.
+    var discoveredServices: [TunnelRelayService] = []
+    /// The id of the discovered service the user selected to dial, surfaced as the
+    /// served snapshot's `discovery.selectedServiceID`.
+    var selectedServiceID: String?
 }
 
 // MARK: - RelayRuntime
@@ -206,6 +217,7 @@ public final class RelayRuntime: @unchecked Sendable {
             routeState: state.routeInstalled ? .installed : .notInstalled,
             peerState: state.running ? .relaySelected : .notSelected,
             lastError: state.lastError,
+            discovery: discoverySnapshot(from: state),
             phoneCounters: forwarder.metrics.snapshot(),
             cellularPath: cellular.snapshot,
             connectedPeerName: state.connectedPeerName,
@@ -218,8 +230,32 @@ public final class RelayRuntime: @unchecked Sendable {
             peerLinkAddresses: state.peerLinkAddresses,
             relayHost: state.serverEndpoint?.host,
             relayServerIPv4Address: state.relayResolved?.ipv4,
-            relayServerIPv6Address: state.relayResolved?.ipv6
+            relayServerIPv6Address: state.relayResolved?.ipv6,
+            relayProtocol: relayProtocolName
         )
+    }
+
+    // Builds the discovery section the same way the agent does: the discovered Mac
+    // control services as selectable peers, the current selection, and a phase that
+    // reads ready once any peer is visible.
+    private func discoverySnapshot(from state: RelayStatusState) -> TunnelDiscoverySnapshot {
+        TunnelDiscoverySnapshot(
+            phase: state.discoveredServices.isEmpty ? .browsing : .ready,
+            services: state.discoveredServices,
+            selectedServiceID: state.selectedServiceID
+        )
+    }
+
+    // MARK: - Peer selection
+
+    /// Records the user's chosen Mac control service and drives the control client to
+    /// dial it, so the iPhone connects to the selected peer rather than the first one
+    /// the browser reports.
+    public func selectPeer(id: String) {
+        statusState.withLock { $0.selectedServiceID = id }
+        let client = control
+        Task { @MainActor in client.selectService(id: id) }
+        logger.notice("relay runtime selected peer id=\(id, privacy: .public)")
     }
 
     // Builds one status push from the live cellular path, the forwarder metrics, the
@@ -331,8 +367,44 @@ public final class RelayRuntime: @unchecked Sendable {
             client.setConnectionReadyHandler { [weak self] in
                 self?.refreshDevicePublicAddress()
             }
+            client.setServicesChangedHandler { [weak self] services in
+                self?.applyDiscoveredServices(services)
+            }
             client.start()
         }
+    }
+
+    // Stores the discovered Mac control services for the snapshot and resolves which
+    // one to dial: the standing selection when still present, otherwise the lone peer
+    // auto-selected. With several peers and no selection nothing dials until the user
+    // picks one. The dial itself runs on the control client's MainActor.
+    private func applyDiscoveredServices(_ services: [TunnelRelayService]) {
+        let target: String? = statusState.withLock { state in
+            state.discoveredServices = services
+            let resolved = Self.dialTarget(selected: state.selectedServiceID, services: services)
+            state.selectedServiceID = resolved ?? state.selectedServiceID
+            return resolved
+        }
+        guard let target else {
+            return
+        }
+        let client = control
+        Task { @MainActor in client.selectService(id: target) }
+    }
+
+    // Resolves which discovered service to dial: the standing selection when it is
+    // still present, otherwise the lone discovered peer, otherwise none.
+    private static func dialTarget(
+        selected: String?,
+        services: [TunnelRelayService]
+    ) -> String? {
+        if let selected, services.contains(where: { $0.id == selected }) {
+            return selected
+        }
+        if services.count == 1 {
+            return services.first?.id
+        }
+        return nil
     }
 
     // Resolves the WireGuard endpoint hostname to its A and AAAA records off the

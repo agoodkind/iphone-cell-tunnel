@@ -43,30 +43,46 @@ struct RelayStatusScreen: View {
     private var detailList: some View {
         List {
             statusSection
+            if model.showsPeers {
+                peersSection
+            }
             sections
         }
         .listStyle(.insetGrouped)
-        .animation(.default, value: model.state)
+        .animation(.default, value: model.status)
     }
 
-    // The status section: the one routing switch, whose left label is the live
-    // lifecycle status, plus the error message and the Set Up or Retry action as rows
-    // when the state calls for them. The switch is disabled unless the peer link is
-    // up, so routing cannot be requested with no peer to carry it.
+    // The status section: the one routing switch, whose left label is the live status,
+    // plus the error message and the Retry action as rows when the status calls for
+    // them. The switch is disabled unless the peer link is up, so routing cannot be
+    // requested with no peer to carry it.
     @ViewBuilder private var statusSection: some View {
         Section {
-            Toggle(model.statusLabel, isOn: model.routeTrafficBinding)
-                .disabled(model.state.disablesControls)
+            Toggle(model.status.label, isOn: model.routeTrafficBinding)
+                .disabled(!model.status.allowsRouting)
             if let message = model.errorMessage {
                 Text(message)
             }
-            if let action = model.heroAction {
-                Button(action.title) {
+            if model.heroAction == .retry {
+                Button(RelayHeroAction.retry.title) {
                     model.startSession()
                 }
-                .disabled(model.state.disablesControls)
             }
         }
+    }
+
+    // The discovered peers, shown while discovery searches and while a peer is
+    // unselected, so the user can pick the Mac to relay through.
+    @ViewBuilder private var peersSection: some View {
+        Section(RelayPeersView.title) {
+            RelayPeersView(
+                peers: model.discoveredPeers,
+                selectedID: model.selectedPeerID
+            ) { id in
+                model.selectPeer(id: id)
+            }
+        }
+        .textCase(nil)
     }
 
     // Every data-driven section in order, each a stock `Section` of value rows. The

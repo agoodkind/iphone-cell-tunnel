@@ -11,11 +11,27 @@ import SwiftUI
 // MARK: - PhoneContentView
 
 /// The root content view. Both platforms read the same `RelayController` from the
-/// environment; only the layout diverges. The iPhone renders the list-form
-/// `RelayStatusScreen`, and the Mac renders the sidebar-and-dashboard
-/// `MacStatusScreen`.
+/// environment, and the screen branches on the status's UI tier: the two setup states
+/// take over with the shared `SetupScreen`, and every other state shows the reduced
+/// dashboard, which is the list-form `RelayStatusScreen` on the iPhone and the
+/// sidebar-and-dashboard `MacStatusScreen` on the Mac.
 struct PhoneContentView: View {
+    @Environment(RelayController.self) private var controller
+
+    private var model: RelayScreenModel {
+        RelayScreenModel(controller: controller)
+    }
+
     var body: some View {
+        switch model.uiTier {
+        case .full:
+            SetupScreen()
+        case .reduced:
+            reducedDashboard
+        }
+    }
+
+    @ViewBuilder private var reducedDashboard: some View {
         #if targetEnvironment(macCatalyst)
             MacStatusScreen()
         #else
