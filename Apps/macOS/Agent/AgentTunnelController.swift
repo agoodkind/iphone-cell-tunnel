@@ -485,10 +485,15 @@ extension AgentTunnelController {
     private func snapshot(from manager: NETunnelProviderManager) -> TunnelDaemonStatusSnapshot {
         let status = manager.connection.status
         let configured = manager.protocolConfiguration != nil
+        // The invalid status reports a real failure only when a configuration exists
+        // but the system has not approved it. With no configuration saved the tunnel is
+        // simply not installed, so reporting an error would mask the not-installed state
+        // and its setup screen.
+        let configurationUnapproved = status == .invalid && configured
         return TunnelDaemonStatusSnapshot(
             running: isSessionActive(on: manager),
             peerState: configured ? .wireGuardConfigured : .notSelected,
-            lastError: status == .invalid ? "vpn configuration not approved" : nil
+            lastError: configurationUnapproved ? "vpn configuration not approved" : nil
         )
     }
 }
