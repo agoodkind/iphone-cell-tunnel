@@ -135,6 +135,20 @@ actor AgentTunnelController {
         var checks = [
             TunnelEnvironmentCheckResult(name: "provider_bundle", value: providerBundleIdentifier)
         ]
+        // Report the running binary's identity so a reinstall can confirm the agent
+        // came up and is the freshly built one, not a stale agent at another path.
+        checks.append(
+            TunnelEnvironmentCheckResult(
+                name: "agent_executable_path", value: AgentBinaryIdentity.executablePath()))
+        if let buildUUID = AgentBinaryIdentity.buildUUID() {
+            checks.append(
+                TunnelEnvironmentCheckResult(name: "agent_build_uuid", value: buildUUID))
+        }
+        if let executableSHA256 = AgentBinaryIdentity.sha256() {
+            checks.append(
+                TunnelEnvironmentCheckResult(
+                    name: "agent_executable_sha256", value: executableSHA256))
+        }
         do {
             let loadedManager = try await loadOrCreateManager()
             checks.append(

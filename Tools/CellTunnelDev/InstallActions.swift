@@ -21,6 +21,9 @@ private let installDestinationOptionName = "--destination"
 private let openExecutablePath = "/usr/bin/open"
 private let installCommandArgumentDropCount = 2
 private let installOptionPairStride = 2
+private let agentLaunchVerifyAttempts = 10
+private let agentLaunchVerifyDelaySeconds: Double = 1.0
+private let agentExecutableSubpath = "Contents/MacOS"
 
 // MARK: - InstallMacOptions
 
@@ -109,6 +112,7 @@ func runInstallMac(options: InstallMacOptions) throws {
     printToolOutput("installed: \(destinationAppURL.path)")
 
     try launchInstalledAgent(at: destinationAppURL)
+    try verifyInstalledAgentRunning(installedAppURL: destinationAppURL)
     printToolOutput(
         """
         agent launched; approve 'CellTunnel' in System Settings > General > Login Items \
@@ -156,4 +160,171 @@ private func launchInstalledAgent(at appURL: URL) throws {
     installLogger.notice(
         "install-mac launched agent path=\(appURL.path, privacy: .public)"
     )
+}
+
+/// Pair two optionals into a tuple only when both are non-nil, so a comparison of
+/// the running agent's identity against the installed binary's is expressed as a
+/// single-line `if`, which both swift-format and swiftlint accept.
+private func bothPresent<A, B>(_ first: A?, _ second: B?) -> (A, B)? {
+    guard let first, let second else {
+        return nil
+    }
+    return (first, second)
+}
+
+// MARK: - Agent launch verification
+
+/// Confirm the freshly installed agent came up and is the binary just built. The
+/// agent is an on-demand XPC service, so a successful `check()` both launches it and
+/// proves it is reachable; comparing the reported Mach-O UUID and SHA-256 to the
+/// installed binary catches a stale agent registered from another bundle path that
+/// answers for an old build.
+private func verifyInstalledAgentRunning(installedAppURL: URL) throws {
+    let installedBinary =
+        installedAppURL
+        .appendingPathComponent(agentExecutableSubpath)
+        .appendingPathComponent(agentBinaryName)
+    let report = try awaitAgentCheck()
+    var reported: [String: String] = [:]
+    for check in report.checks {
+        reported[check.name] = check.value
+    }
+    let runningUUID = reported["agent_build_uuid"]
+    let expectedUUID = machOUUID(of: installedBinary)
+    let uuidMismatch =
+        bothPresent(expectedUUID, runningUUID).map { expected, running in
+            expected.caseInsensitiveCompare(running) != .orderedSame
+        } ?? false
+    if uuidMismatch {
+        throw ToolError.failure(
+            """
+            installed agent does not match the freshly built binary \
+            (build uuid \(runningUUID ?? "") != \(expectedUUID ?? "")); \
+            a stale agent may be registered
+            """
+        )
+    }
+    let runningSHA = reported["agent_executable_sha256"]
+    let expectedSHA = fileSHA256(of: installedBinary)
+    let shaMismatch = bothPresent(expectedSHA, runningSHA).map { $0 != $1 } ?? false
+    if shaMismatch {
+        throw ToolError.failure(
+            "installed agent does not match the freshly built binary (sha256 mismatch)")
+    }
+    installLogger.notice(
+        "install-mac agent verified path=\(reported["agent_executable_path"] ?? "", privacy: .public)"
+    )
+    printToolOutput("agent verified up and matches the freshly built binary")
+}
+
+/// Poll the agent's `check()` a bounded number of times. The on-demand agent
+/// launches on the first XPC connect, so an early attempt can fail before it is
+/// ready. Throws a clear, actionable error when it never answers.
+private func awaitAgentCheck() throws -> TunnelEnvironmentReport {
+    var lastError: Error?
+    for attempt in 1...agentLaunchVerifyAttempts {
+        let box = AgentCheckBox()
+        do {
+            try runRelayCommand { client in
+                box.store(try await client.check())
+            }
+            if let report = box.report() {
+                return report
+            }
+            lastError = ToolError.failure("agent check returned no report")
+        } catch {
+            lastError = error
+            installLogger.notice(
+                """
+                install-mac agent check attempt failed \
+                details=\(error.localizedDescription, privacy: .public) recovery=retry
+                """
+            )
+        }
+        installLogger.notice(
+            "install-mac agent check not ready attempt=\(attempt, privacy: .public)")
+        agentLaunchVerifyDelay()
+    }
+    throw ToolError.failure(
+        """
+        agent did not come up after install; approve 'CellTunnel' in System Settings > \
+        General > Login Items, then re-run (\(lastError?.localizedDescription ?? "no response"))
+        """
+    )
+}
+
+/// Block briefly without `sleep`, resuming off a dispatch queue, matching the
+/// no-sleep delay pattern the relay polling uses.
+private func agentLaunchVerifyDelay() {
+    let semaphore = DispatchSemaphore(value: 0)
+    DispatchQueue.global().asyncAfter(deadline: .now() + agentLaunchVerifyDelaySeconds) {
+        semaphore.signal()
+    }
+    semaphore.wait()
+}
+
+/// The Mach-O `LC_UUID` of a binary read with `dwarfdump --uuid`, uppercased, or
+/// nil when the file is absent or the read fails.
+private func machOUUID(of binary: URL) -> String? {
+    guard fileManager.fileExists(atPath: binary.path) else {
+        return nil
+    }
+    let result: CommandResult
+    do {
+        result = try capture("dwarfdump", ["--uuid", binary.path], echoOutput: false)
+    } catch {
+        installLogger.error(
+            "install-mac dwarfdump failed details=\(error.localizedDescription, privacy: .public)")
+        return nil
+    }
+    guard result.status == 0 else {
+        return nil
+    }
+    for token in result.output.split(whereSeparator: \.isWhitespace) {
+        let candidate = String(token)
+        if UUID(uuidString: candidate) != nil {
+            return candidate.uppercased()
+        }
+    }
+    return nil
+}
+
+/// The SHA-256 of a file via `shasum -a 256`, or nil when absent or on failure.
+private func fileSHA256(of binary: URL) -> String? {
+    guard fileManager.fileExists(atPath: binary.path) else {
+        return nil
+    }
+    let result: CommandResult
+    do {
+        result = try capture("shasum", ["-a", "256", binary.path], echoOutput: false)
+    } catch {
+        installLogger.error(
+            "install-mac shasum failed details=\(error.localizedDescription, privacy: .public)")
+        return nil
+    }
+    guard result.status == 0 else {
+        return nil
+    }
+    return result.output.split(whereSeparator: \.isWhitespace).first.map(String.init)
+}
+
+// MARK: - AgentCheckBox
+
+/// Thread-safe carrier for the agent report produced inside the bridged async task,
+/// so the synchronous caller reads it after `runRelayCommand` returns.
+private final class AgentCheckBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: TunnelEnvironmentReport?
+
+    func store(_ report: TunnelEnvironmentReport) {
+        lock.lock()
+        defer { lock.unlock() }
+        value = report
+    }
+
+    func report() -> TunnelEnvironmentReport? {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
 }
