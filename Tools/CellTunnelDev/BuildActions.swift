@@ -149,10 +149,8 @@ func buildScheme(
 }
 
 func buildPhoneDevice(configuration: String) throws {
-    let team = try developmentTeamFromEnvironment()
     try buildPhoneDevice(
         configuration: configuration,
-        developmentTeam: team,
         shouldGenerateProject: true
     )
 }
@@ -167,7 +165,6 @@ func buildPhoneDevice(configuration: String) throws {
 // same secret names.
 func buildPhoneDevice(
     configuration: String,
-    developmentTeam: String,
     shouldGenerateProject: Bool
 ) throws {
     logger.notice(
@@ -181,11 +178,7 @@ func buildPhoneDevice(
         destination: ProcessInfo.processInfo.environment["IOS_DEVICE_DESTINATION"]
             ?? "generic/platform=iOS",
         platformName: iOSDevicePlatformName,
-        xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments(),
-        buildSettings: [
-            "CODE_SIGN_STYLE": "Automatic",
-            "DEVELOPMENT_TEAM": developmentTeam,
-        ]
+        xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments()
     )
 }
 

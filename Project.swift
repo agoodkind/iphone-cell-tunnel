@@ -46,15 +46,13 @@ let moduleVerifierSettings: SettingsDictionary = [
     "MODULE_VERIFIER_SUPPORTED_LANGUAGE_STANDARDS": "gnu11 gnu++14",
 ]
 
-// Tuist writes CODE_SIGN_IDENTITY = "-" (ad-hoc) at target level by default,
-// which would override the xcconfig values. Forwarding $(KEY) references at
-// the target level lets the xcconfig values come through unchanged.
+// Tuist writes CODE_SIGN_IDENTITY = "-" (ad-hoc) at target level by default. The
+// signing identity, team, and style are no longer forwarded here; swift-mk owns
+// them through an XCODE_XCCONFIG_FILE override that wins over the target-level
+// ad-hoc default for every target at once.
 let macHardenedRuntimeSettings: SettingsDictionary = [
     "ENABLE_HARDENED_RUNTIME": "YES",
     "REGISTER_APP_GROUPS": "YES",
-    "CODE_SIGN_IDENTITY": "$(CODE_SIGN_IDENTITY)",
-    "CODE_SIGN_STYLE": "$(CODE_SIGN_STYLE)",
-    "DEVELOPMENT_TEAM": "$(DEVELOPMENT_TEAM)",
 ]
 
 let cellTunnelPhoneBaseSettings: SettingsDictionary = [
@@ -67,16 +65,13 @@ let cellTunnelPhoneBaseSettings: SettingsDictionary = [
     // entitlement. Adding .macCatalyst to the destinations turns on
     // SUPPORTS_MACCATALYST.
     "DERIVE_MACCATALYST_PRODUCT_BUNDLE_IDENTIFIER": "NO",
+    // The Catalyst slice signs from a macOS-only entitlements file. The signing
+    // identity/team/style are not set per SDK slice here; swift-mk's
+    // XCODE_XCCONFIG_FILE override supplies them and wins over Tuist's per-target
+    // ad-hoc default, so the Catalyst slice signs with the development certificate
+    // its entitlements require.
     "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]":
         "$(SRCROOT)/Apps/iOS/Entitlements/CellTunnelPhone-Catalyst.entitlements",
-    // Tuist writes CODE_SIGN_IDENTITY = "-" (ad-hoc) at target level for the macOS
-    // SDK, which the Catalyst entitlements reject because they require a
-    // development certificate. Forwarding the xcconfig signing values for the
-    // macOS SDK only lets the Catalyst slice sign like the Mac agent while the
-    // iPhone slice is untouched.
-    "CODE_SIGN_IDENTITY[sdk=macosx*]": "$(CODE_SIGN_IDENTITY)",
-    "CODE_SIGN_STYLE[sdk=macosx*]": "$(CODE_SIGN_STYLE)",
-    "DEVELOPMENT_TEAM[sdk=macosx*]": "$(DEVELOPMENT_TEAM)",
 ]
 
 let appDependencies: [TargetDependency] = [
