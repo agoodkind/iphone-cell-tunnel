@@ -32,10 +32,12 @@ func buildProject(target: BuildTarget, configuration: String) throws {
 
     switch target {
     case .daemon:
-        try buildMacAgent(configuration: configuration)
+        let team = try developmentTeamFromEnvironment()
+        try buildMacAgent(configuration: configuration, developmentTeam: team)
     case .mac:
-        try buildMacAgent(configuration: configuration)
-        try buildMacTunnelProvider(configuration: configuration)
+        let team = try developmentTeamFromEnvironment()
+        try buildMacAgent(configuration: configuration, developmentTeam: team)
+        try buildMacTunnelProvider(configuration: configuration, developmentTeam: team)
     case .macCatalyst:
         let team = try developmentTeamFromEnvironment()
         try buildMacCatalyst(configuration: configuration, developmentTeam: team)
@@ -50,8 +52,8 @@ func buildProject(target: BuildTarget, configuration: String) throws {
         )
     case .all:
         let team = try developmentTeamFromEnvironment()
-        try buildMacAgent(configuration: configuration)
-        try buildMacTunnelProvider(configuration: configuration)
+        try buildMacAgent(configuration: configuration, developmentTeam: team)
+        try buildMacTunnelProvider(configuration: configuration, developmentTeam: team)
         try buildIPhoneSimulator(configuration: configuration)
         try buildPhoneDevice(
             configuration: configuration,
@@ -74,7 +76,7 @@ private func buildCLI() throws {
     try installSwiftExecutable(productName: "celltunnelctl", outputName: "celltunnelctl")
 }
 
-private func buildMacAgent(configuration: String) throws {
+private func buildMacAgent(configuration: String, developmentTeam: String) throws {
     buildDispatchLogger.notice(
         "building CellTunnelAgent scheme configuration=\(configuration, privacy: .public)"
     )
@@ -84,11 +86,15 @@ private func buildMacAgent(configuration: String) throws {
         configuration: configuration,
         destination: "platform=macOS",
         platformName: macOSPlatformName,
-        xcodebuildOptions: ["-allowProvisioningUpdates"]
+        xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments(),
+        buildSettings: [
+            "CODE_SIGN_STYLE": "Automatic",
+            "DEVELOPMENT_TEAM": developmentTeam,
+        ]
     )
 }
 
-private func buildMacTunnelProvider(configuration: String) throws {
+private func buildMacTunnelProvider(configuration: String, developmentTeam: String) throws {
     buildDispatchLogger.notice(
         "building CellTunnelTunnelProvider scheme configuration=\(configuration, privacy: .public)"
     )
@@ -98,7 +104,11 @@ private func buildMacTunnelProvider(configuration: String) throws {
         configuration: configuration,
         destination: "platform=macOS",
         platformName: macOSPlatformName,
-        xcodebuildOptions: ["-allowProvisioningUpdates"]
+        xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments(),
+        buildSettings: [
+            "CODE_SIGN_STYLE": "Automatic",
+            "DEVELOPMENT_TEAM": developmentTeam,
+        ]
     )
 }
 
