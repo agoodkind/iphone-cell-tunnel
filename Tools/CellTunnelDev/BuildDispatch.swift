@@ -30,34 +30,30 @@ func buildProject(target: BuildTarget, configuration: String) throws {
     try runBuildPrologue()
     try buildCLI()
 
+    // Code-signing identity, team, and style come from swift-mk, which exports an
+    // XCODE_XCCONFIG_FILE override that wins over Tuist's per-target
+    // CODE_SIGN_IDENTITY = - default, so no build here sets signing per scheme.
     switch target {
     case .daemon:
-        let team = try developmentTeamFromEnvironment()
-        try buildMacAgent(configuration: configuration, developmentTeam: team)
+        try buildMacAgent(configuration: configuration)
     case .mac:
-        let team = try developmentTeamFromEnvironment()
-        try buildMacAgent(configuration: configuration, developmentTeam: team)
-        try buildMacTunnelProvider(configuration: configuration, developmentTeam: team)
+        try buildMacAgent(configuration: configuration)
+        try buildMacTunnelProvider(configuration: configuration)
     case .macCatalyst:
-        let team = try developmentTeamFromEnvironment()
-        try buildMacCatalyst(configuration: configuration, developmentTeam: team)
+        try buildMacCatalyst(configuration: configuration)
     case .iphoneSimulator:
         try buildIPhoneSimulator(configuration: configuration)
     case .iphoneDevice:
-        let team = try developmentTeamFromEnvironment()
         try buildPhoneDevice(
             configuration: configuration,
-            developmentTeam: team,
             shouldGenerateProject: false
         )
     case .all:
-        let team = try developmentTeamFromEnvironment()
-        try buildMacAgent(configuration: configuration, developmentTeam: team)
-        try buildMacTunnelProvider(configuration: configuration, developmentTeam: team)
+        try buildMacAgent(configuration: configuration)
+        try buildMacTunnelProvider(configuration: configuration)
         try buildIPhoneSimulator(configuration: configuration)
         try buildPhoneDevice(
             configuration: configuration,
-            developmentTeam: team,
             shouldGenerateProject: false
         )
     }
@@ -76,7 +72,7 @@ private func buildCLI() throws {
     try installSwiftExecutable(productName: "celltunnelctl", outputName: "celltunnelctl")
 }
 
-private func buildMacAgent(configuration: String, developmentTeam: String) throws {
+private func buildMacAgent(configuration: String) throws {
     buildDispatchLogger.notice(
         "building CellTunnelAgent scheme configuration=\(configuration, privacy: .public)"
     )
@@ -86,15 +82,11 @@ private func buildMacAgent(configuration: String, developmentTeam: String) throw
         configuration: configuration,
         destination: "platform=macOS",
         platformName: macOSPlatformName,
-        xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments(),
-        buildSettings: [
-            "CODE_SIGN_STYLE": "Automatic",
-            "DEVELOPMENT_TEAM": developmentTeam,
-        ]
+        xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments()
     )
 }
 
-private func buildMacTunnelProvider(configuration: String, developmentTeam: String) throws {
+private func buildMacTunnelProvider(configuration: String) throws {
     buildDispatchLogger.notice(
         "building CellTunnelTunnelProvider scheme configuration=\(configuration, privacy: .public)"
     )
@@ -104,11 +96,7 @@ private func buildMacTunnelProvider(configuration: String, developmentTeam: Stri
         configuration: configuration,
         destination: "platform=macOS",
         platformName: macOSPlatformName,
-        xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments(),
-        buildSettings: [
-            "CODE_SIGN_STYLE": "Automatic",
-            "DEVELOPMENT_TEAM": developmentTeam,
-        ]
+        xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments()
     )
 }
 
@@ -128,7 +116,7 @@ private func buildIPhoneSimulator(configuration: String) throws {
 // XPC rather than hosting a tunnel. The Catalyst entitlements require a
 // development certificate, so signing is supplied the way the iPhone device build
 // supplies it.
-private func buildMacCatalyst(configuration: String, developmentTeam: String) throws {
+private func buildMacCatalyst(configuration: String) throws {
     buildDispatchLogger.notice(
         "building CellTunnelPhone Mac Catalyst configuration=\(configuration, privacy: .public)"
     )
@@ -137,11 +125,7 @@ private func buildMacCatalyst(configuration: String, developmentTeam: String) th
         configuration: configuration,
         destination: "generic/platform=macOS,variant=Mac Catalyst",
         platformName: macCatalystPlatformName,
-        xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments(),
-        buildSettings: [
-            "CODE_SIGN_STYLE": "Automatic",
-            "DEVELOPMENT_TEAM": developmentTeam,
-        ]
+        xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments()
     )
 }
 
