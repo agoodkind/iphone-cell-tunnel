@@ -13,4 +13,3 @@ Sources/CellTunnelCore/Generated/
 *.xcodeproj/
 *.xcworkspace/
 xcuserdata/
-Daemon/celltunneld
