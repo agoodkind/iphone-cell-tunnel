@@ -104,6 +104,11 @@ func buildScheme(
     xcodebuildOptions: [String] = [],
     buildSettings: [String: String] = [:]
 ) throws {
+    // swift-mk owns build-time signing. This dev tool runs xcodebuild without the
+    // make prelude, so apply the same XCODE_XCCONFIG_FILE override here. It is a
+    // no-op when the prelude already exported it, reads team/identity/style from the
+    // environment then Config/local.xcconfig, and sets no signing per target.
+    SigningBuildConfig.applyEnvironmentOverride(localXcconfigPaths: ["Config/local.xcconfig"])
     logger.notice(
         """
         xcodebuild scheme=\(scheme, privacy: .public) action=\(action, privacy: .public) \
@@ -396,5 +401,35 @@ func cleanProject() throws {
 
     for path in paths where fileManager.fileExists(atPath: path.path) {
         try fileManager.removeItem(at: path)
+    }
+}
+
+// MARK: - Signing verification
+
+/// Verify the produced macOS artifacts carry the signature swift-mk resolves, so a
+/// setting that beat the override is caught after the build rather than assumed
+/// away. Only the macOS targets produce signable bundles here; iOS device signing
+/// is validated by the device install. The expectation is inferred from the same
+/// inputs the override uses, so an ad-hoc PR build expects ad-hoc and passes.
+func verifyBuiltSigning(target: BuildTarget, configuration: String) throws {
+    guard target == .mac || target == .daemon || target == .all else {
+        return
+    }
+    let macBuildDirectory = xcodeConfigurationBuildDirectory(
+        configuration: configuration, platformName: macOSPlatformName)
+    var artifacts = [macBuildDirectory.appendingPathComponent("CellTunnelAgent.app").path]
+    let providerExtension = macBuildDirectory.appendingPathComponent(
+        "CellTunnelTunnelProvider.appex")
+    if target == .mac || target == .all, fileManager.fileExists(atPath: providerExtension.path) {
+        artifacts.append(providerExtension.path)
+    }
+    let present = artifacts.filter { fileManager.fileExists(atPath: $0) }
+    guard !present.isEmpty else {
+        return
+    }
+    let verified = SigningVerification.verifyArtifacts(
+        paths: present, localXcconfigPaths: ["Config/local.xcconfig"])
+    if !verified {
+        throw ToolError.failure("verify-signing: built artifacts failed signature verification")
     }
 }
