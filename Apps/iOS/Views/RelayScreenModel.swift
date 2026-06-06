@@ -258,6 +258,13 @@ struct RelayScreenModel {
         status.uiTier
     }
 
+    /// Whether the routing switch shows at all. The switch appears only in a routeable
+    /// state, so it is absent rather than disabled when no link can carry traffic, and
+    /// the status word reports the state on its own.
+    var showsToggle: Bool {
+        status.allowsRouting
+    }
+
     /// The `Route traffic` switch binding: it reads the routing state and writes the
     /// user's choice through the controller, which forwards it to the agent. Both the
     /// iPhone list and the Mac dashboard bind the switch to this, so the glue lives once.

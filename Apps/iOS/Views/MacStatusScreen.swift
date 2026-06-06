@@ -71,8 +71,9 @@
         // MARK: - Header
 
         // The title and live status on the left, the routing switch on the right. The
-        // switch is disabled until the peer is connected; the error message and the Set
-        // Up or Retry action appear under the status when the status calls for them.
+        // switch appears only in a routeable state, so it is absent rather than disabled
+        // when no link can carry traffic; the error message and the Set Up or Retry
+        // action appear under the status when the status calls for them.
         private var header: some View {
             HStack(alignment: .firstTextBaseline) {
                 VStack(alignment: .leading, spacing: headerStackSpacing) {
@@ -95,10 +96,11 @@
                     }
                 }
                 Spacer(minLength: gridSpacing)
-                Toggle(routeToggleTitle, isOn: model.routeTrafficBinding)
-                    .toggleStyle(.switch)
-                    .fixedSize()
-                    .disabled(!model.status.allowsRouting)
+                if model.showsToggle {
+                    Toggle(routeToggleTitle, isOn: model.routeTrafficBinding)
+                        .toggleStyle(.switch)
+                        .fixedSize()
+                }
             }
         }
 

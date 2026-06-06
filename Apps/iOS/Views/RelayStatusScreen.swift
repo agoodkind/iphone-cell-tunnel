@@ -12,6 +12,7 @@ import SwiftUI
 // MARK: - Constants
 
 private let screenTitle = "Cell Tunnel"
+private let routeTrafficLabel = "Route traffic"
 
 // MARK: - RelayStatusScreen
 
@@ -52,14 +53,17 @@ struct RelayStatusScreen: View {
         .animation(.default, value: model.status)
     }
 
-    // The status section: the one routing switch, whose left label is the live status,
-    // plus the error message and the Retry action as rows when the status calls for
-    // them. The switch is disabled unless the peer link is up, so routing cannot be
-    // requested with no peer to carry it.
+    // The status section: the live status word as its own row, separate from the
+    // routing switch, so the status reports the current state rather than labeling the
+    // switch. The switch appears only in a routeable state, so routing cannot be
+    // requested with no link to carry it; the error message and the Retry action follow
+    // as rows when the status calls for them.
     @ViewBuilder private var statusSection: some View {
         Section {
-            Toggle(model.status.label, isOn: model.routeTrafficBinding)
-                .disabled(!model.status.allowsRouting)
+            Text(model.status.label)
+            if model.showsToggle {
+                Toggle(routeTrafficLabel, isOn: model.routeTrafficBinding)
+            }
             if let message = model.errorMessage {
                 Text(message)
             }
