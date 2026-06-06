@@ -83,18 +83,19 @@ enum RelayStatus: Equatable {
     case relayEnabled
 
     /// Builds the status from named, single-purpose inputs. A failure wins; then the
-    /// agent must be present, then a saved tunnel, then a discovered peer, then a
-    /// selected and established peer link, since the relay cannot carry traffic without
-    /// the link; with the link up, routing on is relaying and routing off is
-    /// passthrough. `isAgentInstalled` is always true on the iPhone.
+    /// agent must be present, then a saved tunnel. An established peer link decides the
+    /// rest before discovery, since a live link means the screen is connected whether or
+    /// not this side browsed for it: with the link up, routing on is relaying and routing
+    /// off is passthrough. Without a link, no discovered peer is the searching state and a
+    /// discovered-but-unconnected peer is the select state. `isAgentInstalled` is always
+    /// true on the iPhone.
     init(
         errorMessage: String?,
         isAgentInstalled: Bool,
         isTunnelInstalled: Bool,
         peersFound: Bool,
         isPeerConnected: Bool,
-        isRouting: Bool,
-        peerSelected: Bool
+        isRouting: Bool
     ) {
         if let errorMessage, !errorMessage.isEmpty {
             self = .error(errorMessage)
@@ -102,14 +103,12 @@ enum RelayStatus: Equatable {
             self = .noAgent
         } else if !isTunnelInstalled {
             self = .noTunnelInstalled
+        } else if isPeerConnected {
+            self = isRouting ? .relayEnabled : .passthrough
         } else if !peersFound {
             self = .noPeersFound
-        } else if !peerSelected || !isPeerConnected {
-            self = .noPeerSelected
-        } else if isRouting {
-            self = .relayEnabled
         } else {
-            self = .passthrough
+            self = .noPeerSelected
         }
     }
 
@@ -250,8 +249,7 @@ struct RelayScreenModel {
             isTunnelInstalled: controller.isTunnelInstalled,
             peersFound: !controller.discoveredPeers.isEmpty,
             isPeerConnected: controller.connectedPeerName != nil,
-            isRouting: controller.routeState == .installed,
-            peerSelected: controller.selectedPeerID != nil
+            isRouting: controller.routeState == .installed
         )
     }
 
@@ -326,8 +324,9 @@ struct RelayScreenModel {
     // MARK: - Peers
 
     /// The discovered peers, the selected peer's id, and whether the peers group shows.
-    /// The group appears while discovery is searching and while a peer is unselected,
-    /// so the user can pick a Mac to relay through.
+    /// The group appears only once discovery has found peers and none is selected, so the
+    /// user can pick a Mac to relay through. While discovery has found nothing the header
+    /// already reads the searching state, so the group stays hidden to avoid repeating it.
     var discoveredPeers: [TunnelRelayService] {
         controller.discoveredPeers
     }
@@ -338,9 +337,9 @@ struct RelayScreenModel {
 
     var showsPeers: Bool {
         switch status {
-        case .noPeersFound, .noPeerSelected:
+        case .noPeerSelected:
             return true
-        case .error, .noAgent, .noTunnelInstalled, .passthrough, .relayEnabled:
+        case .error, .noAgent, .noPeersFound, .noTunnelInstalled, .passthrough, .relayEnabled:
             return false
         }
     }
