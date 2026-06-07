@@ -57,6 +57,27 @@ SWIFT_DEPLOY_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) activate $(TARGET
 SWIFT_ANALYZE_CMD ?= $(CELL_TUNNEL_DEV) analyze
 SWIFT_LOG_AUDIT_CMD ?= $(CELL_TUNNEL_DEV) log-audit
 
+# swift-mk owns signature verification. The `build` target runs `verify-signing
+# settings` (every target's effective signing matches the override) before the build
+# and `verify-signing artifacts` (codesign on the produced bundles) after, so a
+# setting that beat the override is caught. The expected team and identity live in
+# the gitignored Config/local.xcconfig, named here so the verifier resolves the same
+# inputs the override uses. Only the macOS products are checked on the build paths
+# that produce them; iOS device, simulator, and Catalyst signing is validated by the
+# install step. The dead-code coverage build never runs the `build` target, so these
+# never touch that gate.
+SWIFT_MK_VERIFY_WORKSPACE := CellTunnel.xcworkspace
+SWIFT_MK_VERIFY_SCHEME := CellTunnelAgent
+SWIFT_MK_VERIFY_CONFIGURATION := $(CONFIG)
+SWIFT_MK_VERIFY_XCCONFIG := Config/local.xcconfig
+ifeq ($(TARGET),mac)
+SWIFT_MK_VERIFY_SIGNING_PATHS := Products/$(CONFIG)/CellTunnelAgent.app Products/$(CONFIG)/CellTunnelTunnelProvider.appex
+else ifeq ($(TARGET),all)
+SWIFT_MK_VERIFY_SIGNING_PATHS := Products/$(CONFIG)/CellTunnelAgent.app Products/$(CONFIG)/CellTunnelTunnelProvider.appex
+else ifeq ($(TARGET),daemon)
+SWIFT_MK_VERIFY_SIGNING_PATHS := Products/$(CONFIG)/CellTunnelAgent.app
+endif
+
 SWIFT_SOURCE_ROOTS := Apps Sources Tests Tools/CellTunnelCtl Tools/CellTunnelDev Tools/LoggingAudit
 SWIFT_OWNED_SWIFT_FILES := $(shell find $(SWIFT_SOURCE_ROOTS) -path '*/.build/*' -prune -o -name '*.swift' -print)
 SWIFT_PACKAGE_MANIFESTS := Package.swift Project.swift Tuist.swift Tuist/Package.swift Tools/Package.swift Tools/cell-tunnel-dev.swift

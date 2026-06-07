@@ -58,7 +58,6 @@ func buildProject(target: BuildTarget, configuration: String) throws {
         )
     }
 
-    try verifyBuiltSigning(target: target, configuration: configuration)
     try printBuildArtifactFingerprints(target: target, configuration: configuration)
 }
 
