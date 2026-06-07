@@ -392,6 +392,28 @@ func printToolOutput(_ message: String) {
     FileHandle.standardOutput.write(Data((message + "\n").utf8))
 }
 
+/// The Xcode EFFECTIVE_PLATFORM_NAME suffix for one of the platform-name constants.
+/// xcodebuild places products at `SYMROOT/<Config><EFFECTIVE_PLATFORM_NAME>`, where the
+/// suffix is empty for macOS and a `-platform` token otherwise. Mapping it here keeps the
+/// dev tool's product locations identical to the Xcode GUI's.
+private func effectivePlatformSuffix(platformName: String) -> String {
+    switch platformName {
+    case iOSDevicePlatformName:
+        return "-iphoneos"
+    case iOSSimulatorPlatformName:
+        return "-iphonesimulator"
+    case macCatalystPlatformName:
+        return "-maccatalyst"
+    default:
+        return ""
+    }
+}
+
+/// The directory a built product lands in for a configuration and platform, in the
+/// standard xcodebuild `SYMROOT/<Config><EFFECTIVE_PLATFORM_NAME>` layout. SYMROOT is set
+/// to `Products/` for both the Xcode GUI and this dev tool, so this is the single location
+/// every build writes to and every install, activate, verify, and fingerprint step reads.
 func xcodeConfigurationBuildDirectory(configuration: String, platformName: String) -> URL {
-    productsDirectory.appendingPathComponent(configuration).appendingPathComponent(platformName)
+    let directoryName = configuration + effectivePlatformSuffix(platformName: platformName)
+    return productsDirectory.appendingPathComponent(directoryName)
 }

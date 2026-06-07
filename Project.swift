@@ -27,7 +27,7 @@ let projectSettings = Settings.settings(
         "ENABLE_USER_SCRIPT_SANDBOXING": "NO",
         "IPHONEOS_DEPLOYMENT_TARGET": "26.0",
         "MACOSX_DEPLOYMENT_TARGET": "15.0",
-        "SYMROOT": "$(SRCROOT)/build",
+        "SYMROOT": "$(SRCROOT)/Products",
         "OBJROOT": "$(SRCROOT)/build/Intermediates.noindex",
         "MARKETING_VERSION": "0.1.0",
         "CURRENT_PROJECT_VERSION": "1",

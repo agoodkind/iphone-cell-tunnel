@@ -37,7 +37,12 @@ XCCONFIG_EXPORTED_VARS := \
 SWIFT_BUILD_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) build $(TARGET) $(CONFIG),printf 'build: TARGET=$(BUILD_TARGET_USAGE) is required\n'; exit 1)
 SWIFT_TEST_CMD ?= $(CELL_TUNNEL_DEV) test
 SWIFT_RUN_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) activate $(TARGET) $(CONFIG),printf 'run: TARGET=$(ACTIVATION_TARGET_USAGE) is required\n'; exit 1)
-SWIFT_GENERATE_CMD ?= $(MAKE) xcconfig-generate-project
+# The dev tool's `generate` installs Tuist dependencies and renders the project; it is
+# idempotent via its fingerprint check. SWIFT_GENERATE_CMD must be self-sufficient
+# because swift-mk runs it before build and before the compile-based lint gates, where
+# no prior `tuist install` has happened. `make xcconfig-generate-project` alone skips
+# the install and fails with "could not find external dependencies".
+SWIFT_GENERATE_CMD ?= $(CELL_TUNNEL_DEV) generate
 # CellTunnelDev builds Xcode targets into build/DerivedData; the dead-code gate
 # reads the index store from the same path so it scans every built Xcode target.
 SWIFT_MK_DERIVED_DATA := $(CURDIR)/build/DerivedData

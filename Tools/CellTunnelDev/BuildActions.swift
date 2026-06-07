@@ -13,11 +13,12 @@ import SwiftMkCore
 private let logger = CellTunnelLog.logger(category: .build)
 
 func generateProject() throws {
-    try requireTool("tuist")
     if try projectGenerationIsCurrent() {
         return
     }
-    try run("tuist", ["install"])
+    guard Toolchain.installDependencies(.tuist) == 0 else {
+        throw ToolError.failure("toolchain install failed")
+    }
     try run("make", ["xcconfig-generate-project"])
     try recordProjectGenerationFingerprint()
 }
@@ -104,14 +105,15 @@ func buildScheme(
     xcodebuildOptions: [String] = [],
     buildSettings: [String: String] = [:]
 ) throws {
-    // swift-mk owns build-time signing. This dev tool runs xcodebuild without the
-    // make prelude, so apply the same XCODE_XCCONFIG_FILE override here. It is a
-    // no-op when the prelude already exported it, reads team/identity/style from the
-    // environment then Config/local.xcconfig, and sets no signing per target.
+    // swift-mk owns build-time signing. This dev tool builds through Toolchain
+    // without the make prelude, so apply the same XCODE_XCCONFIG_FILE override here.
+    // It is a no-op when the prelude already exported it, reads team/identity/style
+    // from the environment then Config/local.xcconfig, and sets no signing per target.
+    // Toolchain.build/analyze then sees the override already set and inherits it.
     SigningBuildConfig.applyEnvironmentOverride(localXcconfigPaths: ["Config/local.xcconfig"])
     logger.notice(
         """
-        xcodebuild scheme=\(scheme, privacy: .public) action=\(action, privacy: .public) \
+        toolchain scheme=\(scheme, privacy: .public) action=\(action, privacy: .public) \
         configuration=\(configuration, privacy: .public) platform=\(platformName, privacy: .public)
         """
     )
@@ -121,36 +123,32 @@ func buildScheme(
     )
     try fileManager.createDirectory(
         at: configurationBuildDirectory, withIntermediateDirectories: true)
-    var arguments = [
-        "-workspace",
-        "CellTunnel.xcworkspace",
-        "-scheme",
-        scheme,
-        "-configuration",
-        configuration,
-        "-destination",
-        destination,
-        "-derivedDataPath",
-        derivedDataDirectory.path,
+    var settings = [
+        "SYMROOT": productsDirectory.path,
+        "OBJROOT": buildDirectory.appendingPathComponent("Intermediates.noindex").path,
     ]
-    arguments.append(contentsOf: xcodebuildOptions)
-    arguments.append(contentsOf: xcodeBuildCacheArguments(.enabled))
-    arguments.append(contentsOf: [
-        "SYMROOT=\(buildDirectory.path)",
-        "OBJROOT=\(buildDirectory.appendingPathComponent("Intermediates.noindex").path)",
-        "CONFIGURATION_BUILD_DIR=\(configurationBuildDirectory.path)",
-    ])
-    for key in buildSettings.keys.sorted() {
-        guard let value = buildSettings[key] else {
-            continue
-        }
-        arguments.append("\(key)=\(value)")
+    for (key, value) in buildSettings {
+        settings[key] = value
     }
-    arguments.append(action)
-    try run(
-        "xcodebuild",
-        arguments
+    let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: scheme,
+        configuration: configuration,
+        workspace: "CellTunnel.xcworkspace",
+        destination: destination,
+        derivedDataPath: derivedDataDirectory.path,
+        extraSettings: settings,
+        extraArguments: xcodebuildOptions + xcodeBuildCacheArguments(.enabled)
     )
+    let status: Int32
+    if action == "analyze" {
+        status = Toolchain.analyze(request)
+    } else {
+        status = Toolchain.build(request)
+    }
+    guard status == 0 else {
+        throw ToolError.failure("toolchain \(action) failed for scheme \(scheme)")
+    }
 }
 
 func buildPhoneDevice(configuration: String) throws {
@@ -353,27 +351,21 @@ func swiftLintAnalyze() throws {
     let analyzeDirectory = buildDirectory.appendingPathComponent("Analyze")
     try fileManager.createDirectory(at: analyzeDirectory, withIntermediateDirectories: true)
     let compilerLog = analyzeDirectory.appendingPathComponent("swiftlint-xcodebuild.log")
-    let status = try runWritingOutput(
-        "xcodebuild",
-        [
-            "-workspace",
-            "CellTunnel.xcworkspace",
-            "-scheme",
-            "CellTunnelAgent",
-            "-configuration",
-            "Debug",
-            "-destination",
-            "platform=macOS",
-            "-derivedDataPath",
-            analyzeDirectory.appendingPathComponent("SwiftLintDerivedData").path,
-        ] + xcodeBuildCacheArguments(.disabled) + [
-            "clean",
-            "build",
-        ],
-        outputURL: compilerLog
+    // Sign this compiler-log build the same way every other build path does, so the
+    // analyze build never silently falls back to ad-hoc.
+    SigningBuildConfig.applyEnvironmentOverride(localXcconfigPaths: ["Config/local.xcconfig"])
+    let request = Toolchain.Request(
+        generator: .tuist,
+        scheme: "CellTunnelAgent",
+        configuration: "Debug",
+        workspace: "CellTunnel.xcworkspace",
+        destination: "platform=macOS",
+        derivedDataPath: analyzeDirectory.appendingPathComponent("SwiftLintDerivedData").path,
+        extraArguments: xcodeBuildCacheArguments(.disabled)
     )
+    let status = Toolchain.buildWritingLog(request, logPath: compilerLog.path, clean: true)
     guard status == 0 else {
-        throw ToolError.failure("xcodebuild compiler-log build failed with status \(status)")
+        throw ToolError.failure("toolchain compiler-log build failed with status \(status)")
     }
     try run(
         "swiftlint",
