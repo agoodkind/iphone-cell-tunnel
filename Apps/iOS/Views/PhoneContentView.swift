@@ -16,37 +16,37 @@ import SwiftUI
 /// dashboard, which is the list-form `RelayStatusScreen` on the iPhone and the
 /// sidebar-and-dashboard `MacStatusScreen` on the Mac.
 struct PhoneContentView: View {
-    @Environment(RelayController.self) private var controller
+  @Environment(RelayController.self) private var controller
 
-    private var model: RelayScreenModel {
-        RelayScreenModel(controller: controller)
-    }
+  private var model: RelayScreenModel {
+    RelayScreenModel(controller: controller)
+  }
 
-    var body: some View {
-        switch model.uiTier {
-        case .full:
-            SetupScreen()
-        case .reduced:
-            reducedDashboard
-        }
+  var body: some View {
+    switch model.uiTier {
+    case .full:
+      SetupScreen()
+    case .reduced:
+      reducedDashboard
     }
+  }
 
-    @ViewBuilder private var reducedDashboard: some View {
-        #if targetEnvironment(macCatalyst)
-            MacStatusScreen()
-        #else
-            RelayStatusScreen()
-        #endif
-    }
+  @ViewBuilder private var reducedDashboard: some View {
+    #if targetEnvironment(macCatalyst)
+      MacStatusScreen()
+    #else
+      RelayStatusScreen()
+    #endif
+  }
 }
 
 #Preview {
-    PhoneContentView()
-        .environment(
-            RelayController(
-                backend: PreviewRelayBackend(),
-                throughput: ThroughputCalculator(),
-                lifetimeStore: LifetimeDataStore()
-            )
-        )
+  PhoneContentView()
+    .environment(
+      RelayController(
+        backend: PreviewRelayBackend(),
+        throughput: ThroughputCalculator(),
+        lifetimeStore: LifetimeDataStore()
+      )
+    )
 }

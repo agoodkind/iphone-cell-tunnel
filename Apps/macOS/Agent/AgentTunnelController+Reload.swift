@@ -16,45 +16,45 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 // MARK: - Live reload
 
 extension AgentTunnelController {
-    /// Applies an edited WireGuard config to the already-running tunnel without a
-    /// VPN profile save or a session restart. It reads the config file, then asks
-    /// the running extension to reload it in place over the provider control
-    /// channel, which reconfigures WireGuard and the captured route set live.
-    func handleReloadTunnel(settings: TunnelStartSettings) async -> AgentControlResponse {
-        guard settings.hasWireGuardConfigPath else {
-            return failure(
-                errorCode: .missingWireGuardConfigPath,
-                message: "reload requires a WireGuard config path"
-            )
-        }
-        do {
-            let configText = try readConfigText(at: settings.wireGuardConfigPath)
-            let manager = try await loadOrCreateManager()
-            guard isSessionActive(on: manager) else {
-                return failure(
-                    errorCode: .internal,
-                    message: "reload requires a running tunnel"
-                )
-            }
-            let response = try await forward(
-                request: .reloadConfig(text: configText),
-                on: manager,
-                operationName: "reloadConfig"
-            )
-            logger.notice("agent tunnel reload requested")
-            if let status = response.status {
-                return AgentControlResponse(status: status)
-            }
-            return try await forwardStatus(on: manager)
-        } catch {
-            logger.error(
-                """
-                reloadTunnel agent operation caught error \
-                details=\(String(describing: error), privacy: .public) \
-                recovery=return-failure-response
-                """
-            )
-            return failure(from: error)
-        }
+  /// Applies an edited WireGuard config to the already-running tunnel without a
+  /// VPN profile save or a session restart. It reads the config file, then asks
+  /// the running extension to reload it in place over the provider control
+  /// channel, which reconfigures WireGuard and the captured route set live.
+  func handleReloadTunnel(settings: TunnelStartSettings) async -> AgentControlResponse {
+    guard settings.hasWireGuardConfigPath else {
+      return failure(
+        errorCode: .missingWireGuardConfigPath,
+        message: "reload requires a WireGuard config path"
+      )
     }
+    do {
+      let configText = try readConfigText(at: settings.wireGuardConfigPath)
+      let manager = try await loadOrCreateManager()
+      guard isSessionActive(on: manager) else {
+        return failure(
+          errorCode: .internal,
+          message: "reload requires a running tunnel"
+        )
+      }
+      let response = try await forward(
+        request: .reloadConfig(text: configText),
+        on: manager,
+        operationName: "reloadConfig"
+      )
+      logger.notice("agent tunnel reload requested")
+      if let status = response.status {
+        return AgentControlResponse(status: status)
+      }
+      return try await forwardStatus(on: manager)
+    } catch {
+      logger.error(
+        """
+        reloadTunnel agent operation caught error \
+        details=\(String(describing: error), privacy: .public) \
+        recovery=return-failure-response
+        """
+      )
+      return failure(from: error)
+    }
+  }
 }

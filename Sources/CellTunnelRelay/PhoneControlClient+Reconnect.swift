@@ -21,32 +21,32 @@ private let controlReconnectBackoffSeconds = 2
 /// link bounces. This is the control-plane half of redial-on-drop; the data
 /// plane recovers through the transport manager.
 extension PhoneControlClient {
-    /// Schedules a single reconnect after a fixed backoff that bounds the retry
-    /// rate. The fired handler is `@Sendable` so it stays off the main thread
-    /// until it hops back, and `start` rebuilds the browser and redials whichever
-    /// agent is advertising now.
-    func scheduleReconnect() {
-        guard isActive else {
-            return
-        }
-        redialTimer?.cancel()
-        logger.notice(
-            """
-            control client scheduling reconnect \
-            backoffSeconds=\(controlReconnectBackoffSeconds, privacy: .public)
-            """
-        )
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + .seconds(controlReconnectBackoffSeconds))
-        timer.setEventHandler { @Sendable [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, isActive else {
-                    return
-                }
-                start()
-            }
-        }
-        timer.resume()
-        redialTimer = timer
+  /// Schedules a single reconnect after a fixed backoff that bounds the retry
+  /// rate. The fired handler is `@Sendable` so it stays off the main thread
+  /// until it hops back, and `start` rebuilds the browser and redials whichever
+  /// agent is advertising now.
+  func scheduleReconnect() {
+    guard isActive else {
+      return
     }
+    redialTimer?.cancel()
+    logger.notice(
+      """
+      control client scheduling reconnect \
+      backoffSeconds=\(controlReconnectBackoffSeconds, privacy: .public)
+      """
+    )
+    let timer = DispatchSource.makeTimerSource(queue: queue)
+    timer.schedule(deadline: .now() + .seconds(controlReconnectBackoffSeconds))
+    timer.setEventHandler { @Sendable [weak self] in
+      Task { @MainActor [weak self] in
+        guard let self, isActive else {
+          return
+        }
+        start()
+      }
+    }
+    timer.resume()
+    redialTimer = timer
+  }
 }

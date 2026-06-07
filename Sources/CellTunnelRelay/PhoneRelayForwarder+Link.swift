@@ -25,213 +25,213 @@ private let logger = CellTunnelLog.logger(category: .relay)
 /// open or close, never on a timer. Every method runs only on
 /// `PhoneRelayForwarder.queue`.
 extension PhoneRelayForwarder {
-    // MARK: - Reconcile (discovery only adds)
+  // MARK: - Reconcile (discovery only adds)
 
-    func reconcileOnQueue(_ interfaces: [RelayMacInterface]) {
-        for interface in interfaces where macLinks[interface.interfaceName] == nil {
-            dialLink(interface)
-        }
-        recomputeEgress()
+  func reconcileOnQueue(_ interfaces: [RelayMacInterface]) {
+    for interface in interfaces where macLinks[interface.interfaceName] == nil {
+      dialLink(interface)
     }
+    recomputeEgress()
+  }
 
-    func resetLinksOnQueue() {
-        guard !macLinks.isEmpty else {
-            return
-        }
-        logger.notice("phone relay resetting all links on control drop")
-        for link in macLinks.values {
-            link.connection.cancel()
-        }
-        macLinks.removeAll()
-        egressConnection = nil
-        egressInterfaceName = nil
-        recomputeEgress()
+  func resetLinksOnQueue() {
+    guard !macLinks.isEmpty else {
+      return
     }
+    logger.notice("phone relay resetting all links on control drop")
+    for link in macLinks.values {
+      link.connection.cancel()
+    }
+    macLinks.removeAll()
+    egressConnection = nil
+    egressInterfaceName = nil
+    recomputeEgress()
+  }
 
-    // MARK: - Dial (one link per interface)
+  // MARK: - Dial (one link per interface)
 
-    private func dialLink(_ interface: RelayMacInterface) {
-        let parameters = NWParameters.udp
-        parameters.allowLocalEndpointReuse = true
-        parameters.includePeerToPeer = interface.linkClass == .peerToPeer
-        // The binder decides whether to pin this link to the discovered interface,
-        // so each interface becomes its own link, or to leave it on the host
-        // network when the agent is reachable there.
-        interfaceBinder.configureLinkParameters(parameters, for: interface)
-        let connection = NWConnection(to: interface.endpoint, using: parameters)
-        macLinks[interface.interfaceName] = PhoneMacLink(
-            interfaceName: interface.interfaceName,
-            linkClass: interface.linkClass,
-            connection: connection,
-            isReady: false
-        )
-        connection.stateUpdateHandler = { [weak self, weak connection] state in
-            guard let connection else {
-                return
-            }
-            self?.handleLinkState(
-                state, connection: connection, interfaceName: interface.interfaceName
-            )
+  private func dialLink(_ interface: RelayMacInterface) {
+    let parameters = NWParameters.udp
+    parameters.allowLocalEndpointReuse = true
+    parameters.includePeerToPeer = interface.linkClass == .peerToPeer
+    // The binder decides whether to pin this link to the discovered interface,
+    // so each interface becomes its own link, or to leave it on the host
+    // network when the agent is reachable there.
+    interfaceBinder.configureLinkParameters(parameters, for: interface)
+    let connection = NWConnection(to: interface.endpoint, using: parameters)
+    macLinks[interface.interfaceName] = PhoneMacLink(
+      interfaceName: interface.interfaceName,
+      linkClass: interface.linkClass,
+      connection: connection,
+      isReady: false
+    )
+    connection.stateUpdateHandler = { [weak self, weak connection] state in
+      guard let connection else {
+        return
+      }
+      self?.handleLinkState(
+        state, connection: connection, interfaceName: interface.interfaceName
+      )
+    }
+    connection.start(queue: queue)
+    logger.notice(
+      """
+      phone relay dialing link interface=\(interface.interfaceName, privacy: .public) \
+      class=\(interface.linkClass.rawValue, privacy: .public) \
+      endpoint=\(String(describing: interface.endpoint), privacy: .public)
+      """
+    )
+  }
+
+  private func handleLinkState(
+    _ state: NWConnection.State, connection: NWConnection, interfaceName: String
+  ) {
+    guard isCurrentLink(connection, interfaceName: interfaceName) else {
+      return
+    }
+    switch state {
+    case .ready:
+      macLinks[interfaceName]?.isReady = true
+      logger.notice(
+        "phone relay link ready interface=\(interfaceName, privacy: .public)"
+      )
+      primeLink(connection)
+      receiveFromMac(on: connection, interfaceName: interfaceName)
+      recomputeEgress()
+    case .failed(let error):
+      logger.error(
+        """
+        phone relay link failed interface=\(interfaceName, privacy: .public) \
+        error=\(error.localizedDescription, privacy: .public)
+        """
+      )
+      removeLink(interfaceName: interfaceName, reason: "failed")
+    case .cancelled:
+      removeLink(interfaceName: interfaceName, reason: "cancelled")
+    default:
+      break
+    }
+  }
+
+  /// Drops the link a failed send was bound to. A send error on the carrying
+  /// link (no route to host when its interface goes away) is the reliable signal
+  /// the path is gone, since the connection state may never reach .failed. The
+  /// cellular download path calls this so the carrying choice moves at once.
+  func failMacSend(on connection: NWConnection) {
+    for (name, link) in macLinks where link.connection === connection {
+      removeLink(interfaceName: name, reason: "send-error")
+      return
+    }
+  }
+
+  func handleLinkReceiveError(
+    _ error: NWError, connection: NWConnection, interfaceName: String
+  ) {
+    logger.error(
+      """
+      phone relay link receive failed interface=\(interfaceName, privacy: .public) \
+      error=\(error.localizedDescription, privacy: .public)
+      """
+    )
+    connection.cancel()
+    removeLink(interfaceName: interfaceName, reason: "receive-error")
+  }
+
+  // MARK: - Membership helpers
+
+  func isCurrentLink(_ connection: NWConnection, interfaceName: String) -> Bool {
+    macLinks[interfaceName]?.connection === connection
+  }
+
+  private func removeLink(interfaceName: String, reason: String) {
+    guard let link = macLinks.removeValue(forKey: interfaceName) else {
+      return
+    }
+    link.connection.cancel()
+    logger.notice(
+      """
+      phone relay dropped link interface=\(interfaceName, privacy: .public) \
+      reason=\(reason, privacy: .public) links=\(self.macLinks.count, privacy: .public)
+      """
+    )
+    recomputeEgress()
+  }
+
+  // A UDP NWConnection has no peer until the first datagram is sent, so the
+  // agent cannot learn the iPhone source endpoint to route replies. Send one
+  // empty datagram so the agent adopts this connection as a link. The relay
+  // forwards only non-empty datagrams, so the prime never reaches WireGuard.
+  private func primeLink(_ connection: NWConnection) {
+    let endpoint = connection.endpoint
+    connection.send(
+      content: Data(),
+      completion: .contentProcessed { error in
+        if let error {
+          logger.error(
+            "phone relay link prime failed error=\(error.localizedDescription, privacy: .public)"
+          )
+          return
         }
-        connection.start(queue: queue)
         logger.notice(
-            """
-            phone relay dialing link interface=\(interface.interfaceName, privacy: .public) \
-            class=\(interface.linkClass.rawValue, privacy: .public) \
-            endpoint=\(String(describing: interface.endpoint), privacy: .public)
-            """
+          "phone relay link prime sent endpoint=\(String(describing: endpoint), privacy: .public)"
         )
+      }
+    )
+  }
+
+  // MARK: - Carrying selection
+
+  /// Recomputes the cached carrying pointer from the chooser off the packet path.
+  /// The download path reads one pointer per datagram; it is recomputed here, on
+  /// a link opening or closing or the override changing, never on a timer. Only
+  /// ready links are carrying candidates.
+  func recomputeEgress() {
+    let openReady = macLinks.values
+      .filter(\.isReady)
+      .map { link in
+        RelayLinkSnapshot(interfaceName: link.interfaceName, linkClass: link.linkClass)
+      }
+    let chosen = RelayLinkPolicy.chooseCarrying(
+      preferred: preferredInterface, openLinks: Array(openReady)
+    )
+    let carryingConnection = chosen.flatMap { macLinks[$0]?.connection }
+    if chosen != egressInterfaceName {
+      let chosenClass = chosen.flatMap { macLinks[$0]?.linkClass }
+      let localAddresses =
+        carryingConnection?.currentPath?.localEndpoint?.addressPair ?? .empty
+      let peerAddresses =
+        carryingConnection?.currentPath?.remoteEndpoint?.addressPair ?? .empty
+      logger.notice(
+        "phone relay carrying link interface=\(chosen ?? "none", privacy: .public)"
+      )
+      onEgressInterfaceChange?(chosen, chosenClass, localAddresses, peerAddresses)
     }
+    egressInterfaceName = chosen
+    egressConnection = carryingConnection
+    updatePeerState(hasEgress: egressConnection != nil)
+  }
 
-    private func handleLinkState(
-        _ state: NWConnection.State, connection: NWConnection, interfaceName: String
-    ) {
-        guard isCurrentLink(connection, interfaceName: interfaceName) else {
-            return
-        }
-        switch state {
-        case .ready:
-            macLinks[interfaceName]?.isReady = true
-            logger.notice(
-                "phone relay link ready interface=\(interfaceName, privacy: .public)"
-            )
-            primeLink(connection)
-            receiveFromMac(on: connection, interfaceName: interfaceName)
-            recomputeEgress()
-        case .failed(let error):
-            logger.error(
-                """
-                phone relay link failed interface=\(interfaceName, privacy: .public) \
-                error=\(error.localizedDescription, privacy: .public)
-                """
-            )
-            removeLink(interfaceName: interfaceName, reason: "failed")
-        case .cancelled:
-            removeLink(interfaceName: interfaceName, reason: "cancelled")
-        default:
-            break
-        }
+  private func updatePeerState(hasEgress: Bool) {
+    guard hasEgress != hasLivePeer else {
+      return
     }
+    hasLivePeer = hasEgress
+    onPeerChange?(hasEgress)
+  }
 
-    /// Drops the link a failed send was bound to. A send error on the carrying
-    /// link (no route to host when its interface goes away) is the reliable signal
-    /// the path is gone, since the connection state may never reach .failed. The
-    /// cellular download path calls this so the carrying choice moves at once.
-    func failMacSend(on connection: NWConnection) {
-        for (name, link) in macLinks where link.connection === connection {
-            removeLink(interfaceName: name, reason: "send-error")
-            return
-        }
+  /// Sets the carrying-link interface override from the configuration, off the
+  /// packet path. Nil restores score-order selection. The value originates in
+  /// `RelayConfiguration`, the source of truth, not a literal here.
+  func applyPreferredInterface(_ name: String?) {
+    queue.async { [weak self] in
+      guard let self else {
+        return
+      }
+      preferredInterface = name
+      logger.notice(
+        "phone relay preferred interface set name=\(name ?? "none", privacy: .public)"
+      )
+      recomputeEgress()
     }
-
-    func handleLinkReceiveError(
-        _ error: NWError, connection: NWConnection, interfaceName: String
-    ) {
-        logger.error(
-            """
-            phone relay link receive failed interface=\(interfaceName, privacy: .public) \
-            error=\(error.localizedDescription, privacy: .public)
-            """
-        )
-        connection.cancel()
-        removeLink(interfaceName: interfaceName, reason: "receive-error")
-    }
-
-    // MARK: - Membership helpers
-
-    func isCurrentLink(_ connection: NWConnection, interfaceName: String) -> Bool {
-        macLinks[interfaceName]?.connection === connection
-    }
-
-    private func removeLink(interfaceName: String, reason: String) {
-        guard let link = macLinks.removeValue(forKey: interfaceName) else {
-            return
-        }
-        link.connection.cancel()
-        logger.notice(
-            """
-            phone relay dropped link interface=\(interfaceName, privacy: .public) \
-            reason=\(reason, privacy: .public) links=\(self.macLinks.count, privacy: .public)
-            """
-        )
-        recomputeEgress()
-    }
-
-    // A UDP NWConnection has no peer until the first datagram is sent, so the
-    // agent cannot learn the iPhone source endpoint to route replies. Send one
-    // empty datagram so the agent adopts this connection as a link. The relay
-    // forwards only non-empty datagrams, so the prime never reaches WireGuard.
-    private func primeLink(_ connection: NWConnection) {
-        let endpoint = connection.endpoint
-        connection.send(
-            content: Data(),
-            completion: .contentProcessed { error in
-                if let error {
-                    logger.error(
-                        "phone relay link prime failed error=\(error.localizedDescription, privacy: .public)"
-                    )
-                    return
-                }
-                logger.notice(
-                    "phone relay link prime sent endpoint=\(String(describing: endpoint), privacy: .public)"
-                )
-            }
-        )
-    }
-
-    // MARK: - Carrying selection
-
-    /// Recomputes the cached carrying pointer from the chooser off the packet path.
-    /// The download path reads one pointer per datagram; it is recomputed here, on
-    /// a link opening or closing or the override changing, never on a timer. Only
-    /// ready links are carrying candidates.
-    func recomputeEgress() {
-        let openReady = macLinks.values
-            .filter(\.isReady)
-            .map { link in
-                RelayLinkSnapshot(interfaceName: link.interfaceName, linkClass: link.linkClass)
-            }
-        let chosen = RelayLinkPolicy.chooseCarrying(
-            preferred: preferredInterface, openLinks: Array(openReady)
-        )
-        let carryingConnection = chosen.flatMap { macLinks[$0]?.connection }
-        if chosen != egressInterfaceName {
-            let chosenClass = chosen.flatMap { macLinks[$0]?.linkClass }
-            let localAddresses =
-                carryingConnection?.currentPath?.localEndpoint?.addressPair ?? .empty
-            let peerAddresses =
-                carryingConnection?.currentPath?.remoteEndpoint?.addressPair ?? .empty
-            logger.notice(
-                "phone relay carrying link interface=\(chosen ?? "none", privacy: .public)"
-            )
-            onEgressInterfaceChange?(chosen, chosenClass, localAddresses, peerAddresses)
-        }
-        egressInterfaceName = chosen
-        egressConnection = carryingConnection
-        updatePeerState(hasEgress: egressConnection != nil)
-    }
-
-    private func updatePeerState(hasEgress: Bool) {
-        guard hasEgress != hasLivePeer else {
-            return
-        }
-        hasLivePeer = hasEgress
-        onPeerChange?(hasEgress)
-    }
-
-    /// Sets the carrying-link interface override from the configuration, off the
-    /// packet path. Nil restores score-order selection. The value originates in
-    /// `RelayConfiguration`, the source of truth, not a literal here.
-    func applyPreferredInterface(_ name: String?) {
-        queue.async { [weak self] in
-            guard let self else {
-                return
-            }
-            preferredInterface = name
-            logger.notice(
-                "phone relay preferred interface set name=\(name ?? "none", privacy: .public)"
-            )
-            recomputeEgress()
-        }
-    }
+  }
 }

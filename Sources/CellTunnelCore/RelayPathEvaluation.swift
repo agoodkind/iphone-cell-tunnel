@@ -18,44 +18,44 @@ import Foundation
 /// cannot carry the Mac-to-iPhone link and exist only so the interface mapping
 /// is total.
 public enum RelayLinkClass: String, Codable, Sendable, Equatable, CaseIterable {
-    case cellular
-    case loopback
-    case other
-    case peerToPeer = "peer-to-peer"
-    case wifiLan = "wifi-lan"
-    case wired
+  case cellular
+  case loopback
+  case other
+  case peerToPeer = "peer-to-peer"
+  case wifiLan = "wifi-lan"
+  case wired
 
-    /// Whether this class can carry the Mac-to-iPhone relay link. The probe emits
-    /// only candidates that pass this filter, so the manager never dials a path
-    /// that cannot reach the Mac agent over the local link.
-    public var isMacLinkCapable: Bool {
-        switch self {
-        case .wired, .wifiLan, .peerToPeer:
-            true
-        case .cellular, .loopback, .other:
-            false
-        }
+  /// Whether this class can carry the Mac-to-iPhone relay link. The probe emits
+  /// only candidates that pass this filter, so the manager never dials a path
+  /// that cannot reach the Mac agent over the local link.
+  public var isMacLinkCapable: Bool {
+    switch self {
+    case .wired, .wifiLan, .peerToPeer:
+      true
+    case .cellular, .loopback, .other:
+      false
     }
+  }
 
-    /// The transport name shown on the status screen, the one place a class maps to
-    /// a user-facing word. The `Connected via` row renders this for the carrying
-    /// link's class.
-    public var displayName: String {
-        switch self {
-        case .wired:
-            "Wired"
-        case .wifiLan:
-            "Wi-Fi"
-        case .peerToPeer:
-            "Peer-to-Peer"
-        case .cellular:
-            "Cellular"
-        case .loopback:
-            "Loopback"
-        case .other:
-            "Other"
-        }
+  /// The transport name shown on the status screen, the one place a class maps to
+  /// a user-facing word. The `Connected via` row renders this for the carrying
+  /// link's class.
+  public var displayName: String {
+    switch self {
+    case .wired:
+      "Wired"
+    case .wifiLan:
+      "Wi-Fi"
+    case .peerToPeer:
+      "Peer-to-Peer"
+    case .cellular:
+      "Cellular"
+    case .loopback:
+      "Loopback"
+    case .other:
+      "Other"
     }
+  }
 }
 
 // MARK: - RelayLinkScorer
@@ -66,52 +66,52 @@ public enum RelayLinkClass: String, Codable, Sendable, Equatable, CaseIterable {
 /// it needs no test traffic; an active throughput prober can replace this scorer
 /// later without changing the evaluation type or the manager that consumes it.
 public enum RelayLinkScorer {
-    // MARK: - Score constants
+  // MARK: - Score constants
 
-    private static let wiredScore = 100
-    private static let wifiLanScore = 80
-    private static let peerToPeerScore = 30
-    private static let cellularScore = 10
-    private static let loopbackScore = 5
-    private static let otherScore = 1
-    private static let expensivePenalty = 20
-    private static let constrainedPenalty = 20
+  private static let wiredScore = 100
+  private static let wifiLanScore = 80
+  private static let peerToPeerScore = 30
+  private static let cellularScore = 10
+  private static let loopbackScore = 5
+  private static let otherScore = 1
+  private static let expensivePenalty = 20
+  private static let constrainedPenalty = 20
 
-    // MARK: - Scoring
+  // MARK: - Scoring
 
-    /// Returns the score for a link class with the given path flags. Pure: the
-    /// same inputs always produce the same score.
-    public static func score(
-        linkClass: RelayLinkClass,
-        isExpensive: Bool,
-        isConstrained: Bool
-    ) -> Int {
-        var value = baseScore(for: linkClass)
-        if isExpensive {
-            value -= expensivePenalty
-        }
-        if isConstrained {
-            value -= constrainedPenalty
-        }
-        return value
+  /// Returns the score for a link class with the given path flags. Pure: the
+  /// same inputs always produce the same score.
+  public static func score(
+    linkClass: RelayLinkClass,
+    isExpensive: Bool,
+    isConstrained: Bool
+  ) -> Int {
+    var value = baseScore(for: linkClass)
+    if isExpensive {
+      value -= expensivePenalty
     }
-
-    private static func baseScore(for linkClass: RelayLinkClass) -> Int {
-        switch linkClass {
-        case .wired:
-            wiredScore
-        case .wifiLan:
-            wifiLanScore
-        case .peerToPeer:
-            peerToPeerScore
-        case .cellular:
-            cellularScore
-        case .loopback:
-            loopbackScore
-        case .other:
-            otherScore
-        }
+    if isConstrained {
+      value -= constrainedPenalty
     }
+    return value
+  }
+
+  private static func baseScore(for linkClass: RelayLinkClass) -> Int {
+    switch linkClass {
+    case .wired:
+      wiredScore
+    case .wifiLan:
+      wifiLanScore
+    case .peerToPeer:
+      peerToPeerScore
+    case .cellular:
+      cellularScore
+    case .loopback:
+      loopbackScore
+    case .other:
+      otherScore
+    }
+  }
 }
 
 // MARK: - RelayLinkCandidate
@@ -120,28 +120,28 @@ public enum RelayLinkScorer {
 /// is computed once at construction from the class and flags so the manager can
 /// compare candidates by a single number.
 public struct RelayLinkCandidate: Sendable, Equatable {
-    public let interfaceName: String
-    public let linkClass: RelayLinkClass
-    public let isExpensive: Bool
-    public let isConstrained: Bool
-    public let score: Int
+  public let interfaceName: String
+  public let linkClass: RelayLinkClass
+  public let isExpensive: Bool
+  public let isConstrained: Bool
+  public let score: Int
 
-    public init(
-        interfaceName: String,
-        linkClass: RelayLinkClass,
-        isExpensive: Bool,
-        isConstrained: Bool
-    ) {
-        self.interfaceName = interfaceName
-        self.linkClass = linkClass
-        self.isExpensive = isExpensive
-        self.isConstrained = isConstrained
-        self.score = RelayLinkScorer.score(
-            linkClass: linkClass,
-            isExpensive: isExpensive,
-            isConstrained: isConstrained
-        )
-    }
+  public init(
+    interfaceName: String,
+    linkClass: RelayLinkClass,
+    isExpensive: Bool,
+    isConstrained: Bool
+  ) {
+    self.interfaceName = interfaceName
+    self.linkClass = linkClass
+    self.isExpensive = isExpensive
+    self.isConstrained = isConstrained
+    self.score = RelayLinkScorer.score(
+      linkClass: linkClass,
+      isExpensive: isExpensive,
+      isConstrained: isConstrained
+    )
+  }
 }
 
 // MARK: - RelayPathEvaluation
@@ -150,23 +150,23 @@ public struct RelayLinkCandidate: Sendable, Equatable {
 /// change, sorted best first. The manager reads `best` to decide whether to
 /// switch and walks `candidates` in order when it must establish a fresh link.
 public struct RelayPathEvaluation: Sendable, Equatable {
-    public let candidates: [RelayLinkCandidate]
+  public let candidates: [RelayLinkCandidate]
 
-    /// The highest scored candidate, or nil when no link-capable path is present.
-    public var best: RelayLinkCandidate? {
-        candidates.first
-    }
+  /// The highest scored candidate, or nil when no link-capable path is present.
+  public var best: RelayLinkCandidate? {
+    candidates.first
+  }
 
-    /// Sorts the candidates best first, breaking score ties by interface name so
-    /// the order is stable across evaluations.
-    public init(candidates: [RelayLinkCandidate]) {
-        self.candidates = candidates.sorted { lhs, rhs in
-            if lhs.score != rhs.score {
-                return lhs.score > rhs.score
-            }
-            return lhs.interfaceName < rhs.interfaceName
-        }
+  /// Sorts the candidates best first, breaking score ties by interface name so
+  /// the order is stable across evaluations.
+  public init(candidates: [RelayLinkCandidate]) {
+    self.candidates = candidates.sorted { lhs, rhs in
+      if lhs.score != rhs.score {
+        return lhs.score > rhs.score
+      }
+      return lhs.interfaceName < rhs.interfaceName
     }
+  }
 }
 
 // MARK: - RelayLinkSnapshot
@@ -175,17 +175,17 @@ public struct RelayPathEvaluation: Sendable, Equatable {
 /// its scored preference. The relay builds one per open link off the packet path.
 /// It carries no Network object so the chooser stays pure and testable.
 public struct RelayLinkSnapshot: Sendable, Equatable {
-    public let interfaceName: String
-    public let linkClass: RelayLinkClass
-    public let score: Int
+  public let interfaceName: String
+  public let linkClass: RelayLinkClass
+  public let score: Int
 
-    public init(interfaceName: String, linkClass: RelayLinkClass) {
-        self.interfaceName = interfaceName
-        self.linkClass = linkClass
-        self.score = RelayLinkScorer.score(
-            linkClass: linkClass, isExpensive: false, isConstrained: false
-        )
-    }
+  public init(interfaceName: String, linkClass: RelayLinkClass) {
+    self.interfaceName = interfaceName
+    self.linkClass = linkClass
+    self.score = RelayLinkScorer.score(
+      linkClass: linkClass, isExpensive: false, isConstrained: false
+    )
+  }
 }
 
 // MARK: - RelayLinkPolicy
@@ -197,21 +197,21 @@ public struct RelayLinkSnapshot: Sendable, Equatable {
 /// same inputs always produce the same choice, recomputed off the packet path only
 /// when a link opens or closes.
 public enum RelayLinkPolicy {
-    /// Returns the interface to carry on. If `preferred` names an open link, it
-    /// wins. Otherwise the highest-scoring open link wins, ties broken by interface
-    /// name so both ends choose the same one. Returns nil when no link is open.
-    public static func chooseCarrying(
-        preferred: String?, openLinks: [RelayLinkSnapshot]
-    ) -> String? {
-        if let preferred, openLinks.contains(where: { $0.interfaceName == preferred }) {
-            return preferred
-        }
-        let ranked = openLinks.sorted { lhs, rhs in
-            if lhs.score != rhs.score {
-                return lhs.score > rhs.score
-            }
-            return lhs.interfaceName < rhs.interfaceName
-        }
-        return ranked.first?.interfaceName
+  /// Returns the interface to carry on. If `preferred` names an open link, it
+  /// wins. Otherwise the highest-scoring open link wins, ties broken by interface
+  /// name so both ends choose the same one. Returns nil when no link is open.
+  public static func chooseCarrying(
+    preferred: String?, openLinks: [RelayLinkSnapshot]
+  ) -> String? {
+    if let preferred, openLinks.contains(where: { $0.interfaceName == preferred }) {
+      return preferred
     }
+    let ranked = openLinks.sorted { lhs, rhs in
+      if lhs.score != rhs.score {
+        return lhs.score > rhs.score
+      }
+      return lhs.interfaceName < rhs.interfaceName
+    }
+    return ranked.first?.interfaceName
+  }
 }

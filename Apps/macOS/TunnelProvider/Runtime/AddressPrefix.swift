@@ -11,14 +11,14 @@ import Foundation
 // MARK: - AddressFamily
 
 enum AddressFamily: String, Sendable {
-    case ipv4
-    case ipv6
+  case ipv4
+  case ipv6
 }
 
 // MARK: - AddressPrefix
 
 struct AddressPrefix: Sendable, Equatable {
-    let family: AddressFamily
-    let address: String
-    let prefixLength: Int
+  let family: AddressFamily
+  let address: String
+  let prefixLength: Int
 }

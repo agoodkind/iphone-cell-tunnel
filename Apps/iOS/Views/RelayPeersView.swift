@@ -23,44 +23,44 @@ private let peerRowMinSpacing: CGFloat = 12
 /// selected peer carries a checkmark. While discovery has found nothing it shows a
 /// neutral searching line, since discovery keeps running. SF Symbols only.
 struct RelayPeersView: View {
-    let peers: [TunnelRelayService]
-    let selectedID: String?
-    let onSelect: (String) -> Void
+  let peers: [TunnelRelayService]
+  let selectedID: String?
+  let onSelect: (String) -> Void
 
-    var body: some View {
-        if peers.isEmpty {
-            Text(searchingForPeersText)
-                .foregroundStyle(.secondary)
-        } else {
-            ForEach(peers) { peer in
-                Button {
-                    onSelect(peer.id)
-                } label: {
-                    peerLabel(peer)
-                }
-                .buttonStyle(.plain)
-            }
+  var body: some View {
+    if peers.isEmpty {
+      Text(searchingForPeersText)
+        .foregroundStyle(.secondary)
+    } else {
+      ForEach(peers) { peer in
+        Button {
+          onSelect(peer.id)
+        } label: {
+          peerLabel(peer)
         }
+        .buttonStyle(.plain)
+      }
     }
+  }
 
-    private func peerLabel(_ peer: TunnelRelayService) -> some View {
-        HStack {
-            Text(peer.serviceName)
-            Spacer(minLength: peerRowMinSpacing)
-            if peer.id == selectedID {
-                Image(systemName: selectedPeerSymbol)
-                    .foregroundStyle(.tint)
-            }
-        }
-        .contentShape(.rect)
+  private func peerLabel(_ peer: TunnelRelayService) -> some View {
+    HStack {
+      Text(peer.serviceName)
+      Spacer(minLength: peerRowMinSpacing)
+      if peer.id == selectedID {
+        Image(systemName: selectedPeerSymbol)
+          .foregroundStyle(.tint)
+      }
     }
+    .contentShape(.rect)
+  }
 }
 
 // MARK: - Section title
 
 extension RelayPeersView {
-    /// The group title both dashboards render above the peers list.
-    static var title: String {
-        peersSectionTitle
-    }
+  /// The group title both dashboards render above the peers list.
+  static var title: String {
+    peersSectionTitle
+  }
 }

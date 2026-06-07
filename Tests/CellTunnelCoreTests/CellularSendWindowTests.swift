@@ -13,71 +13,71 @@ import Testing
 // MARK: - CellularSendWindowTests
 
 struct CellularSendWindowTests {
-    private let overTarget = CellularSendWindow.targetWaitMilliseconds * 10
-    private let underTarget = CellularSendWindow.targetWaitMilliseconds / 10
+  private let overTarget = CellularSendWindow.targetWaitMilliseconds * 10
+  private let underTarget = CellularSendWindow.targetWaitMilliseconds / 10
 
-    // MARK: - Direction
+  // MARK: - Direction
 
-    @Test func waitAboveTargetShrinksAllowance() {
-        var window = CellularSendWindow()
-        let start = window.allowance
-        for _ in 0..<20 {
-            window.recordWait(milliseconds: overTarget, windowLimited: true)
-        }
-
-        #expect(window.allowance < start)
+  @Test func waitAboveTargetShrinksAllowance() {
+    var window = CellularSendWindow()
+    let start = window.allowance
+    for _ in 0..<20 {
+      window.recordWait(milliseconds: overTarget, windowLimited: true)
     }
 
-    @Test func waitBelowTargetAndLimitedGrowsAllowance() {
-        var window = CellularSendWindow()
-        let start = window.allowance
-        for _ in 0..<20 {
-            window.recordWait(milliseconds: underTarget, windowLimited: true)
-        }
+    #expect(window.allowance < start)
+  }
 
-        #expect(window.allowance > start)
+  @Test func waitBelowTargetAndLimitedGrowsAllowance() {
+    var window = CellularSendWindow()
+    let start = window.allowance
+    for _ in 0..<20 {
+      window.recordWait(milliseconds: underTarget, windowLimited: true)
     }
 
-    // MARK: - The window-limited gate
+    #expect(window.allowance > start)
+  }
 
-    @Test func belowTargetButNotLimitedHolds() {
-        var window = CellularSendWindow()
-        let start = window.allowance
-        for _ in 0..<50 {
-            window.recordWait(milliseconds: underTarget, windowLimited: false)
-        }
+  // MARK: - The window-limited gate
 
-        // Not the bottleneck, so the allowance does not balloon during the lull.
-        #expect(window.allowance == start)
+  @Test func belowTargetButNotLimitedHolds() {
+    var window = CellularSendWindow()
+    let start = window.allowance
+    for _ in 0..<50 {
+      window.recordWait(milliseconds: underTarget, windowLimited: false)
     }
 
-    @Test func aboveTargetShrinksEvenWhenNotLimited() {
-        var window = CellularSendWindow()
-        let start = window.allowance
-        for _ in 0..<20 {
-            window.recordWait(milliseconds: overTarget, windowLimited: false)
-        }
+    // Not the bottleneck, so the allowance does not balloon during the lull.
+    #expect(window.allowance == start)
+  }
 
-        #expect(window.allowance < start)
+  @Test func aboveTargetShrinksEvenWhenNotLimited() {
+    var window = CellularSendWindow()
+    let start = window.allowance
+    for _ in 0..<20 {
+      window.recordWait(milliseconds: overTarget, windowLimited: false)
     }
 
-    // MARK: - Bounds
+    #expect(window.allowance < start)
+  }
 
-    @Test func allowanceClampsAtFloor() {
-        var window = CellularSendWindow()
-        for _ in 0..<2_000 {
-            window.recordWait(milliseconds: overTarget, windowLimited: true)
-        }
+  // MARK: - Bounds
 
-        #expect(window.allowance == CellularSendWindow.minAllowance)
+  @Test func allowanceClampsAtFloor() {
+    var window = CellularSendWindow()
+    for _ in 0..<2_000 {
+      window.recordWait(milliseconds: overTarget, windowLimited: true)
     }
 
-    @Test func allowanceClampsAtCeiling() {
-        var window = CellularSendWindow()
-        for _ in 0..<2_000 {
-            window.recordWait(milliseconds: underTarget, windowLimited: true)
-        }
+    #expect(window.allowance == CellularSendWindow.minAllowance)
+  }
 
-        #expect(window.allowance == CellularSendWindow.maxAllowance)
+  @Test func allowanceClampsAtCeiling() {
+    var window = CellularSendWindow()
+    for _ in 0..<2_000 {
+      window.recordWait(milliseconds: underTarget, windowLimited: true)
     }
+
+    #expect(window.allowance == CellularSendWindow.maxAllowance)
+  }
 }

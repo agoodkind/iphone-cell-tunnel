@@ -7,13 +7,13 @@
 //
 
 enum ActivationTarget: String, CaseIterable {
-    case iphone
-    case iphoneSimulator = "iphone-simulator"
+  case iphone
+  case iphoneSimulator = "iphone-simulator"
 }
 
 // MARK: - XcodeBuildCacheMode
 
 enum XcodeBuildCacheMode {
-    case disabled
-    case enabled
+  case disabled
+  case enabled
 }

@@ -23,10 +23,10 @@ private let logger = CellTunnelLog.logger(category: .relay)
 /// carrying link moves traffic to another already-open link. `isReady` gates a
 /// link out of the carrying set until its connection is up and primed.
 struct PhoneMacLink {
-    let interfaceName: String
-    let linkClass: RelayLinkClass
-    let connection: NWConnection
-    var isReady: Bool
+  let interfaceName: String
+  let linkClass: RelayLinkClass
+  let connection: NWConnection
+  var isReady: Bool
 }
 
 // MARK: - PhoneRelayForwarder
@@ -52,165 +52,165 @@ struct PhoneMacLink {
 /// Lifecycle transitions are pushed to the MainActor UI through the `@Sendable`
 /// callbacks; nothing on the per-packet path touches MainActor.
 final class PhoneRelayForwarder: @unchecked Sendable {
-    let metrics = RelayMetrics()
+  let metrics = RelayMetrics()
 
-    let queue = DispatchQueue(label: "CellTunnelPhone.RelayPlane")
+  let queue = DispatchQueue(label: "CellTunnelPhone.RelayPlane")
 
-    // The host's network policy: pin each connection to its physical interface, or
-    // leave it on the host network. Injected so the data plane never reads the
-    // build target.
-    let interfaceBinder: RelayInterfaceBinder
+  // The host's network policy: pin each connection to its physical interface, or
+  // leave it on the host network. Injected so the data plane never reads the
+  // build target.
+  let interfaceBinder: RelayInterfaceBinder
 
-    // The open Mac-facing links keyed by iPhone interface name and the cached
-    // carrying pointer the download path reads per datagram. `egressInterfaceName`
-    // records which link is carrying so the chooser can keep it stable.
-    // `preferredInterface` is the override a UI or a future algorithm sets to force
-    // the carrying link; nil means use the score order. All touched only on `queue`.
-    var macLinks: [String: PhoneMacLink] = [:]
-    var egressConnection: NWConnection?
-    var egressInterfaceName: String?
-    var preferredInterface: String?
-    var hasLivePeer = false
+  // The open Mac-facing links keyed by iPhone interface name and the cached
+  // carrying pointer the download path reads per datagram. `egressInterfaceName`
+  // records which link is carrying so the chooser can keep it stable.
+  // `preferredInterface` is the override a UI or a future algorithm sets to force
+  // the carrying link; nil means use the score order. All touched only on `queue`.
+  var macLinks: [String: PhoneMacLink] = [:]
+  var egressConnection: NWConnection?
+  var egressInterfaceName: String?
+  var preferredInterface: String?
+  var hasLivePeer = false
 
-    var cellularConnection: NWConnection?
-    var endpointFamily = RelayAddressFamily.ipv4
-    var state = WireGuardDatagramRelayState.stopped
-    var pendingDatagrams: [WireGuardDatagram] = []
-    var configuredEndpoint: RelayEndpoint?
+  var cellularConnection: NWConnection?
+  var endpointFamily = RelayAddressFamily.ipv4
+  var state = WireGuardDatagramRelayState.stopped
+  var pendingDatagrams: [WireGuardDatagram] = []
+  var configuredEndpoint: RelayEndpoint?
 
-    // Bounds the datagrams handed to the cellular socket but not yet accepted, so
-    // an upload faster than the cellular uplink cannot balloon the OS send buffer.
-    // The window sizes the bound from the measured send-buffer wait to hold loaded
-    // upload latency low; the counter is the datagrams currently in flight against
-    // it. Both are read and written only on `queue`, so neither needs an atomic.
-    var cellularSendWindow = CellularSendWindow()
-    var outstandingCellularSends = 0
-    var loggedSendAllowance = 0
-    // Set when a datagram is dropped because the window was full, the signal that
-    // the window is the bottleneck and may grow. Read and cleared on the next
-    // accepted send so the window grows only while the relay is filling it.
-    var cellularWindowSaturated = false
+  // Bounds the datagrams handed to the cellular socket but not yet accepted, so
+  // an upload faster than the cellular uplink cannot balloon the OS send buffer.
+  // The window sizes the bound from the measured send-buffer wait to hold loaded
+  // upload latency low; the counter is the datagrams currently in flight against
+  // it. Both are read and written only on `queue`, so neither needs an atomic.
+  var cellularSendWindow = CellularSendWindow()
+  var outstandingCellularSends = 0
+  var loggedSendAllowance = 0
+  // Set when a datagram is dropped because the window was full, the signal that
+  // the window is the bottleneck and may grow. Read and cleared on the next
+  // accepted send so the window grows only while the relay is filling it.
+  var cellularWindowSaturated = false
 
-    // Once-only flags so each boundary function logs context exactly once
-    // (satisfying the boundary-log audit) instead of logging per datagram.
-    let didLogMacReceive = Atomic<Bool>(false)
-    let didLogMacSend = Atomic<Bool>(false)
-    let didLogCellularReceive = Atomic<Bool>(false)
-    let didLogCellularSend = Atomic<Bool>(false)
+  // Once-only flags so each boundary function logs context exactly once
+  // (satisfying the boundary-log audit) instead of logging per datagram.
+  let didLogMacReceive = Atomic<Bool>(false)
+  let didLogMacSend = Atomic<Bool>(false)
+  let didLogCellularReceive = Atomic<Bool>(false)
+  let didLogCellularSend = Atomic<Bool>(false)
 
-    var onStateChange: (@Sendable (WireGuardDatagramRelayState) -> Void)?
-    var onError: (@Sendable (String) -> Void)?
-    /// Fired with whether a live Mac data link exists. It carries the liveness; the
-    /// displayed peer name comes from the control service.
-    var onPeerChange: (@Sendable (Bool) -> Void)?
-    /// Fired whenever the carrying link changes, with its interface identifier, its
-    /// transport class, and the local and peer addresses of the carrying connection.
-    /// Both address pairs come from the same connection's path endpoints, so the
-    /// `Connection` rows describe one connection rather than mixing an interface
-    /// address with an endpoint address.
-    var onEgressInterfaceChange:
-        (@Sendable (String?, RelayLinkClass?, AddressPair, AddressPair) -> Void)?
+  var onStateChange: (@Sendable (WireGuardDatagramRelayState) -> Void)?
+  var onError: (@Sendable (String) -> Void)?
+  /// Fired with whether a live Mac data link exists. It carries the liveness; the
+  /// displayed peer name comes from the control service.
+  var onPeerChange: (@Sendable (Bool) -> Void)?
+  /// Fired whenever the carrying link changes, with its interface identifier, its
+  /// transport class, and the local and peer addresses of the carrying connection.
+  /// Both address pairs come from the same connection's path endpoints, so the
+  /// `Connection` rows describe one connection rather than mixing an interface
+  /// address with an endpoint address.
+  var onEgressInterfaceChange:
+    (@Sendable (String?, RelayLinkClass?, AddressPair, AddressPair) -> Void)?
 
-    // MARK: - Initialization
+  // MARK: - Initialization
 
-    init(interfaceBinder: RelayInterfaceBinder) {
-        self.interfaceBinder = interfaceBinder
+  init(interfaceBinder: RelayInterfaceBinder) {
+    self.interfaceBinder = interfaceBinder
+  }
+
+  // MARK: - Public API (MainActor callers funnel onto the relay queue)
+
+  func start() {
+    logger.notice("phone relay forwarder ready, awaiting discovery")
+  }
+
+  func setServerEndpoint(_ endpoint: RelayEndpoint) {
+    logger.notice(
+      """
+      phone relay forwarder server endpoint host=\(endpoint.host, privacy: .public) \
+      port=\(endpoint.port, privacy: .public)
+      """
+    )
+    queue.async { [weak self] in
+      self?.applyEndpointOnQueue(endpoint)
     }
+  }
 
-    // MARK: - Public API (MainActor callers funnel onto the relay queue)
-
-    func start() {
-        logger.notice("phone relay forwarder ready, awaiting discovery")
+  /// Receives the current set of reachable Mac interfaces from the probe and
+  /// keeps the link set in step: dial any new interface, drop any that vanished.
+  func reconcileLinks(_ interfaces: [RelayMacInterface]) {
+    queue.async { [weak self] in
+      self?.reconcileOnQueue(interfaces)
     }
+  }
 
-    func setServerEndpoint(_ endpoint: RelayEndpoint) {
-        logger.notice(
-            """
-            phone relay forwarder server endpoint host=\(endpoint.host, privacy: .public) \
-            port=\(endpoint.port, privacy: .public)
-            """
+  /// Drops every link so they re-establish from the next discovery. The provider
+  /// calls this when the control plane reports the agent died or restarted,
+  /// because a UDP data link does not surface that drop on its own.
+  func resetLinks() {
+    queue.async { [weak self] in
+      self?.resetLinksOnQueue()
+    }
+  }
+
+  func stop() {
+    logger.notice("phone relay forwarder stop requested")
+    queue.async { [weak self] in
+      self?.stopOnQueue()
+    }
+  }
+
+  // MARK: - Upload hot path (Mac -> server), queue-only, no actor hop
+
+  /// Receives upload datagrams on one Mac link. Every link runs its own loop, so
+  /// the iPhone forwards the Mac's upload no matter which link the agent egresses
+  /// on. An empty datagram is a heartbeat: it refreshes the link's liveness and
+  /// is not forwarded to the server (it is only the agent's adoption prime).
+  func receiveFromMac(on connection: NWConnection, interfaceName: String) {
+    if didLogMacReceive.compareExchange(
+      expected: false, desired: true, ordering: .relaxed
+    ).exchanged {
+      logger.notice("phone relay mac receive loop armed")
+    }
+    connection.receiveMessage { [weak self, weak connection] data, _, _, error in
+      guard let self, let connection else {
+        return
+      }
+      guard isCurrentLink(connection, interfaceName: interfaceName) else {
+        return
+      }
+      if let error {
+        handleLinkReceiveError(error, connection: connection, interfaceName: interfaceName)
+        return
+      }
+      if let data, !data.isEmpty {
+        metrics.addBytesIn(UInt64(data.count))
+        metrics.addDatagramsFromMac()
+        sendToServer(data)
+      }
+      receiveFromMac(on: connection, interfaceName: interfaceName)
+    }
+  }
+
+  private func sendToServer(_ data: Data) {
+    do {
+      let datagram = try WireGuardDatagram(data: data, addressFamily: .ipv4)
+      if state == .connecting {
+        bufferPendingDatagram(datagram)
+        return
+      }
+      guard state == .ready else {
+        metrics.addDropped()
+        logger.error(
+          "phone relay send rejected state=\(self.state.rawValue, privacy: .public)"
         )
-        queue.async { [weak self] in
-            self?.applyEndpointOnQueue(endpoint)
-        }
+        return
+      }
+      cellularSend(datagram)
+    } catch {
+      metrics.addDropped()
+      logger.error(
+        "phone relay datagram from mac rejected error=\(error.localizedDescription, privacy: .public)"
+      )
     }
-
-    /// Receives the current set of reachable Mac interfaces from the probe and
-    /// keeps the link set in step: dial any new interface, drop any that vanished.
-    func reconcileLinks(_ interfaces: [RelayMacInterface]) {
-        queue.async { [weak self] in
-            self?.reconcileOnQueue(interfaces)
-        }
-    }
-
-    /// Drops every link so they re-establish from the next discovery. The provider
-    /// calls this when the control plane reports the agent died or restarted,
-    /// because a UDP data link does not surface that drop on its own.
-    func resetLinks() {
-        queue.async { [weak self] in
-            self?.resetLinksOnQueue()
-        }
-    }
-
-    func stop() {
-        logger.notice("phone relay forwarder stop requested")
-        queue.async { [weak self] in
-            self?.stopOnQueue()
-        }
-    }
-
-    // MARK: - Upload hot path (Mac -> server), queue-only, no actor hop
-
-    /// Receives upload datagrams on one Mac link. Every link runs its own loop, so
-    /// the iPhone forwards the Mac's upload no matter which link the agent egresses
-    /// on. An empty datagram is a heartbeat: it refreshes the link's liveness and
-    /// is not forwarded to the server (it is only the agent's adoption prime).
-    func receiveFromMac(on connection: NWConnection, interfaceName: String) {
-        if didLogMacReceive.compareExchange(
-            expected: false, desired: true, ordering: .relaxed
-        ).exchanged {
-            logger.notice("phone relay mac receive loop armed")
-        }
-        connection.receiveMessage { [weak self, weak connection] data, _, _, error in
-            guard let self, let connection else {
-                return
-            }
-            guard isCurrentLink(connection, interfaceName: interfaceName) else {
-                return
-            }
-            if let error {
-                handleLinkReceiveError(error, connection: connection, interfaceName: interfaceName)
-                return
-            }
-            if let data, !data.isEmpty {
-                metrics.addBytesIn(UInt64(data.count))
-                metrics.addDatagramsFromMac()
-                sendToServer(data)
-            }
-            receiveFromMac(on: connection, interfaceName: interfaceName)
-        }
-    }
-
-    private func sendToServer(_ data: Data) {
-        do {
-            let datagram = try WireGuardDatagram(data: data, addressFamily: .ipv4)
-            if state == .connecting {
-                bufferPendingDatagram(datagram)
-                return
-            }
-            guard state == .ready else {
-                metrics.addDropped()
-                logger.error(
-                    "phone relay send rejected state=\(self.state.rawValue, privacy: .public)"
-                )
-                return
-            }
-            cellularSend(datagram)
-        } catch {
-            metrics.addDropped()
-            logger.error(
-                "phone relay datagram from mac rejected error=\(error.localizedDescription, privacy: .public)"
-            )
-        }
-    }
+  }
 }

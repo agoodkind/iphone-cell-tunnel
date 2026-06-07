@@ -9,22 +9,22 @@
 import Foundation
 
 enum ToolError: Error, CustomStringConvertible {
-    case failure(String)
-    case usage(String)
+  case failure(String)
+  case usage(String)
 
-    var description: String {
-        switch self {
-        case .failure(let message):
-            return message
-        case .usage(let message):
-            return message
-        }
+  var description: String {
+    switch self {
+    case .failure(let message):
+      return message
+    case .usage(let message):
+      return message
     }
+  }
 }
 
 // MARK: - CommandResult
 
 struct CommandResult {
-    let status: Int32
-    let output: String
+  let status: Int32
+  let output: String
 }

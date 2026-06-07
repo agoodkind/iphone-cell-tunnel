@@ -23,96 +23,96 @@ private let routeTrafficLabel = "Route traffic"
 /// rows, with the `Route traffic` toggle in the first section. A not-connected screen
 /// is the same layout with placeholder values rather than a centered state.
 struct RelayStatusScreen: View {
-    @Environment(RelayController.self) private var controller
+  @Environment(RelayController.self) private var controller
 
-    private var model: RelayScreenModel {
-        RelayScreenModel(controller: controller)
+  private var model: RelayScreenModel {
+    RelayScreenModel(controller: controller)
+  }
+
+  // MARK: - Body
+
+  var body: some View {
+    NavigationStack {
+      detailList
+        .navigationTitle(screenTitle)
+        .navigationBarTitleDisplayMode(.large)
     }
+  }
 
-    // MARK: - Body
+  // MARK: - Detail list
 
-    var body: some View {
-        NavigationStack {
-            detailList
-                .navigationTitle(screenTitle)
-                .navigationBarTitleDisplayMode(.large)
+  private var detailList: some View {
+    List {
+      statusSection
+      if model.showsPeers {
+        peersSection
+      }
+      sections
+    }
+    .listStyle(.insetGrouped)
+    .animation(.default, value: model.status)
+  }
+
+  // The status section: the live status word as its own row, separate from the
+  // routing switch, so the status reports the current state rather than labeling the
+  // switch. The switch appears only in a routeable state, so routing cannot be
+  // requested with no link to carry it; the error message and the Retry action follow
+  // as rows when the status calls for them.
+  @ViewBuilder private var statusSection: some View {
+    Section {
+      Text(model.status.label)
+      if model.showsToggle {
+        Toggle(routeTrafficLabel, isOn: model.routeTrafficBinding)
+      }
+      if let message = model.errorMessage {
+        Text(message)
+      }
+      if model.heroAction == .retry {
+        Button(RelayHeroAction.retry.title) {
+          model.startSession()
         }
+      }
     }
+  }
 
-    // MARK: - Detail list
+  // The discovered peers, shown while discovery searches and while a peer is
+  // unselected, so the user can pick the Mac to relay through.
+  @ViewBuilder private var peersSection: some View {
+    Section(RelayPeersView.title) {
+      RelayPeersView(
+        peers: model.discoveredPeers,
+        selectedID: model.selectedPeerID
+      ) { id in
+        model.selectPeer(id: id)
+      }
+    }
+    .textCase(nil)
+  }
 
-    private var detailList: some View {
-        List {
-            statusSection
-            if model.showsPeers {
-                peersSection
-            }
-            sections
+  // Every data-driven section in order, each a stock `Section` of value rows. The
+  // model owns the section set, ordering, and formatting, so the iPhone list and the
+  // Mac dashboard render the same content.
+  @ViewBuilder private var sections: some View {
+    ForEach(model.sections) { section in
+      Section(section.title) {
+        ForEach(section.rows) { row in
+          RelayValueRow(row: row)
         }
-        .listStyle(.insetGrouped)
-        .animation(.default, value: model.status)
+      }
+      .textCase(nil)
     }
-
-    // The status section: the live status word as its own row, separate from the
-    // routing switch, so the status reports the current state rather than labeling the
-    // switch. The switch appears only in a routeable state, so routing cannot be
-    // requested with no link to carry it; the error message and the Retry action follow
-    // as rows when the status calls for them.
-    @ViewBuilder private var statusSection: some View {
-        Section {
-            Text(model.status.label)
-            if model.showsToggle {
-                Toggle(routeTrafficLabel, isOn: model.routeTrafficBinding)
-            }
-            if let message = model.errorMessage {
-                Text(message)
-            }
-            if model.heroAction == .retry {
-                Button(RelayHeroAction.retry.title) {
-                    model.startSession()
-                }
-            }
-        }
-    }
-
-    // The discovered peers, shown while discovery searches and while a peer is
-    // unselected, so the user can pick the Mac to relay through.
-    @ViewBuilder private var peersSection: some View {
-        Section(RelayPeersView.title) {
-            RelayPeersView(
-                peers: model.discoveredPeers,
-                selectedID: model.selectedPeerID
-            ) { id in
-                model.selectPeer(id: id)
-            }
-        }
-        .textCase(nil)
-    }
-
-    // Every data-driven section in order, each a stock `Section` of value rows. The
-    // model owns the section set, ordering, and formatting, so the iPhone list and the
-    // Mac dashboard render the same content.
-    @ViewBuilder private var sections: some View {
-        ForEach(model.sections) { section in
-            Section(section.title) {
-                ForEach(section.rows) { row in
-                    RelayValueRow(row: row)
-                }
-            }
-            .textCase(nil)
-        }
-    }
+  }
 }
 
 // MARK: - Preview
 
 #Preview {
-    RelayStatusScreen()
-        .environment(
-            RelayController(
-                backend: PreviewRelayBackend(),
-                throughput: ThroughputCalculator(),
-                lifetimeStore: LifetimeDataStore()
-            )
-        )
+  RelayStatusScreen()
+    .environment(
+      RelayController(
+        backend: PreviewRelayBackend(),
+        throughput: ThroughputCalculator(),
+        lifetimeStore: LifetimeDataStore()
+      )
+    )
 }

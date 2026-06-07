@@ -20,44 +20,44 @@ private let logger = CellTunnelLog.logger(category: .relay)
 /// public address. The provider owns one instance, starts it in `startTunnel`, and
 /// cancels it in `stopTunnel`.
 final class CellularPathObserver: @unchecked Sendable {
-    private let monitor: EgressPathMonitor
-    private let latestSnapshot = Mutex(CellularPathSnapshot())
-    private let pathChangeHandler = Mutex<(@Sendable () -> Void)?>(nil)
+  private let monitor: EgressPathMonitor
+  private let latestSnapshot = Mutex(CellularPathSnapshot())
+  private let pathChangeHandler = Mutex<(@Sendable () -> Void)?>(nil)
 
-    /// Watches a specific interface type, or the general path when
-    /// `requiredInterfaceType` is nil. The device pins the cellular radio; the
-    /// in-process simulator host, which has no cellular radio, watches the general
-    /// path so a satisfied host network drives the connected status the same way a
-    /// live cellular path does on device.
-    init(requiredInterfaceType: NWInterface.InterfaceType?) {
-        monitor = EgressPathMonitor(requiredInterfaceType: requiredInterfaceType)
-    }
+  /// Watches a specific interface type, or the general path when
+  /// `requiredInterfaceType` is nil. The device pins the cellular radio; the
+  /// in-process simulator host, which has no cellular radio, watches the general
+  /// path so a satisfied host network drives the connected status the same way a
+  /// live cellular path does on device.
+  init(requiredInterfaceType: NWInterface.InterfaceType?) {
+    monitor = EgressPathMonitor(requiredInterfaceType: requiredInterfaceType)
+  }
 
-    var snapshot: CellularPathSnapshot {
-        latestSnapshot.withLock { $0 }
-    }
+  var snapshot: CellularPathSnapshot {
+    latestSnapshot.withLock { $0 }
+  }
 
-    /// Registers the handler the runtime calls on each egress path change, so it can
-    /// re-probe and re-send the public address. Set before `start()`.
-    func setPathChangeHandler(_ handler: @escaping @Sendable () -> Void) {
-        pathChangeHandler.withLock { $0 = handler }
-    }
+  /// Registers the handler the runtime calls on each egress path change, so it can
+  /// re-probe and re-send the public address. Set before `start()`.
+  func setPathChangeHandler(_ handler: @escaping @Sendable () -> Void) {
+    pathChangeHandler.withLock { $0 = handler }
+  }
 
-    func start() {
-        monitor.onChange = { [weak self] path in
-            guard let self else {
-                return
-            }
-            latestSnapshot.withLock { $0 = CellularPathSnapshot(egress: path) }
-            pathChangeHandler.withLock { $0 }?()
-        }
-        monitor.start()
-        logger.info("cellular path observer started")
+  func start() {
+    monitor.onChange = { [weak self] path in
+      guard let self else {
+        return
+      }
+      latestSnapshot.withLock { $0 = CellularPathSnapshot(egress: path) }
+      pathChangeHandler.withLock { $0 }?()
     }
+    monitor.start()
+    logger.info("cellular path observer started")
+  }
 
-    func stop() {
-        monitor.stop()
-        latestSnapshot.withLock { $0 = CellularPathSnapshot() }
-        logger.info("cellular path observer stopped")
-    }
+  func stop() {
+    monitor.stop()
+    latestSnapshot.withLock { $0 = CellularPathSnapshot() }
+    logger.info("cellular path observer stopped")
+  }
 }

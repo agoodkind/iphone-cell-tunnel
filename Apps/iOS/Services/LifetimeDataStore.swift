@@ -14,12 +14,12 @@ import Foundation
 /// One reading of the lifetime byte totals: transferred (sent), received, and their
 /// sum, each accumulated across sessions.
 struct LifetimeDataTotals: Equatable {
-    var transferred: UInt64
-    var received: UInt64
+  var transferred: UInt64
+  var received: UInt64
 
-    var total: UInt64 {
-        transferred &+ received
-    }
+  var total: UInt64 {
+    transferred &+ received
+  }
 }
 
 // MARK: - LifetimeDataStore
@@ -31,47 +31,47 @@ struct LifetimeDataTotals: Equatable {
 /// plus the live session reading. A session reset shows as the live reading dropping
 /// below the last one.
 struct LifetimeDataStore {
-    private static let transferredKey = "lifetimeRelayBytesTransferredBase"
-    private static let receivedKey = "lifetimeRelayBytesReceivedBase"
+  private static let transferredKey = "lifetimeRelayBytesTransferredBase"
+  private static let receivedKey = "lifetimeRelayBytesReceivedBase"
 
-    private let defaults: UserDefaults
-    private var lastSessionTransferred: UInt64 = 0
-    private var lastSessionReceived: UInt64 = 0
+  private let defaults: UserDefaults
+  private var lastSessionTransferred: UInt64 = 0
+  private var lastSessionReceived: UInt64 = 0
 
-    init(suiteName: String = cellTunnelAppGroupIdentifier) {
-        defaults = UserDefaults(suiteName: suiteName) ?? .standard
+  init(suiteName: String = cellTunnelAppGroupIdentifier) {
+    defaults = UserDefaults(suiteName: suiteName) ?? .standard
+  }
+
+  /// Returns the lifetime transferred and received totals for a new per-session
+  /// reading, folding a detected per-direction session reset into the persisted
+  /// base first.
+  mutating func totals(
+    sessionTransferred: UInt64, sessionReceived: UInt64
+  ) -> LifetimeDataTotals {
+    if sessionTransferred < lastSessionTransferred {
+      let folded = storedBase(Self.transferredKey) &+ lastSessionTransferred
+      persistBase(Self.transferredKey, folded)
     }
-
-    /// Returns the lifetime transferred and received totals for a new per-session
-    /// reading, folding a detected per-direction session reset into the persisted
-    /// base first.
-    mutating func totals(
-        sessionTransferred: UInt64, sessionReceived: UInt64
-    ) -> LifetimeDataTotals {
-        if sessionTransferred < lastSessionTransferred {
-            let folded = storedBase(Self.transferredKey) &+ lastSessionTransferred
-            persistBase(Self.transferredKey, folded)
-        }
-        if sessionReceived < lastSessionReceived {
-            let folded = storedBase(Self.receivedKey) &+ lastSessionReceived
-            persistBase(Self.receivedKey, folded)
-        }
-        lastSessionTransferred = sessionTransferred
-        lastSessionReceived = sessionReceived
-        return LifetimeDataTotals(
-            transferred: storedBase(Self.transferredKey) &+ sessionTransferred,
-            received: storedBase(Self.receivedKey) &+ sessionReceived
-        )
+    if sessionReceived < lastSessionReceived {
+      let folded = storedBase(Self.receivedKey) &+ lastSessionReceived
+      persistBase(Self.receivedKey, folded)
     }
+    lastSessionTransferred = sessionTransferred
+    lastSessionReceived = sessionReceived
+    return LifetimeDataTotals(
+      transferred: storedBase(Self.transferredKey) &+ sessionTransferred,
+      received: storedBase(Self.receivedKey) &+ sessionReceived
+    )
+  }
 
-    private func storedBase(_ key: String) -> UInt64 {
-        guard let raw = defaults.string(forKey: key), let value = UInt64(raw) else {
-            return 0
-        }
-        return value
+  private func storedBase(_ key: String) -> UInt64 {
+    guard let raw = defaults.string(forKey: key), let value = UInt64(raw) else {
+      return 0
     }
+    return value
+  }
 
-    private func persistBase(_ key: String, _ value: UInt64) {
-        defaults.set(String(value), forKey: key)
-    }
+  private func persistBase(_ key: String, _ value: UInt64) {
+    defaults.set(String(value), forKey: key)
+  }
 }

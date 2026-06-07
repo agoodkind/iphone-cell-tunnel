@@ -25,62 +25,62 @@ import Foundation
 /// that bounds a stall. It is pure and unit tested without Network; the relay
 /// confines it to its serial queue.
 public struct CellularSendWindow: Sendable, Equatable {
-    // MARK: - Tunables
+  // MARK: - Tunables
 
-    /// The wait the controller holds the local send buffer at. The loaded-latency
-    /// budget for the cellular send queue.
-    public static let targetWaitMilliseconds = 10.0
+  /// The wait the controller holds the local send buffer at. The loaded-latency
+  /// budget for the cellular send queue.
+  public static let targetWaitMilliseconds = 10.0
 
-    /// The fewest datagrams allowed in flight, so the radio is never left idle
-    /// between datagrams and throughput does not collapse.
-    public static let minAllowance = 4
+  /// The fewest datagrams allowed in flight, so the radio is never left idle
+  /// between datagrams and throughput does not collapse.
+  public static let minAllowance = 4
 
-    /// The most datagrams allowed in flight, so a stalled uplink cannot let the
-    /// buffer grow without bound.
-    public static let maxAllowance = 256
+  /// The most datagrams allowed in flight, so a stalled uplink cannot let the
+  /// buffer grow without bound.
+  public static let maxAllowance = 256
 
-    /// The starting allowance before any wait is measured.
-    public static let initialAllowance = 64
+  /// The starting allowance before any wait is measured.
+  public static let initialAllowance = 64
 
-    /// The weight a new wait sample carries in the smoothed wait. Small, so a
-    /// single spike does not move the controller.
-    public static let smoothingWeight = 0.05
+  /// The weight a new wait sample carries in the smoothed wait. Small, so a
+  /// single spike does not move the controller.
+  public static let smoothingWeight = 0.05
 
-    /// The fraction the allowance is multiplied by on a sample above target. Close
-    /// to one, so each cut is gentle and a sustained overshoot compounds them.
-    public static let decreaseFactor = 0.98
+  /// The fraction the allowance is multiplied by on a sample above target. Close
+  /// to one, so each cut is gentle and a sustained overshoot compounds them.
+  public static let decreaseFactor = 0.98
 
-    // MARK: - State
+  // MARK: - State
 
-    public private(set) var allowance: Int
-    public private(set) var smoothedWaitMilliseconds: Double
-    private var hasSample: Bool
+  public private(set) var allowance: Int
+  public private(set) var smoothedWaitMilliseconds: Double
+  private var hasSample: Bool
 
-    public init() {
-        allowance = Self.initialAllowance
-        smoothedWaitMilliseconds = 0
-        hasSample = false
+  public init() {
+    allowance = Self.initialAllowance
+    smoothedWaitMilliseconds = 0
+    hasSample = false
+  }
+
+  // MARK: - Control
+
+  /// Folds one measured send-buffer wait into the smoothed wait and moves the
+  /// allowance toward holding the wait at the target. `windowLimited` is whether
+  /// the window was the bottleneck since the last sample: the allowance grows
+  /// only when it was, so it does not balloon while the relay is not filling it.
+  public mutating func recordWait(milliseconds: Double, windowLimited: Bool) {
+    if hasSample {
+      smoothedWaitMilliseconds =
+        (1 - Self.smoothingWeight) * smoothedWaitMilliseconds
+        + Self.smoothingWeight * milliseconds
+    } else {
+      smoothedWaitMilliseconds = milliseconds
+      hasSample = true
     }
-
-    // MARK: - Control
-
-    /// Folds one measured send-buffer wait into the smoothed wait and moves the
-    /// allowance toward holding the wait at the target. `windowLimited` is whether
-    /// the window was the bottleneck since the last sample: the allowance grows
-    /// only when it was, so it does not balloon while the relay is not filling it.
-    public mutating func recordWait(milliseconds: Double, windowLimited: Bool) {
-        if hasSample {
-            smoothedWaitMilliseconds =
-                (1 - Self.smoothingWeight) * smoothedWaitMilliseconds
-                + Self.smoothingWeight * milliseconds
-        } else {
-            smoothedWaitMilliseconds = milliseconds
-            hasSample = true
-        }
-        if smoothedWaitMilliseconds > Self.targetWaitMilliseconds {
-            allowance = max(Self.minAllowance, Int(Double(allowance) * Self.decreaseFactor))
-        } else if windowLimited {
-            allowance = min(Self.maxAllowance, allowance + 1)
-        }
+    if smoothedWaitMilliseconds > Self.targetWaitMilliseconds {
+      allowance = max(Self.minAllowance, Int(Double(allowance) * Self.decreaseFactor))
+    } else if windowLimited {
+      allowance = min(Self.maxAllowance, allowance + 1)
     }
+  }
 }

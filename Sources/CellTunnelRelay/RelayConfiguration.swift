@@ -21,22 +21,22 @@ import Network
 /// type differently at the composition root, with no change to the data plane or
 /// the binders.
 public struct RelayConfiguration: Sendable, Equatable {
-    /// The interface type the WireGuard egress socket pins to on device. The
-    /// cellular radio is the project's purpose, so it is the default.
-    public var egressInterfaceType: NWInterface.InterfaceType
+  /// The interface type the WireGuard egress socket pins to on device. The
+  /// cellular radio is the project's purpose, so it is the default.
+  public var egressInterfaceType: NWInterface.InterfaceType
 
-    /// The interface that carries the Mac link, overriding the score order. Nil uses
-    /// the score order (wired over Wi-Fi LAN over peer-to-peer).
-    public var preferredCarryingInterface: String?
+  /// The interface that carries the Mac link, overriding the score order. Nil uses
+  /// the score order (wired over Wi-Fi LAN over peer-to-peer).
+  public var preferredCarryingInterface: String?
 
-    public init(
-        egressInterfaceType: NWInterface.InterfaceType = .cellular,
-        preferredCarryingInterface: String? = nil
-    ) {
-        self.egressInterfaceType = egressInterfaceType
-        self.preferredCarryingInterface = preferredCarryingInterface
-    }
+  public init(
+    egressInterfaceType: NWInterface.InterfaceType = .cellular,
+    preferredCarryingInterface: String? = nil
+  ) {
+    self.egressInterfaceType = egressInterfaceType
+    self.preferredCarryingInterface = preferredCarryingInterface
+  }
 
-    /// Today's values: cellular egress, score-order carrying link.
-    public static let `default` = RelayConfiguration()
+  /// Today's values: cellular egress, score-order carrying link.
+  public static let `default` = RelayConfiguration()
 }

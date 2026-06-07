@@ -16,24 +16,24 @@ import Foundation
 /// yields keep the no-op functions real suspension points for the async contract.
 @MainActor
 final class PreviewRelayBackend: RelayControlBackend {
-    func start() async {
-        await Task.yield()
-    }
+  func start() async {
+    await Task.yield()
+  }
 
-    func sample() async -> RelayStatusSample? {
-        await Task.yield()
-        return nil
-    }
+  func sample() async -> RelayStatusSample? {
+    await Task.yield()
+    return nil
+  }
 
-    func setRouting(enabled _: Bool) async {
-        await Task.yield()
-    }
+  func setRouting(enabled _: Bool) async {
+    await Task.yield()
+  }
 
-    func selectPeer(id _: String) async {
-        await Task.yield()
-    }
+  func selectPeer(id _: String) async {
+    await Task.yield()
+  }
 
-    func installTunnel(configURL _: URL) async {
-        await Task.yield()
-    }
+  func installTunnel(configURL _: URL) async {
+    await Task.yield()
+  }
 }

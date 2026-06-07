@@ -16,22 +16,22 @@ private let selectedRelayServiceNameKey = "io.goodkind.celltunnel.selectedRelayS
 /// The service name survives across browse cycles where the interface-scoped
 /// identifier can change, so selection stays stable while the device reappears.
 enum RelaySelectionStore {
-    private static var defaults: UserDefaults? {
-        UserDefaults(suiteName: cellTunnelAppGroupIdentifier)
-    }
+  private static var defaults: UserDefaults? {
+    UserDefaults(suiteName: cellTunnelAppGroupIdentifier)
+  }
 
-    static func selectedRelayServiceName() -> String? {
-        defaults?.string(forKey: selectedRelayServiceNameKey)
-    }
+  static func selectedRelayServiceName() -> String? {
+    defaults?.string(forKey: selectedRelayServiceNameKey)
+  }
 
-    static func setSelectedRelayServiceName(_ serviceName: String?) {
-        guard let defaults else {
-            return
-        }
-        if let serviceName {
-            defaults.set(serviceName, forKey: selectedRelayServiceNameKey)
-        } else {
-            defaults.removeObject(forKey: selectedRelayServiceNameKey)
-        }
+  static func setSelectedRelayServiceName(_ serviceName: String?) {
+    guard let defaults else {
+      return
     }
+    if let serviceName {
+      defaults.set(serviceName, forKey: selectedRelayServiceNameKey)
+    } else {
+      defaults.removeObject(forKey: selectedRelayServiceNameKey)
+    }
+  }
 }

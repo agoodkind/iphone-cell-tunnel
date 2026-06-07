@@ -14,10 +14,10 @@ import SwiftUI
 /// is selectable to copy. The iPhone list and the Mac dashboard both render rows
 /// through this, so the row presentation lives in one place.
 struct RelayValueRow: View {
-    let row: ConnectionRow
+  let row: ConnectionRow
 
-    var body: some View {
-        LabeledContent(row.label, value: row.value)
-            .textSelection(.enabled)
-    }
+  var body: some View {
+    LabeledContent(row.label, value: row.value)
+      .textSelection(.enabled)
+  }
 }
