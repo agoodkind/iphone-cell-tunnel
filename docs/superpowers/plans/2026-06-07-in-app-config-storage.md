@@ -693,6 +693,50 @@ Confirm the editor masks the `PrivateKey` until Reveal, and that `swift Tools/ce
 
 ---
 
+## Fine-grained execution slices
+
+Each slice is one self-contained change ending in a commit. Run the named build
+or test gate between every slice; do not start the next slice until the gate is
+green. Work stays on `main`. The code for each slice is in the Task sections
+above; the slice names the scope, the gate, and the commit.
+
+1. Vendor the two wg-quick parser files into `Sources/CellTunnelWireGuardConfig/`
+   with headers, and declare the SwiftPM product and target in `Package.swift`
+   (Task 1, steps 1 to 3). Gate: `swift build --target CellTunnelWireGuardConfig`.
+   Commit: "Add CellTunnelWireGuardConfig target with vendored wg-quick parser".
+2. Add the Tuist framework target and link it into `CellTunnelPhone`
+   (Task 1, step 4), then regenerate. Gate: `make build TARGET=mac-catalyst CONFIG=Debug`.
+   Commit: "Link CellTunnelWireGuardConfig into the app target".
+3. Masking helper and its tests (Task 2). Gate: `make test`, then
+   `make build TARGET=mac-catalyst CONFIG=Debug`. Commit as in Task 2.
+4. `StoredTunnelConfig`, the `TunnelConfigStore` protocol, and the in-memory
+   store with tests (Task 3). Gate: `make test`, then
+   `make build TARGET=mac-catalyst CONFIG=Debug`. Commit as in Task 3.
+5. `KeychainTunnelConfigStore` (Task 4). Gate: `make build TARGET=mac-catalyst CONFIG=Debug`.
+   Commit as in Task 4.
+6. Extend `RelayControlBackend` and add the no-op conformances in the iPhone,
+   simulator, and preview backends (Task 5, steps 1 and 3). Gate:
+   `make build TARGET=mac-catalyst CONFIG=Debug` then `make build TARGET=iphone-simulator CONFIG=Debug`.
+   Commit: "Extend relay backend protocol with config library no-ops".
+7. `AgentRelayBackend` library operations and the `writeActiveToContainer` and
+   `readSecurityScoped` refactor (Task 5, step 2). Gate:
+   `make build TARGET=mac-catalyst CONFIG=Debug`. Commit: "Implement config library
+   operations in the Mac relay backend".
+8. `RelayController` facade (Task 6). Gate: `make build TARGET=mac-catalyst CONFIG=Debug`.
+   Commit as in Task 6.
+9. `ConfigEditorView` (Task 7). Gate: `make build TARGET=mac-catalyst CONFIG=Debug`.
+   Commit as in Task 7.
+10. `ConfigLibraryView` and the import picker (Task 8, step 1). Gate:
+    `make build TARGET=mac-catalyst CONFIG=Debug`. Commit: "Add Configs card with
+    import, activate, edit, rename, delete".
+11. Insert the Configs card into `MacStatusScreen` (Task 8, step 2). Gate:
+    `make build TARGET=mac-catalyst CONFIG=Debug` then `make lint`. Commit: "Show
+    the Configs card on the Mac status screen".
+12. Manual device verification (Task 9). No commit unless a lint fix is needed.
+
+Implementer for each slice: codex CLI with GPT-5.5 at xhigh reasoning. The build
+or test gate runs between every slice.
+
 ## Self-review notes
 
 - Spec coverage: storage (Tasks 3, 4), import-and-apply (Task 5, 8), edit-reload (Tasks 5, 7), library list/rename/delete (Tasks 5, 8), masking (Tasks 2, 7), parser reuse (Task 1), Mac-only (guards throughout), keychain for the secret (Task 4), agent hand-off reuse (Task 5). All covered.
