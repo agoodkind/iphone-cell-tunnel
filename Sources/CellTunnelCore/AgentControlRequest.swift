@@ -14,6 +14,8 @@ public protocol TunnelControlClientProtocol: Sendable {
   func status() async throws -> TunnelDaemonStatusSnapshot
   func check() async throws -> TunnelEnvironmentReport
   func startTunnel(settings: TunnelStartSettings) async throws -> TunnelDaemonStatusSnapshot
+  /// Validates WireGuard configuration text without changing tunnel state.
+  func validateConfig(text: String) async throws
   func stopTunnel() async throws -> TunnelDaemonStatusSnapshot
   func reset() async throws -> TunnelDaemonStatusSnapshot
   func startRelayDiscovery() async throws -> TunnelDiscoverySnapshot
@@ -36,8 +38,11 @@ public enum AgentControlRequest: Codable, Sendable {
   case status
   case stopRelayDiscovery
   case stopTunnel
+  /// Validates WireGuard configuration text without changing tunnel state.
+  case validateConfig(text: String)
 
   private enum CodingKeys: String, CodingKey {
+    case configText
     case kind
     case reloadSettings
     case routingEnabled
@@ -57,6 +62,7 @@ public enum AgentControlRequest: Codable, Sendable {
     case status
     case stopRelayDiscovery
     case stopTunnel
+    case validateConfig
   }
 
   public init(from decoder: any Decoder) throws {
@@ -89,6 +95,9 @@ public enum AgentControlRequest: Codable, Sendable {
       self = .stopRelayDiscovery
     case .stopTunnel:
       self = .stopTunnel
+    case .validateConfig:
+      let text = try container.decode(String.self, forKey: .configText)
+      self = .validateConfig(text: text)
     }
   }
 
@@ -121,6 +130,9 @@ public enum AgentControlRequest: Codable, Sendable {
       try container.encode(Kind.stopRelayDiscovery, forKey: .kind)
     case .stopTunnel:
       try container.encode(Kind.stopTunnel, forKey: .kind)
+    case .validateConfig(let text):
+      try container.encode(Kind.validateConfig, forKey: .kind)
+      try container.encode(text, forKey: .configText)
     }
   }
 }

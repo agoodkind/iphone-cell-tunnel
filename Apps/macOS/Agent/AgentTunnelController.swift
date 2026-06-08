@@ -90,6 +90,7 @@ actor AgentTunnelController {
       return await handleStartTunnel(settings: settings)
     case .reloadTunnel(let settings):
       return await handleReloadTunnel(settings: settings)
+    case .validateConfig(let text): return await handleValidateConfig(text: text)
     case .stopTunnel:
       return await handleStopTunnel()
     case .reset:
@@ -102,8 +103,7 @@ actor AgentTunnelController {
       return snapshotResponse()
     case .selectRelayService(let serviceID):
       return selectRelay(serviceID: serviceID)
-    case .setRoutingEnabled(let enabled):
-      return await handleSetRoutingEnabled(enabled)
+    case .setRoutingEnabled(let enabled): return await handleSetRoutingEnabled(enabled)
     }
   }
 

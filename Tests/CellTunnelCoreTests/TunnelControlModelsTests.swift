@@ -52,6 +52,27 @@ struct TunnelControlModelsTests {
     #expect(action == .peers)
   }
 
+  @Test func validateConfigRequestRoundTripsThroughEnvelope() throws {
+    let text = """
+      [Interface]
+      Address = 198.18.0.2/32
+
+      [Peer]
+      Endpoint = relay.example:51820
+      """
+    let envelope = AgentControlEnvelope(request: .validateConfig(text: text))
+    let encoded = try JSONEncoder().encode(envelope)
+
+    let decoded = try JSONDecoder().decode(AgentControlEnvelope.self, from: encoded)
+
+    #expect(decoded.version == agentControlWireVersion)
+    guard case .validateConfig(let decodedText) = decoded.request else {
+      Issue.record("unexpected request: \(decoded.request)")
+      return
+    }
+    #expect(decodedText == text)
+  }
+
   @Test func cliParseSelectRequiresReference() {
     #expect(throws: (any Error).self) {
       try TunnelControlCLIAction.parse(arguments: ["select"])
@@ -270,6 +291,12 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
     events.append("startTunnel")
     _ = settings
     return TunnelDaemonStatusSnapshot()
+  }
+
+  func validateConfig(text: String) async {
+    await Task.yield()
+    events.append("validateConfig")
+    _ = text
   }
 
   func stopTunnel() async -> TunnelDaemonStatusSnapshot {

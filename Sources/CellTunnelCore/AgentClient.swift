@@ -78,6 +78,18 @@ import Foundation
       return try requireStatus(from: response, operationName: "reloadTunnel")
     }
 
+    /// Validates WireGuard configuration text without changing tunnel state.
+    public func validateConfig(text: String) async throws {
+      logger.notice("agent client invoked rpc=validate-config")
+      let response = try await send(
+        request: .validateConfig(text: text),
+        operationName: "validateConfig"
+      )
+      if let failure = response.failure {
+        throw mapFailure(failure)
+      }
+    }
+
     public func stopTunnel() async throws -> TunnelDaemonStatusSnapshot {
       logger.notice("agent client invoked rpc=stop-tunnel")
       let response = try await send(request: .stopTunnel, operationName: "stopTunnel")
