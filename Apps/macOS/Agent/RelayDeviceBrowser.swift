@@ -114,7 +114,7 @@ final class RelayDeviceBrowser: @unchecked Sendable {
   }
 
   private func device(from result: NWBrowser.Result) -> DiscoveredRelayDevice? {
-    guard case .service(let name, let type, let domain, let interface) = result.endpoint else {
+    guard case let .service(name, type, domain, interface) = result.endpoint else {
       return nil
     }
     let interfaceIndex = interface.map { Int($0.index) } ?? 0

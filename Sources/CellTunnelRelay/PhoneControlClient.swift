@@ -142,7 +142,7 @@ final class PhoneControlClient {
     var services: [TunnelRelayService] = []
     var endpointsByID: [String: NWEndpoint] = [:]
     for endpoint in endpoints {
-      guard case .service(let name, let type, let domain, let interface) = endpoint else {
+      guard case let .service(name, type, domain, interface) = endpoint else {
         continue
       }
       let interfaceIndex = interface.map { Int($0.index) } ?? 0

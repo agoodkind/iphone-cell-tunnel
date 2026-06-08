@@ -71,7 +71,7 @@ private func printRelayBrowseResults(_ results: Set<NWBrowser.Result>) {
   printToolOutput("relay-browse: \(results.count) result(s)")
   for result in results {
     guard
-      case .service(let name, let type, let domain, let interface) =
+      case let .service(name, type, domain, interface) =
         result.endpoint
     else {
       continue
