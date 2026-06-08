@@ -14,6 +14,10 @@ import Observation
 private let logger = CellTunnelLog.logger(category: .relay)
 private let pollIntervalSeconds: Double = 1
 private let relayStoppedStateText = "Stopped"
+// Status polls an unconfirmed routing request waits for the agent to apply before
+// the switch reverts to the real state, so a request that never lands cannot leave
+// the spinner spinning forever. At the 1s poll cadence this is an 8s budget.
+private let routeIntentTimeoutPolls = 8
 
 // MARK: - RelayStatusSample
 
@@ -158,6 +162,13 @@ final class RelayController {
   var relayStateDescription = relayStoppedStateText
   var routeState: TunnelRouteState = .notInstalled
   var peerState: TunnelPeerState = .notSelected
+  /// The routing value the user last requested, held while a request is pending so
+  /// the switch shows the requested state until the agent's real `routeState`
+  /// confirms it. Only meaningful while `routeIntentPollsRemaining` is positive.
+  private var requestedRouting = false
+  // Status polls left before an unconfirmed routing request reverts to the real
+  // state; a positive value means a request is pending, counted down each poll.
+  private var routeIntentPollsRemaining = 0
   /// Whether the background agent is installed, the gate to the install-agent setup
   /// tier. Always true on the iPhone, where there is no separate agent; on the Mac
   /// it tracks the install state.
@@ -307,6 +318,7 @@ final class RelayController {
     lastError = sample.lastError
     relayStateDescription = sample.relayStateDescription
     routeState = sample.routeState
+    reconcileRouteIntent()
     peerState = sample.peerState
     isTunnelInstalled = sample.isTunnelInstalled
     discoveredPeers = sample.discoveredPeers
@@ -343,10 +355,42 @@ final class RelayController {
   /// The backend forwards the choice to the agent, which installs or withdraws
   /// the program routes. The displayed routing-versus-passthrough state reads from
   /// the real `routeState` in the next status snapshot.
+  /// The routing value the switch shows: the pending request while one is in
+  /// flight, otherwise the agent's confirmed route state.
+  var displayedRouting: Bool {
+    isRouteRequestPending ? requestedRouting : (routeState == .installed)
+  }
+
+  /// Whether a routing request is awaiting the agent's confirmation, so the screen
+  /// shows a spinner beside the switch.
+  var isRouteRequestPending: Bool {
+    routeIntentPollsRemaining > 0
+  }
+
   func setRouteTraffic(enabled: Bool) async {
     logger.notice(
       "relay controller route traffic requested enabled=\(enabled, privacy: .public)")
+    requestedRouting = enabled
+    routeIntentPollsRemaining = routeIntentTimeoutPolls
     await backend.setRouting(enabled: enabled)
+  }
+
+  // Clears the optimistic routing intent once the agent's real route state matches
+  // it, or after the poll budget elapses, so the switch follows the confirmed state
+  // and a request the agent never applies snaps back rather than spinning forever.
+  private func reconcileRouteIntent() {
+    guard isRouteRequestPending else {
+      return
+    }
+    if (routeState == .installed) == requestedRouting {
+      routeIntentPollsRemaining = 0
+      return
+    }
+    routeIntentPollsRemaining -= 1
+    if routeIntentPollsRemaining <= 0 {
+      logger.notice(
+        "relay controller route request unconfirmed; reverting switch to real state")
+    }
   }
 
   // MARK: - Peer selection

@@ -62,7 +62,15 @@ struct RelayStatusScreen: View {
     Section {
       Text(model.status.label)
       if model.showsToggle {
-        Toggle(routeTrafficLabel, isOn: model.routeTrafficBinding)
+        HStack {
+          Text(routeTrafficLabel)
+          Spacer()
+          if model.isRouteRequestPending {
+            ProgressView()
+          }
+          Toggle(routeTrafficLabel, isOn: model.routeTrafficBinding)
+            .labelsHidden()
+        }
       }
       if let message = model.errorMessage {
         Text(message)

@@ -30,6 +30,9 @@
   private let tilePadding: CGFloat = 16
   private let valueRowSpacing: CGFloat = 12
   private let valueRowMinTrailing: CGFloat = 12
+  // Gap between the routing switch and the in-flight spinner shown on its trailing
+  // side while a routing request awaits the agent's confirmation.
+  private let routeSpinnerSpacing: CGFloat = 8
   // A value-width string drawn only as a redacted skeleton, so its characters never
   // show; it sets the placeholder bar's width.
   private let skeletonValue = "000.000.000.000"
@@ -97,9 +100,15 @@
         }
         Spacer(minLength: gridSpacing)
         if model.showsToggle {
-          Toggle(routeToggleTitle, isOn: model.routeTrafficBinding)
-            .toggleStyle(.switch)
-            .fixedSize()
+          HStack(spacing: routeSpinnerSpacing) {
+            Toggle(routeToggleTitle, isOn: model.routeTrafficBinding)
+              .toggleStyle(.switch)
+              .fixedSize()
+            if model.isRouteRequestPending {
+              ProgressView()
+                .controlSize(.small)
+            }
+          }
         }
       }
     }

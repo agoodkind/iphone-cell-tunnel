@@ -270,11 +270,17 @@ struct RelayScreenModel {
   /// iPhone list and the Mac dashboard bind the switch to this, so the glue lives once.
   var routeTrafficBinding: Binding<Bool> {
     Binding(
-      get: { controller.routeState == .installed },
+      get: { controller.displayedRouting },
       set: { newValue in
         Task { await controller.setRouteTraffic(enabled: newValue) }
       }
     )
+  }
+
+  /// Whether a routing request is awaiting the agent's confirmation, so the screen
+  /// shows a spinner beside the switch while the real `routeState` catches up.
+  var isRouteRequestPending: Bool {
+    controller.isRouteRequestPending
   }
 
   /// Brings the relay session up, the action behind `Retry`.
