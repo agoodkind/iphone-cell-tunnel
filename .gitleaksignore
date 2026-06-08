@@ -3,3 +3,9 @@
 # not a literal secret in source.
 Apps/macOS/TunnelProvider/Runtime/WireGuardTunnelConfigBuilder.swift:dotfiles-generic-secret-assignment:46
 Apps/macOS/TunnelProvider/Runtime/WireGuardTunnelConfigBuilder.swift:dotfiles-generic-secret-assignment:50
+
+# False positives: illustrative `PrivateKey = ...` lines in the config-storage
+# plan's example test code and masking assertion, not real secrets.
+docs/superpowers/plans/2026-06-07-in-app-config-storage.md:generic-api-key:106
+docs/superpowers/plans/2026-06-07-in-app-config-storage.md:dotfiles-generic-secret-assignment:106
+docs/superpowers/plans/2026-06-07-in-app-config-storage.md:dotfiles-generic-secret-assignment:110
