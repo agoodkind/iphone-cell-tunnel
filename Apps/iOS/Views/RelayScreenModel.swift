@@ -482,7 +482,7 @@ struct RelayScreenModel {
   // address. Every row is a local-side fact, so they share the one card.
   private var deviceSection: ConnectionSection {
     let egress = ConnectionRow(
-      label: "Egress",
+      label: "Interface",
       value: transportLabel(
         controller.cellularPath.transportDisplayName,
         interface: controller.cellularPath.interfaceName
@@ -492,12 +492,12 @@ struct RelayScreenModel {
     rows.append(contentsOf: addressRows(prefix: "Interface", egressInterfaceAddresses))
     rows.append(
       ConnectionRow(
-        label: "Local link",
+        label: "Link IP",
         value: nonEmptyOrPlaceholder(controller.localLinkAddresses.preferredAddress)
       )
     )
     rows.append(contentsOf: addressRows(prefix: "Public", controller.devicePublicAddresses))
-    return ConnectionSection(title: "Device", rows: rows)
+    return ConnectionSection(title: "This Device", rows: rows)
   }
 
   // The other device: the connected peer name, the carrying transport with its raw
@@ -508,7 +508,7 @@ struct RelayScreenModel {
       ConnectionRow(label: "Connected to", value: connectedToValue),
       ConnectionRow(label: "Connected via", value: connectedViaValue),
       ConnectionRow(
-        label: "Peer link",
+        label: "Link IP",
         value: nonEmptyOrPlaceholder(controller.peerLinkAddresses.preferredAddress)
       ),
     ]
