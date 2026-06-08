@@ -10,13 +10,13 @@ import CellTunnelLog
 import Foundation
 
 private let logger = CellTunnelLog.logger(category: .daemon)
-private let deviceListingIndexBase = 1
+private let peerListingIndexBase = 1
 private let optionArgumentStride = 2
-private let noRelayDevicesMessage = "no relay devices found"
+private let noRelayPeersMessage = "no peers found"
 
 public enum TunnelControlCLIAction: Equatable, Sendable {
   case check
-  case devices
+  case peers
   case reset
   case select(reference: String)
   case start(TunnelStartSettings)
@@ -37,8 +37,8 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
       return .status
     case "check":
       return .check
-    case "devices":
-      return .devices
+    case "peers":
+      return .peers
     case "start-discovery":
       return .startDiscovery
     case "stop-discovery":
@@ -120,8 +120,8 @@ public struct TunnelControlCLIExecutor: Sendable {
     case .check:
       let report = try await client.check()
       return report.renderedOutput
-    case .devices:
-      return try await listDevices()
+    case .peers:
+      return try await listPeers()
     case .startDiscovery:
       let snapshot = try await client.startRelayDiscovery()
       return snapshot.renderedOutput
@@ -129,7 +129,7 @@ public struct TunnelControlCLIExecutor: Sendable {
       let snapshot = try await client.stopRelayDiscovery()
       return snapshot.renderedOutput
     case .select(let reference):
-      return try await selectDevice(reference: reference)
+      return try await selectPeer(reference: reference)
     case .start(let settings):
       let status = try await client.startTunnel(settings: settings)
       return status.renderedOutput
@@ -142,18 +142,18 @@ public struct TunnelControlCLIExecutor: Sendable {
     }
   }
 
-  private func listDevices() async throws -> String {
+  private func listPeers() async throws -> String {
     let snapshot = try await client.listRelayServices()
-    return renderDeviceListing(services: snapshot.services)
+    return renderPeerListing(services: snapshot.services)
   }
 
-  private func selectDevice(reference: String) async throws -> String {
+  private func selectPeer(reference: String) async throws -> String {
     let serviceID = try await resolveServiceID(reference: reference)
     let snapshot = try await client.selectRelayService(serviceID: serviceID)
     return snapshot.renderedOutput
   }
 
-  // A bare integer is a 1-based index into the most recent `devices` listing;
+  // A bare integer is a 1-based index into the most recent `peers` listing;
   // anything else is treated as a literal service id.
   private func resolveServiceID(reference: String) async throws -> String {
     guard let index = Int(reference) else {
@@ -161,22 +161,22 @@ public struct TunnelControlCLIExecutor: Sendable {
     }
     let snapshot = try await client.listRelayServices()
     let services = snapshot.services
-    let offset = index - deviceListingIndexBase
+    let offset = index - peerListingIndexBase
     guard offset >= 0, offset < services.count else {
       throw TunnelDaemonError.usage(
-        "select index \(index) is out of range (\(services.count) devices)"
+        "select index \(index) is out of range (\(services.count) peers)"
       )
     }
     return services[offset].id
   }
 
-  private func renderDeviceListing(services: [TunnelRelayService]) -> String {
+  private func renderPeerListing(services: [TunnelRelayService]) -> String {
     guard !services.isEmpty else {
-      return noRelayDevicesMessage
+      return noRelayPeersMessage
     }
     var lines: [String] = []
     for (offset, service) in services.enumerated() {
-      let position = offset + deviceListingIndexBase
+      let position = offset + peerListingIndexBase
       var line = "\(position)) \(service.serviceName)  \(service.id)"
       if service.isSelected {
         line += " (selected)"

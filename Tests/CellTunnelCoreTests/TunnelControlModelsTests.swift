@@ -46,10 +46,10 @@ struct TunnelControlModelsTests {
     #expect(settings.relayEndpoint?.socketAddress == "[fd00::44]:51820")
   }
 
-  @Test func cliParseDevices() throws {
-    let action = try TunnelControlCLIAction.parse(arguments: ["devices"])
+  @Test func cliParsePeers() throws {
+    let action = try TunnelControlCLIAction.parse(arguments: ["peers"])
 
-    #expect(action == .devices)
+    #expect(action == .peers)
   }
 
   @Test func cliParseSelectRequiresReference() {
@@ -70,25 +70,25 @@ struct TunnelControlModelsTests {
     #expect(action == .select(reference: "relay-1"))
   }
 
-  @Test func cliExecutorDevicesListsNumberedServices() async throws {
+  @Test func cliExecutorPeersListsNumberedServices() async throws {
     let client = FakeTunnelControlClient()
 
-    let output = try await runCLI(.devices, on: client)
+    let output = try await runCLI(.peers, on: client)
 
     #expect(client.events == ["listRelayServices"])
     #expect(output == "1) CellTunnelPhone  relay-1")
   }
 
-  @Test func cliExecutorDevicesReportsEmptyListing() async throws {
+  @Test func cliExecutorPeersReportsEmptyListing() async throws {
     let client = FakeTunnelControlClient()
     client.listedDiscoverySnapshotOverride = TunnelDiscoverySnapshot(
       phase: .browsing,
       services: []
     )
 
-    let output = try await runCLI(.devices, on: client)
+    let output = try await runCLI(.peers, on: client)
 
-    #expect(output == "no relay devices found")
+    #expect(output == "no peers found")
   }
 
   @Test func cliExecutorSelectByServiceIDCallsSelectRelayService() async throws {

@@ -56,8 +56,8 @@ private func printUsage() {
     commands:
       status                       Print current tunnel daemon status.
       check                        Print environment check report.
-      devices                      List discovered relay devices.
-      select <n|serviceID>         Select a relay by 1-based index or service id.
+      peers                        List discovered peers.
+      select <n|serviceID>         Select a peer by 1-based index or service id.
       start --config <path>        Start the tunnel using the given WireGuard config.
                                    Optional: --relay <host:port>.
       stop                         Stop the tunnel.
