@@ -22,7 +22,6 @@
 
 - Create `Sources/CellTunnelCore/ConfigSecretMasking.swift`: pure helper that masks and reveals the `PrivateKey` value in wg-quick text.
 - Create `Sources/CellTunnelCore/StoredTunnelConfig.swift`: the `StoredTunnelConfig` model and the `TunnelConfigStore` protocol plus an in-memory implementation.
-- Create `Sources/CellTunnelWireGuardConfig/` (new SwiftPM + Tuist library target): vendored WireGuard wg-quick parser, depends on `WireGuardKit`.
 - Create `Apps/iOS/Services/KeychainTunnelConfigStore.swift`: keychain-backed `TunnelConfigStore` (Mac).
 - Modify `Apps/iOS/Services/AgentRelayBackend.swift`: add library operations, reuse `copyConfigIntoSharedContainer`.
 - Modify `Apps/iOS/Services/RelayController.swift`: extend `RelayControlBackend`, expose a config-library facade to the views.
@@ -700,32 +699,45 @@ or test gate between every slice; do not start the next slice until the gate is
 green. Work stays on `main`. The code for each slice is in the Task sections
 above; the slice names the scope, the gate, and the commit.
 
-1. Vendor the two wg-quick parser files into `Sources/CellTunnelWireGuardConfig/`
-   with headers, and declare the SwiftPM product and target in `Package.swift`
-   (Task 1, steps 1 to 3). Gate: `swift build --target CellTunnelWireGuardConfig`.
-   Commit: "Add CellTunnelWireGuardConfig target with vendored wg-quick parser".
-2. Add the Tuist framework target and link it into `CellTunnelPhone`
-   (Task 1, step 4), then regenerate. Gate: `make build TARGET=mac-catalyst CONFIG=Debug`.
-   Commit: "Link CellTunnelWireGuardConfig into the app target".
-3. Masking helper and its tests (Task 2). Gate: `make test`, then
-   `make build TARGET=mac-catalyst CONFIG=Debug`. Commit as in Task 2.
-4. `StoredTunnelConfig`, the `TunnelConfigStore` protocol, and the in-memory
-   store with tests (Task 3). Gate: `make test`, then
-   `make build TARGET=mac-catalyst CONFIG=Debug`. Commit as in Task 3.
-5. `KeychainTunnelConfigStore` (Task 4). Gate: `make build TARGET=mac-catalyst CONFIG=Debug`.
-   Commit as in Task 4.
+Design note superseding the Task sections above: the app does not link
+WireGuardKit and does not parse. The existing `WireGuardConfigParser`,
+`AddressPrefix`, and `AddressFamily` move into `CellTunnelCore` (made public) so
+the agent can validate without a running tunnel. A new `validateConfig(text:)` XPC
+request carries the full config text to the agent, which parses and replies valid
+or invalid. Applying keeps the existing app-group file hand-off
+(`copyConfigIntoSharedContainer` plus `startTunnel`/`reloadTunnel` by path);
+`TunnelStartSettings` is unchanged. There is no `CellTunnelWireGuardConfig` target.
+
+1. Move `WireGuardConfigParser`, `AddressPrefix`, and `AddressFamily` from
+   `Apps/macOS/TunnelProvider/Runtime/` into `Sources/CellTunnelCore/`, make them
+   public, and update the provider's builder, route set, and provider to import
+   from `CellTunnelCore`. Add parser unit tests in `Tests/CellTunnelCoreTests/`.
+   Gate: `make test`, then `make build TARGET=mac CONFIG=Debug`, then
+   `make build TARGET=mac-catalyst CONFIG=Debug`. Commit: "Move WireGuard config
+   parser and AddressPrefix into CellTunnelCore".
+2. Add a `validateConfig(text:)` case to `AgentControlRequest`, an agent handler
+   that parses with `WireGuardConfigParser` and returns ok or a failure message,
+   and an `AgentClient.validateConfig(text:)` method. Gate: `make test`, then
+   `make build TARGET=mac CONFIG=Debug`. Commit: "Add validateConfig agent RPC".
+3. Masking helper and its tests (Task 2). Gate: `make test`. Commit as in Task 2.
+4. `StoredTunnelConfig`, the `TunnelConfigStore` protocol, and the in-memory store
+   with tests (Task 3). Gate: `make test`. Commit as in Task 3.
+5. `KeychainTunnelConfigStore` (Task 4). Gate:
+   `make build TARGET=mac-catalyst CONFIG=Debug`. Commit as in Task 4.
 6. Extend `RelayControlBackend` and add the no-op conformances in the iPhone,
    simulator, and preview backends (Task 5, steps 1 and 3). Gate:
-   `make build TARGET=mac-catalyst CONFIG=Debug` then `make build TARGET=iphone-simulator CONFIG=Debug`.
-   Commit: "Extend relay backend protocol with config library no-ops".
-7. `AgentRelayBackend` library operations and the `writeActiveToContainer` and
-   `readSecurityScoped` refactor (Task 5, step 2). Gate:
+   `make build TARGET=mac-catalyst CONFIG=Debug` then
+   `make build TARGET=iphone-simulator CONFIG=Debug`. Commit: "Extend relay backend
+   protocol with config library no-ops".
+7. `AgentRelayBackend` library operations: `validateConfig` first, then on valid
+   `store` and apply through the existing `copyConfigIntoSharedContainer` plus
+   `startTunnel` or `reloadTunnel` by path. Gate:
    `make build TARGET=mac-catalyst CONFIG=Debug`. Commit: "Implement config library
    operations in the Mac relay backend".
-8. `RelayController` facade (Task 6). Gate: `make build TARGET=mac-catalyst CONFIG=Debug`.
-   Commit as in Task 6.
-9. `ConfigEditorView` (Task 7). Gate: `make build TARGET=mac-catalyst CONFIG=Debug`.
-   Commit as in Task 7.
+8. `RelayController` facade (Task 6). Gate:
+   `make build TARGET=mac-catalyst CONFIG=Debug`. Commit as in Task 6.
+9. `ConfigEditorView` (Task 7). Gate:
+   `make build TARGET=mac-catalyst CONFIG=Debug`. Commit as in Task 7.
 10. `ConfigLibraryView` and the import picker (Task 8, step 1). Gate:
     `make build TARGET=mac-catalyst CONFIG=Debug`. Commit: "Add Configs card with
     import, activate, edit, rename, delete".

@@ -22,9 +22,10 @@ no file-on-disk or full-disk step.
 - Editing: a raw SwiftUI text editor with the `PrivateKey` value masked by
   default and a reveal toggle. The config text is never written to the log.
 - Apply an edit: reload in place over the existing reload path, no restart.
-- Parsing: reuse WireGuard's wg-quick parser and serializer from the
-  `agoodkind/wireguard-apple` fork over `WireGuardKit`'s `TunnelConfiguration`.
-  Do not hand-roll a second parser in the app.
+- Parsing and validation: the agent owns them. The app does not parse and does
+  not link `WireGuardKit`. It hands the config to the agent over XPC, and the
+  agent validates on apply and returns any error the UI surfaces. The masking
+  helper is a pure line scan, no parser.
 
 ## What already exists
 
@@ -42,8 +43,11 @@ no file-on-disk or full-disk step.
   `providerConfiguration["wireguardConfig"]` and the extension reads it back
   (`PacketTunnelProvider.extractWireGuardConfigText`).
 
-So the wire path is unchanged: the app writes the active config to the app-group
-file and calls `startTunnel` or `reloadTunnel` with that path. No new XPC field.
+The wire path: validation sends the full config text to the agent over the libxpc
+transport, the one new XPC payload. Applying keeps the existing hand-off, where the
+app writes the active config to the shared app-group file and calls `startTunnel`
+or `reloadTunnel` with that path. The apply path is unchanged, so
+`TunnelStartSettings` is untouched.
 
 ## Architecture
 
@@ -65,34 +69,39 @@ the secret value, the id as the account, and a small JSON of metadata; the activ
 id is one more keychain item. The text holds the `PrivateKey`, so it lives in the
 keychain, never in `UserDefaults` or a plist.
 
-### Parser reuse
+### Validation (agent answers yes or no over XPC)
 
-Expose WireGuard's wg-quick parser as a consumable product from the fork so the
-app links it, rather than copying it. The fork
-(`agoodkind/wireguard-apple`) ships only the `WireGuardKit` product today; the
-parser (`Sources/Shared/Model/TunnelConfiguration+WgQuickConfig.swift`, with
-`String+ArrayConversion.swift`) is app-target source. The plan adds a small
-library product in the fork that exposes the parser over `WireGuardKit`'s
-`TunnelConfiguration`. Fallback if the fork change is deferred: vendor those two
-files into a `CellTunnelCore` submodule. The app uses this to validate on
-import and save and to find the `PrivateKey` line for masking. The agent keeps
-its own `WireGuardConfigParser` for now; migrating the agent onto the shared
-parser is a separate follow-up, out of scope here.
+The app does no WireGuard parsing and does not link `WireGuardKit`. The Catalyst
+app links only `CellTunnelCore` and `CellTunnelLog`, and that stays true. The agent
+validates: the app sends the config text to the agent over the existing libxpc
+transport and the agent replies valid or invalid with a message, without starting
+a tunnel. The UI shows that result, then stores and applies only a valid config.
+
+To answer without a running tunnel, the agent parses the text itself. The existing
+`WireGuardConfigParser` and the `AddressPrefix` and `AddressFamily` types move from
+the provider target into `CellTunnelCore` and become public, so both the agent and
+the extension link them through `CellTunnelCore`. The provider's builder and route
+set import them from there. A new `validateConfig(text:)` request in the agent
+control protocol calls the parser and returns ok or a failure message; `AgentClient`
+gains the matching call. The masking helper is a pure line scan in `CellTunnelCore`
+that finds the `PrivateKey` line by prefix, so it needs no parser.
 
 ### Backend additions
 
 `RelayControlBackend` gains config-library operations, implemented only in
 `AgentRelayBackend` (Mac), no-op or absent on the iPhone and simulator backends:
 
-- `importConfig(url:name:)`: read under security scope, `store.add`, set active,
-  write to the app-group file, `startTunnel`.
+- `importConfig(url:name:)`: read under security scope, send the text to
+  `validateConfig`; on valid, `store.add`, set active, write to the app-group file,
+  and `startTunnel` with that path; on invalid, surface the message and store nothing.
 - `activateConfig(id:)`: write that config to the app-group file, `startTunnel`.
-- `saveConfigEdit(id:text:)`: `store.update`; if it is the active config and the
-  relay is running, write to the app-group file and `reloadTunnel`.
+- `saveConfigEdit(id:text:)`: `validateConfig`; on valid, `store.update`, and if it
+  is the active config and the relay is running, write to the app-group file and
+  `reloadTunnel`.
 - `renameConfig`, `deleteConfig`, `listConfigs`.
 
-The existing `copyConfigIntoSharedContainer` helper is reused as the one place a
-config text reaches the agent.
+Validation sends the text over XPC; applying reuses the existing
+`copyConfigIntoSharedContainer` app-group hand-off, so the apply path is unchanged.
 
 ### UI (new SwiftUI, Mac Catalyst)
 
@@ -135,13 +144,17 @@ A Configs card on the Mac screen plus an editor sheet.
 - The config text, which contains the `PrivateKey`, is stored only in the
   keychain.
 - The `PrivateKey` value is masked in the editor by default and is never logged.
-- The app-group `imported-tunnel.conf` holds the active config in plaintext only
-  as the agent hand-off. This is the existing behavior, not new.
+- For validation the config text crosses only the local libxpc transport as the
+  request payload.
+- Applying writes the active config to the app-group file as the agent hand-off,
+  the existing behavior, and the agent stores it in its VPN profile where a
+  NetworkExtension WireGuard config must live.
 
 ## Validation and edge cases
 
-- Invalid config on import or save is rejected with the WireGuard parser's error,
-  shown inline. Nothing is stored or sent.
+- Invalid config is caught by the agent on apply, which returns a failure the UI
+  surfaces. On import the config is stored, then applied; if apply fails it stays
+  stored but not running, with the error shown.
 - An empty library shows only the Import button.
 - Editing a non-active config stores it and changes no relay state.
 - Deleting the active config clears the active marker and leaves the running
@@ -163,7 +176,8 @@ A Configs card on the Mac screen plus an editor sheet.
 ## Out of scope
 
 - iPhone config UI. The iPhone carries no WireGuard config.
-- Migrating the agent off its own `WireGuardConfigParser` onto the shared parser.
+- Changing the parser's logic. It moves to `CellTunnelCore` unchanged and stays
+  the single parser the agent and extension share.
 - QR import, key generation, and on-demand SSID rules from the WireGuard app.
 - iCloud or cross-device sync of the library.
 
@@ -173,6 +187,11 @@ A Configs card on the Mac screen plus an editor sheet.
   views, and the masking helper.
 - Edit: `Apps/iOS/Services/AgentRelayBackend.swift` (library operations),
   `RelayControlBackend` protocol, the Mac screen model to surface the card.
-- Fork: `agoodkind/wireguard-apple` Package to expose the wg-quick parser
-  product, plus this repo's `Tuist/Package.swift` to consume it.
+- Move `WireGuardConfigParser`, `AddressPrefix`, and `AddressFamily` from
+  `Apps/macOS/TunnelProvider/Runtime/` into `Sources/CellTunnelCore/`, made public,
+  and update the provider's builder and route set to import them from core.
+- Add a `validateConfig(text:)` case to the agent control request, an `AgentClient`
+  method, and an agent handler that parses and returns ok or a failure message.
+- No fork or WireGuardKit changes in the app: the Catalyst app does not link
+  WireGuardKit.
 - Entitlements unchanged: app-group already present; the keychain is app-private.
