@@ -17,3 +17,7 @@ Sources/CellTunnelCore/WireGuardConfigParser.swift:dotfiles-generic-secret-assig
 Tests/CellTunnelCoreTests/WireGuardConfigParserTests.swift:dotfiles-generic-secret-assignment:12
 Tests/CellTunnelCoreTests/WireGuardConfigParserTests.swift:dotfiles-generic-secret-assignment:22
 Tests/CellTunnelCoreTests/WireGuardConfigParserTests.swift:dotfiles-generic-secret-assignment:47
+
+# False positives: masking-helper test asserts on `PrivateKey = ...` lines; no real secret.
+Tests/CellTunnelCoreTests/ConfigSecretMaskingTests.swift:dotfiles-generic-secret-assignment:20
+Tests/CellTunnelCoreTests/ConfigSecretMaskingTests.swift:dotfiles-generic-secret-assignment:26
