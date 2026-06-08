@@ -1,6 +1,6 @@
 //
 //  WireGuardConfigParser.swift
-//  CellTunnelTunnelProvider
+//  CellTunnelCore
 //
 //  Created by Alexander Goodkind <alex@goodkind.io> on 2026-05-27.
 //  Copyright © 2026, all rights reserved.
@@ -18,7 +18,8 @@ private let ipv6PrefixLengthMax = 128
 // A CIDR-style prefix line "address/length" splits into exactly 2 parts.
 private let addressPrefixSplitParts = 2
 
-enum WireGuardConfigError: LocalizedError {
+/// Errors produced while parsing a WireGuard client configuration.
+public enum WireGuardConfigError: LocalizedError {
   case invalidEndpoint(String)
   case invalidKeepalive(String)
   case invalidKey(String)
@@ -33,7 +34,8 @@ enum WireGuardConfigError: LocalizedError {
   case missingPrivateKey
   case missingPublicKey
 
-  var errorDescription: String? {
+  /// A human-readable description for the configuration parse failure.
+  public var errorDescription: String? {
     switch self {
     case .invalidEndpoint(let value):
       return "wireguard config invalid endpoint: \(value)"
@@ -67,47 +69,99 @@ enum WireGuardConfigError: LocalizedError {
 
 // MARK: - WireGuardKey
 
-struct WireGuardKey: Equatable, Sendable {
-  let hexValue: String
+/// A WireGuard key stored as its hexadecimal byte representation.
+public struct WireGuardKey: Equatable, Sendable {
+  public let hexValue: String
+
+  /// Creates a WireGuard key from its hexadecimal byte representation.
+  public init(hexValue: String) {
+    self.hexValue = hexValue
+  }
 }
 
 // MARK: - WireGuardEndpoint
 
-struct WireGuardEndpoint: Equatable, Sendable {
-  let host: String
-  let port: UInt16
+/// A WireGuard peer endpoint parsed from the client configuration.
+public struct WireGuardEndpoint: Equatable, Sendable {
+  public let host: String
+  public let port: UInt16
+
+  /// Creates a WireGuard endpoint with its host and UDP port.
+  public init(host: String, port: UInt16) {
+    self.host = host
+    self.port = port
+  }
 }
 
 // MARK: - WireGuardInterfaceSection
 
-struct WireGuardInterfaceSection: Equatable, Sendable {
-  var privateKey: WireGuardKey?  // gitleaks:allow
-  var addresses: [AddressPrefix] = []
-  var listenPort: UInt16?
-  var mtu: Int?
+/// The parsed `[Interface]` section of a WireGuard client configuration.
+public struct WireGuardInterfaceSection: Equatable, Sendable {
+  public var privateKey: WireGuardKey?  // gitleaks:allow
+  public var addresses: [AddressPrefix]
+  public var listenPort: UInt16?
+  public var mtu: Int?
+
+  /// Creates a parsed WireGuard interface section.
+  public init(
+    privateKey: WireGuardKey? = nil,
+    addresses: [AddressPrefix] = [],
+    listenPort: UInt16? = nil,
+    mtu: Int? = nil
+  ) {
+    self.privateKey = privateKey
+    self.addresses = addresses
+    self.listenPort = listenPort
+    self.mtu = mtu
+  }
 }
 
 // MARK: - WireGuardPeerSection
 
-struct WireGuardPeerSection: Equatable, Sendable {
-  var publicKey: WireGuardKey?
-  var presharedKey: WireGuardKey?
-  var endpoint: WireGuardEndpoint?
-  var allowedIPs: [AddressPrefix] = []
-  var persistentKeepaliveSeconds: UInt16?
+/// The parsed `[Peer]` section of a WireGuard client configuration.
+public struct WireGuardPeerSection: Equatable, Sendable {
+  public var publicKey: WireGuardKey?
+  public var presharedKey: WireGuardKey?
+  public var endpoint: WireGuardEndpoint?
+  public var allowedIPs: [AddressPrefix]
+  public var persistentKeepaliveSeconds: UInt16?
+
+  /// Creates a parsed WireGuard peer section.
+  public init(
+    publicKey: WireGuardKey? = nil,
+    presharedKey: WireGuardKey? = nil,
+    endpoint: WireGuardEndpoint? = nil,
+    allowedIPs: [AddressPrefix] = [],
+    persistentKeepaliveSeconds: UInt16? = nil
+  ) {
+    self.publicKey = publicKey
+    self.presharedKey = presharedKey
+    self.endpoint = endpoint
+    self.allowedIPs = allowedIPs
+    self.persistentKeepaliveSeconds = persistentKeepaliveSeconds
+  }
 }
 
 // MARK: - WireGuardClientConfig
 
-struct WireGuardClientConfig: Equatable, Sendable {
-  var interface: WireGuardInterfaceSection
-  var peer: WireGuardPeerSection
+/// A parsed WireGuard client configuration with one interface and one peer.
+public struct WireGuardClientConfig: Equatable, Sendable {
+  public var interface: WireGuardInterfaceSection
+  public var peer: WireGuardPeerSection
+
+  /// Creates a parsed WireGuard client configuration.
+  public init(interface: WireGuardInterfaceSection, peer: WireGuardPeerSection) {
+    self.interface = interface
+    self.peer = peer
+  }
 }
 
 // MARK: - WireGuardConfigParser
 
-enum WireGuardConfigParser {
-  static func parse(_ text: String) throws -> WireGuardClientConfig {
+/// Parses WireGuard client configurations into shared value types.
+public enum WireGuardConfigParser {
+  /// Parses a WireGuard client configuration string.
+  public static func parse(_ text: String) throws -> WireGuardClientConfig {
     var interfaceSection = WireGuardInterfaceSection()
     var peerSection = WireGuardPeerSection()
     var section: String?
@@ -311,5 +365,3 @@ enum WireGuardConfigParser {
     return WireGuardEndpoint(host: host, port: port)
   }
 }
-
-// MARK: - WireGuardClientConfig

@@ -6,6 +6,7 @@
 //  Copyright © 2026, all rights reserved.
 //
 
+import CellTunnelCore
 import Foundation
 import Network
 import WireGuardKit

@@ -9,3 +9,11 @@ Apps/macOS/TunnelProvider/Runtime/WireGuardTunnelConfigBuilder.swift:dotfiles-ge
 docs/superpowers/plans/2026-06-07-in-app-config-storage.md:generic-api-key:106
 docs/superpowers/plans/2026-06-07-in-app-config-storage.md:dotfiles-generic-secret-assignment:106
 docs/superpowers/plans/2026-06-07-in-app-config-storage.md:dotfiles-generic-secret-assignment:110
+
+# False positives: `privateKey` is a Swift property/init param name in the moved
+# parser, and the test fixtures are all-A base64 placeholders, not real secrets.
+Sources/CellTunnelCore/WireGuardConfigParser.swift:dotfiles-generic-secret-assignment:107
+Sources/CellTunnelCore/WireGuardConfigParser.swift:dotfiles-generic-secret-assignment:112
+Tests/CellTunnelCoreTests/WireGuardConfigParserTests.swift:dotfiles-generic-secret-assignment:12
+Tests/CellTunnelCoreTests/WireGuardConfigParserTests.swift:dotfiles-generic-secret-assignment:22
+Tests/CellTunnelCoreTests/WireGuardConfigParserTests.swift:dotfiles-generic-secret-assignment:47
