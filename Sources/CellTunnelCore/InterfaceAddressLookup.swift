@@ -8,6 +8,21 @@
 
 import Foundation
 
+// MARK: - InterfaceAddressList
+
+/// Every numeric address on an interface, grouped by family, in interface order.
+public struct InterfaceAddressList: Sendable, Equatable {
+  public let ipv4: [String]
+  public let ipv6: [String]
+
+  public init(ipv4: [String], ipv6: [String]) {
+    self.ipv4 = ipv4
+    self.ipv6 = ipv6
+  }
+
+  public static let empty = InterfaceAddressList(ipv4: [], ipv6: [])
+}
+
 // MARK: - InterfaceAddressLookup
 
 /// Reads the IPv4 and IPv6 address bound to a named interface from the BSD
@@ -48,6 +63,46 @@ public enum InterfaceAddressLookup {
       }
     }
     return AddressPair(ipv4: ipv4, ipv6: ipv6)
+  }
+
+  /// Every IPv4 and IPv6 address on the named interface, in interface order, so a
+  /// multi-address interface reports them all rather than a single preferred one.
+  /// Link-local addresses are skipped by default, matching the global-address intent
+  /// of the egress interface rows.
+  public static func allAddresses(
+    forInterface name: String, includeLinkLocal: Bool = false
+  ) -> InterfaceAddressList {
+    guard !name.isEmpty else {
+      return .empty
+    }
+    var listPointer: UnsafeMutablePointer<ifaddrs>?
+    guard getifaddrs(&listPointer) == 0 else {
+      return .empty
+    }
+    defer { freeifaddrs(listPointer) }
+    var ipv4: [String] = []
+    var ipv6: [String] = []
+    var cursor = listPointer
+    while let entry = cursor {
+      cursor = entry.pointee.ifa_next
+      guard String(cString: entry.pointee.ifa_name) == name else {
+        continue
+      }
+      guard let address = entry.pointee.ifa_addr else {
+        continue
+      }
+      let family = address.pointee.sa_family
+      if family == UInt8(AF_INET) {
+        if let resolved = host(from: address, family: family, includeLinkLocal: includeLinkLocal) {
+          ipv4.append(resolved)
+        }
+      } else if family == UInt8(AF_INET6) {
+        if let resolved = host(from: address, family: family, includeLinkLocal: includeLinkLocal) {
+          ipv6.append(resolved)
+        }
+      }
+    }
+    return InterfaceAddressList(ipv4: ipv4, ipv6: ipv6)
   }
 
   /// Formats a socket address as a numeric host string. It strips the IPv6 scope

@@ -489,7 +489,7 @@ struct RelayScreenModel {
       )
     )
     var rows = [egress]
-    rows.append(contentsOf: addressRows(prefix: "Interface", egressInterfaceAddresses))
+    rows.append(contentsOf: interfaceAddressRows())
     rows.append(
       ConnectionRow(
         label: "Link IP",
@@ -531,14 +531,22 @@ struct RelayScreenModel {
     return ConnectionSection(title: "Relay", rows: rows)
   }
 
-  // The egress interface addresses and the resolved relay server addresses, the two
-  // pairs the controller carries as separate fields, wrapped so every pair renders
-  // through one builder.
-  private var egressInterfaceAddresses: AddressPair {
-    AddressPair(
-      ipv4: controller.cellularPath.ipv4Address,
-      ipv6: controller.cellularPath.ipv6Address
-    )
+  // The egress interface's full address list: one row per family with every
+  // non-link-local address on its own line, read live from the named interface so a
+  // multi-address interface shows them all rather than a single preferred address.
+  private func interfaceAddressRows() -> [ConnectionRow] {
+    let all = InterfaceAddressLookup.allAddresses(
+      forInterface: controller.cellularPath.interfaceName ?? "")
+    return [
+      ConnectionRow(label: "Interface IPv6", value: joinedOrPlaceholder(all.ipv6)),
+      ConnectionRow(label: "Interface IPv4", value: joinedOrPlaceholder(all.ipv4)),
+    ]
+  }
+
+  // Joins every address onto its own line, or the placeholder when the family has
+  // none, so a row renders one address per line.
+  private func joinedOrPlaceholder(_ values: [String]) -> String {
+    values.isEmpty ? emptyValuePlaceholder : values.joined(separator: "\n")
   }
 
   private var relayServerAddresses: AddressPair {
