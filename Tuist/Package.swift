@@ -10,7 +10,19 @@
 import PackageDescription
 
 #if TUIST
+  import Foundation
   import ProjectDescription
+
+  // Resolve the vendored libwg-go.a search path from this manifest's location so
+  // each checkout (the main repo or any worktree) links the bridge from its own
+  // .build/vendor, the same directory CellTunnelDev builds the bridge into. A
+  // hardcoded absolute path makes worktrees link the main repo's copy instead.
+  let wireGuardVendorSearchPath = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .deletingLastPathComponent()
+    .appendingPathComponent(".build", isDirectory: true)
+    .appendingPathComponent("vendor", isDirectory: true)
+    .path
 
   let packageSettings = PackageSettings(
     productTypes: [
@@ -18,10 +30,10 @@ import PackageDescription
     ],
     targetSettings: [
       "WireGuardKit": [
-        "LIBRARY_SEARCH_PATHS": ["/Users/agoodkind/Sites/iphone-cell-tunnel/.build/vendor"]
+        "LIBRARY_SEARCH_PATHS": [wireGuardVendorSearchPath]
       ],
       "WireGuardKitGo": [
-        "LIBRARY_SEARCH_PATHS": ["/Users/agoodkind/Sites/iphone-cell-tunnel/.build/vendor"]
+        "LIBRARY_SEARCH_PATHS": [wireGuardVendorSearchPath]
       ],
     ]
   )
