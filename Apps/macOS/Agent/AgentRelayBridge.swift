@@ -69,6 +69,7 @@ final class AgentRelayBridge: @unchecked Sendable {
   var egressInterfaceName: String?
   var reaperTimer: DispatchSourceTimer?
   var didLogHeartbeatEcho = false
+  var didLogPhoneReceiveError = false
 
   /// Fired when the first phone link goes live and when the last one drops, so
   /// the agent tells the Mac extension to install or withdraw routes with the
@@ -193,21 +194,21 @@ final class AgentRelayBridge: @unchecked Sendable {
         """
       )
       connection.cancel()
-      clearIfCurrent(connection, isLoopback: isLoopback)
+      clearIfCurrent(connection, isLoopback: isLoopback, reason: "state-failed")
     case .cancelled:
-      clearIfCurrent(connection, isLoopback: isLoopback)
+      clearIfCurrent(connection, isLoopback: isLoopback, reason: "state-cancelled")
     default:
       break
     }
   }
 
-  private func clearIfCurrent(_ connection: NWConnection, isLoopback: Bool) {
+  private func clearIfCurrent(_ connection: NWConnection, isLoopback: Bool, reason: String) {
     if isLoopback {
       if macConnection === connection {
         macConnection = nil
       }
     } else {
-      removePhoneLink(for: connection)
+      removePhoneLink(for: connection, reason: reason)
     }
   }
 
@@ -219,14 +220,30 @@ final class AgentRelayBridge: @unchecked Sendable {
         return
       }
       if let error {
-        logger.error(
-          """
-          agent relay bridge receive failed mac=\(fromMac, privacy: .public) \
-          error=\(error.localizedDescription, privacy: .public)
-          """
-        )
-        connection.cancel()
-        clearIfCurrent(connection, isLoopback: fromMac)
+        if fromMac {
+          logger.error(
+            """
+            agent relay bridge receive failed mac=true \
+            error=\(error.localizedDescription, privacy: .public)
+            """
+          )
+          connection.cancel()
+          clearIfCurrent(connection, isLoopback: true, reason: "receive-error")
+          return
+        }
+        // The peer-to-peer UDP flow to a phone link ends with NWError 96 (no
+        // message available on stream) about once per heartbeat even while the
+        // interface is healthy. Dropping the link on that benign flow boundary
+        // tore en0 down every ~2s and collapsed the carrying link to none. Keep
+        // the connection and re-arm the receive; the reaper removes a link that
+        // truly goes silent and a send error still drives fast failover.
+        if !didLogPhoneReceiveError {
+          didLogPhoneReceiveError = true
+          logger.notice(
+            "agent relay bridge phone receive error tolerated; re-arming, reaper owns liveness"
+          )
+        }
+        receive(on: connection, fromMac: false)
         return
       }
       if !fromMac {
@@ -272,7 +289,7 @@ final class AgentRelayBridge: @unchecked Sendable {
           return
         }
         target.cancel()
-        removePhoneLink(for: target)
+        removePhoneLink(for: target, reason: "send-error")
       }
     )
   }
@@ -336,7 +353,7 @@ final class AgentRelayBridge: @unchecked Sendable {
     for connection in staleConnections {
       logger.notice("agent relay bridge reaping silent phone link")
       connection.cancel()
-      removePhoneLink(for: connection)
+      removePhoneLink(for: connection, reason: "reaped")
     }
   }
 

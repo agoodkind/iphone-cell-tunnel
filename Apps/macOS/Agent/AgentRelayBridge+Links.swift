@@ -31,6 +31,12 @@ extension AgentRelayBridge {
     let resolved = phoneInterface(for: connection)
     let wasEmpty = phoneLinks.isEmpty
     if let existing = phoneLinks[resolved.name], existing.connection !== connection {
+      logger.notice(
+        """
+        agent relay bridge replacing link interface=\(resolved.name, privacy: .public) \
+        cancelling previous connection
+        """
+      )
       existing.connection.cancel()
     }
     phoneLinks[resolved.name] = AgentPhoneLink(
@@ -53,7 +59,7 @@ extension AgentRelayBridge {
 
   /// Removes the phone link a cancelled or failed connection belonged to. The
   /// last link dropping withdraws routes.
-  func removePhoneLink(for connection: NWConnection) {
+  func removePhoneLink(for connection: NWConnection, reason: String) {
     guard let name = interfaceName(of: connection) else {
       return
     }
@@ -61,7 +67,7 @@ extension AgentRelayBridge {
     logger.notice(
       """
       agent relay bridge dropped phone link interface=\(name, privacy: .public) \
-      links=\(self.phoneLinks.count, privacy: .public)
+      reason=\(reason, privacy: .public) links=\(self.phoneLinks.count, privacy: .public)
       """
     )
     recomputeEgress()
