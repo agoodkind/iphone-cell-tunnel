@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Network
 
 // MARK: - RelayLinkClass
 
@@ -55,6 +56,54 @@ public enum RelayLinkClass: String, Codable, Sendable, Equatable, CaseIterable {
     case .other:
       "Other"
     }
+  }
+
+  // MARK: - Interface mapping
+
+  /// The interface-name prefix Apple uses for the AWDL peer-to-peer interface.
+  private static let awdlInterfacePrefix = "awdl"
+
+  /// The link class for a network interface. The AWDL peer-to-peer interface can
+  /// surface as either `.other` or `.wifi` depending on the path it is seen on,
+  /// so the `awdl` name prefix decides before the interface type. Otherwise an
+  /// AWDL interface reported as `.wifi` would be classed Wi-Fi LAN, tie the real
+  /// Wi-Fi LAN link on score, and win the name tie-break, so AWDL would carry over
+  /// Wi-Fi LAN.
+  public static func forInterface(_ interface: NWInterface) -> RelayLinkClass {
+    classify(name: interface.name, type: interface.type)
+  }
+
+  /// The link class from an interface name and type. Pure and testable: the AWDL
+  /// name wins over the type, then the type maps to a class.
+  public static func classify(
+    name: String, type: NWInterface.InterfaceType
+  ) -> RelayLinkClass {
+    if name.hasPrefix(awdlInterfacePrefix) {
+      return .peerToPeer
+    }
+    switch type {
+    case .wiredEthernet:
+      return .wired
+    case .wifi:
+      return .wifiLan
+    case .cellular:
+      return .cellular
+    case .loopback:
+      return .loopback
+    case .other:
+      // USB CDC-NCM Ethernet surfaces as `.other`; a non-AWDL other interface is
+      // a fast wired link.
+      return .wired
+    @unknown default:
+      return .other
+    }
+  }
+
+  /// The link class from an interface name alone, for a link-local endpoint zone
+  /// when no interface object is available. The AWDL name is peer-to-peer; any
+  /// other zone is treated as a fast wired link.
+  public static func forInterfaceName(_ name: String) -> RelayLinkClass {
+    name.hasPrefix(awdlInterfacePrefix) ? .peerToPeer : .wired
   }
 }
 

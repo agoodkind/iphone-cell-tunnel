@@ -116,7 +116,7 @@ final class RelayPathProbe: @unchecked Sendable {
       for interface in result.interfaces where interface.type != .loopback {
         let candidate = RelayMacInterface(
           interfaceName: interface.name,
-          linkClass: Self.linkClass(for: interface),
+          linkClass: RelayLinkClass.forInterface(interface),
           endpoint: result.endpoint,
           interface: interface
         )
@@ -138,24 +138,5 @@ final class RelayPathProbe: @unchecked Sendable {
       "relay path probe interfaces changed names=\(names.sorted().joined(separator: ","), privacy: .public)"
     )
     onDiscover?(interfaces)
-  }
-
-  private static func linkClass(for interface: NWInterface) -> RelayLinkClass {
-    switch interface.type {
-    case .wiredEthernet:
-      return .wired
-    case .wifi:
-      return .wifiLan
-    case .cellular:
-      return .cellular
-    case .loopback:
-      return .loopback
-    case .other:
-      // USB CDC-NCM Ethernet surfaces as `.other`; only AWDL is the slow
-      // peer-to-peer path, so a non-AWDL other interface is a fast link.
-      return interface.name.hasPrefix("awdl") ? .peerToPeer : .wired
-    @unknown default:
-      return .other
-    }
   }
 }

@@ -125,39 +125,13 @@ extension AgentRelayBridge {
     if let interface = connection.currentPath?.availableInterfaces.first(where: { iface in
       iface.type != .loopback
     }) {
-      return (interface.name, Self.linkClass(for: interface))
+      return (interface.name, RelayLinkClass.forInterface(interface))
     }
     if let zone = Self.zoneName(from: connection.endpoint) {
-      return (zone, Self.linkClass(forName: zone))
+      return (zone, RelayLinkClass.forInterfaceName(zone))
     }
     let fallback = String(describing: connection.endpoint)
-    return (fallback, Self.linkClass(forName: fallback))
-  }
-
-  private static func linkClass(for interface: NWInterface) -> RelayLinkClass {
-    switch interface.type {
-    case .wiredEthernet:
-      return .wired
-    case .wifi:
-      return .wifiLan
-    case .cellular:
-      return .cellular
-    case .loopback:
-      return .loopback
-    case .other:
-      // USB CDC-NCM Ethernet surfaces as `.other`; only AWDL is the slow
-      // peer-to-peer path, so a non-AWDL other interface is a fast link.
-      return interface.name.hasPrefix("awdl") ? .peerToPeer : .wired
-    @unknown default:
-      return .other
-    }
-  }
-
-  private static func linkClass(forName name: String) -> RelayLinkClass {
-    if name.hasPrefix("awdl") {
-      return .peerToPeer
-    }
-    return .wired
+    return (fallback, RelayLinkClass.forInterfaceName(fallback))
   }
 
   private static func zoneName(from endpoint: NWEndpoint) -> String? {
