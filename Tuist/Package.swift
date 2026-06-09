@@ -30,10 +30,15 @@ import PackageDescription
     ],
     targetSettings: [
       "WireGuardKit": [
-        "LIBRARY_SEARCH_PATHS": [wireGuardVendorSearchPath]
+        "LIBRARY_SEARCH_PATHS": [wireGuardVendorSearchPath],
+        "MACOSX_DEPLOYMENT_TARGET": "26.0",
       ],
       "WireGuardKitGo": [
-        "LIBRARY_SEARCH_PATHS": [wireGuardVendorSearchPath]
+        "LIBRARY_SEARCH_PATHS": [wireGuardVendorSearchPath],
+        "MACOSX_DEPLOYMENT_TARGET": "26.0",
+      ],
+      "WireGuardKitC": [
+        "MACOSX_DEPLOYMENT_TARGET": "26.0"
       ],
     ]
   )

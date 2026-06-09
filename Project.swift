@@ -12,7 +12,7 @@ import ProjectDescription
 let projectName = "CellTunnel"
 let organizationName = "goodkind.io"
 let iOSDeploymentTarget = DeploymentTargets.iOS("26.0")
-let macOSDeploymentTarget = DeploymentTargets.macOS("15.0")
+let macOSDeploymentTarget = DeploymentTargets.macOS("26.0")
 
 // Build configurations are driven by xcconfig files. Config/Constants.xcconfig
 // holds bundle identifiers, mach service name, executable name, and app group.
@@ -26,7 +26,7 @@ let projectSettings = Settings.settings(
     "SWIFT_VERSION": "6.0",
     "ENABLE_USER_SCRIPT_SANDBOXING": "NO",
     "IPHONEOS_DEPLOYMENT_TARGET": "26.0",
-    "MACOSX_DEPLOYMENT_TARGET": "15.0",
+    "MACOSX_DEPLOYMENT_TARGET": "26.0",
     "SYMROOT": "$(SRCROOT)/Products",
     "OBJROOT": "$(SRCROOT)/build/Intermediates.noindex",
     "MARKETING_VERSION": "0.1.0",
