@@ -366,6 +366,8 @@ extension PhoneRelayForwarder {
   }
 
   func stopOnQueue() {
+    stopHeartbeat()
+    lastKnownInterfaces.removeAll()
     for link in macLinks.values {
       link.connection.cancel()
     }

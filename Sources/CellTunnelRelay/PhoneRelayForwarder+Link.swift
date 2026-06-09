@@ -10,10 +10,18 @@ import CellTunnelCore
 import CellTunnelLog
 import Foundation
 import Network
+import Synchronization
 
 // MARK: - Constants
 
 private let logger = CellTunnelLog.logger(category: .relay)
+/// Seconds between heartbeats sent on every ready link. Short enough that the
+/// agent keeps each link adopted and a dead link is noticed quickly, long enough
+/// to stay negligible against relay traffic.
+private let heartbeatIntervalSeconds = 2
+/// Consecutive heartbeat ticks with no inbound datagram before a link is treated
+/// as dead and re-dialed. At the 2s interval this is a ~6s liveness window.
+private let staleLinkTickLimit = 3
 
 // MARK: - Mac-facing links: dial, prime, carry
 
@@ -28,9 +36,13 @@ extension PhoneRelayForwarder {
   // MARK: - Reconcile (discovery only adds)
 
   func reconcileOnQueue(_ interfaces: [RelayMacInterface]) {
+    for interface in interfaces {
+      lastKnownInterfaces[interface.interfaceName] = interface
+    }
     for interface in interfaces where macLinks[interface.interfaceName] == nil {
       dialLink(interface)
     }
+    startHeartbeatIfNeeded()
     recomputeEgress()
   }
 
@@ -233,5 +245,82 @@ extension PhoneRelayForwarder {
       )
       recomputeEgress()
     }
+  }
+
+  // MARK: - Heartbeat and liveness
+
+  /// Starts the repeating heartbeat once the first link is dialed. The timer runs
+  /// on the relay queue, so its handler reads and writes link state without a hop.
+  func startHeartbeatIfNeeded() {
+    guard heartbeatTimer == nil else {
+      return
+    }
+    let timer = DispatchSource.makeTimerSource(queue: queue)
+    timer.schedule(
+      deadline: .now() + .seconds(heartbeatIntervalSeconds),
+      repeating: .seconds(heartbeatIntervalSeconds)
+    )
+    timer.setEventHandler { @Sendable [weak self] in
+      self?.onHeartbeatTick()
+    }
+    timer.resume()
+    heartbeatTimer = timer
+    logger.notice("phone relay heartbeat timer started")
+  }
+
+  /// Stops the heartbeat when the relay tears down.
+  func stopHeartbeat() {
+    heartbeatTimer?.cancel()
+    heartbeatTimer = nil
+    logger.notice("phone relay heartbeat timer stopped")
+  }
+
+  /// Sends a heartbeat on every ready link and re-dials any link that has gone
+  /// silent past the stale limit. The agent echoes each heartbeat, so a healthy
+  /// link keeps resetting its counter while a dead link's counter climbs.
+  private func onHeartbeatTick() {
+    var staleNames: [String] = []
+    for (name, link) in macLinks where link.isReady {
+      sendHeartbeat(on: link.connection)
+      let ticks = (macLinks[name]?.ticksSinceInbound ?? 0) + 1
+      macLinks[name]?.ticksSinceInbound = ticks
+      if ticks >= staleLinkTickLimit {
+        staleNames.append(name)
+      }
+    }
+    for name in staleNames {
+      redialStaleLink(name)
+    }
+  }
+
+  private func redialStaleLink(_ name: String) {
+    logger.notice(
+      "phone relay re-dialing stale link interface=\(name, privacy: .public)"
+    )
+    removeLink(interfaceName: name, reason: "stale")
+    if let interface = lastKnownInterfaces[name] {
+      dialLink(interface)
+    }
+  }
+
+  // Sends one empty datagram as a liveness heartbeat. The relay forwards only
+  // non-empty datagrams, so a heartbeat never reaches WireGuard; the agent echoes
+  // it so this side can tell the link is still alive.
+  private func sendHeartbeat(on connection: NWConnection) {
+    if didLogHeartbeat.compareExchange(
+      expected: false, desired: true, ordering: .relaxed
+    ).exchanged {
+      logger.notice("phone relay heartbeat send path active")
+    }
+    connection.send(
+      content: Data(),
+      completion: .contentProcessed { error in
+        if let error {
+          logger.error(
+            "phone relay heartbeat send failed error=\(error.localizedDescription, privacy: .public)"
+          )
+        }
+      }
+    )
   }
 }

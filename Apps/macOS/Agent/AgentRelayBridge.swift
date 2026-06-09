@@ -15,6 +15,13 @@ import Network
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 private let relayDataServiceType = "_cellrelay._udp"
+/// Seconds between reaper ticks that age each phone link toward removal.
+private let reaperIntervalSeconds = 2
+/// Consecutive reaper ticks with no inbound datagram before a phone link is
+/// reaped. Set above the iPhone's stale limit so the iPhone re-dials a dead link
+/// (replacing it here) before the reaper removes it, leaving the reaper to clear
+/// only links the iPhone abandoned. At the 2s interval this is a ~8s window.
+private let reaperTickLimit = 4
 
 // MARK: - AgentPhoneLink
 
@@ -26,6 +33,11 @@ struct AgentPhoneLink {
   let interfaceName: String
   let linkClass: RelayLinkClass
   let connection: NWConnection
+  /// Reaper ticks elapsed since the last datagram arrived on this link. Reset to
+  /// zero on every inbound datagram and incremented once per reaper tick; a link
+  /// past the reap limit is dropped because a UDP connection never reports that
+  /// the iPhone went away.
+  var ticksSinceActivity: Int = 0
 }
 
 // MARK: - AgentRelayBridge
@@ -55,6 +67,8 @@ final class AgentRelayBridge: @unchecked Sendable {
   var phoneLinks: [String: AgentPhoneLink] = [:]
   var egressConnection: NWConnection?
   var egressInterfaceName: String?
+  var reaperTimer: DispatchSourceTimer?
+  var didLogHeartbeatEcho = false
 
   /// Fired when the first phone link goes live and when the last one drops, so
   /// the agent tells the Mac extension to install or withdraw routes with the
@@ -114,6 +128,7 @@ final class AgentRelayBridge: @unchecked Sendable {
     }
     nwListener.start(queue: queue)
     listener = nwListener
+    startReaper()
     logger.notice(
       """
       agent relay bridge starting service=\(relayDataServiceType, privacy: .public) \
@@ -123,6 +138,7 @@ final class AgentRelayBridge: @unchecked Sendable {
   }
 
   private func stopOnQueue() {
+    stopReaper()
     macConnection?.cancel()
     macConnection = nil
     for link in phoneLinks.values {
@@ -218,9 +234,14 @@ final class AgentRelayBridge: @unchecked Sendable {
         // link; every later datagram, empty heartbeat or real data,
         // refreshes its liveness so a quiet but working link is not reaped.
         notePhoneActivity(on: connection)
+        noteLinkActivity(on: connection)
       }
       if let data, !data.isEmpty {
         forward(data, fromMac: fromMac)
+      } else if !fromMac {
+        // The iPhone's empty heartbeat: echo it so that side confirms this link
+        // is alive end to end and does not re-dial a working link.
+        sendHeartbeatEcho(on: connection)
       }
       receive(on: connection, fromMac: fromMac)
     }
@@ -254,6 +275,69 @@ final class AgentRelayBridge: @unchecked Sendable {
         removePhoneLink(for: target)
       }
     )
+  }
+
+  // MARK: - Heartbeat and reaper
+
+  // Echoes the iPhone's empty heartbeat back on the same link so that side can
+  // tell the link is alive end to end. A heartbeat is never forwarded to the Mac.
+  private func sendHeartbeatEcho(on connection: NWConnection) {
+    if !didLogHeartbeatEcho {
+      didLogHeartbeatEcho = true
+      logger.notice("agent relay bridge heartbeat echo path active")
+    }
+    connection.send(
+      content: Data(),
+      completion: .contentProcessed { error in
+        if let error {
+          logger.error(
+            "agent relay bridge heartbeat echo failed error=\(error.localizedDescription, privacy: .public)"
+          )
+        }
+      }
+    )
+  }
+
+  /// Starts the repeating reaper once the listener is up. It ages each phone link
+  /// and drops one the iPhone has stopped servicing, since a UDP connection never
+  /// reports that its peer went away. The timer runs on the relay queue.
+  private func startReaper() {
+    guard reaperTimer == nil else {
+      return
+    }
+    let timer = DispatchSource.makeTimerSource(queue: queue)
+    timer.schedule(
+      deadline: .now() + .seconds(reaperIntervalSeconds),
+      repeating: .seconds(reaperIntervalSeconds)
+    )
+    timer.setEventHandler { @Sendable [weak self] in
+      self?.onReaperTick()
+    }
+    timer.resume()
+    reaperTimer = timer
+    logger.notice("agent relay bridge reaper started")
+  }
+
+  private func stopReaper() {
+    reaperTimer?.cancel()
+    reaperTimer = nil
+    logger.notice("agent relay bridge reaper stopped")
+  }
+
+  private func onReaperTick() {
+    var staleConnections: [NWConnection] = []
+    for (name, link) in phoneLinks {
+      let ticks = link.ticksSinceActivity + 1
+      phoneLinks[name]?.ticksSinceActivity = ticks
+      if ticks >= reaperTickLimit {
+        staleConnections.append(link.connection)
+      }
+    }
+    for connection in staleConnections {
+      logger.notice("agent relay bridge reaping silent phone link")
+      connection.cancel()
+      removePhoneLink(for: connection)
+    }
   }
 
   // MARK: - Loopback classification

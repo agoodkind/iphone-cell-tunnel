@@ -80,6 +80,16 @@ extension AgentRelayBridge {
     addPhoneLink(for: connection)
   }
 
+  /// Resets the reaper counter for the link a datagram arrived on, so an active
+  /// link is never reaped. Called on every inbound phone datagram, after the link
+  /// has been admitted by `notePhoneActivity`.
+  func noteLinkActivity(on connection: NWConnection) {
+    guard let name = interfaceName(of: connection) else {
+      return
+    }
+    phoneLinks[name]?.ticksSinceActivity = 0
+  }
+
   private func interfaceName(of connection: NWConnection) -> String? {
     for (name, link) in phoneLinks where link.connection === connection {
       return name

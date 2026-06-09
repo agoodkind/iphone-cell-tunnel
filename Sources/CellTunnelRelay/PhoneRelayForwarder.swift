@@ -27,6 +27,11 @@ struct PhoneMacLink {
   let linkClass: RelayLinkClass
   let connection: NWConnection
   var isReady: Bool
+  /// Heartbeat ticks elapsed since the last datagram arrived on this link. Reset
+  /// to zero on every inbound datagram and incremented once per heartbeat tick;
+  /// a link that crosses the stale limit is re-dialed because a UDP connection
+  /// never reports that its peer went away.
+  var ticksSinceInbound: Int = 0
 }
 
 // MARK: - PhoneRelayForwarder
@@ -72,6 +77,12 @@ final class PhoneRelayForwarder: @unchecked Sendable {
   var preferredInterface: String?
   var hasLivePeer = false
 
+  // The most recent interface set the probe reported, kept so a stale link can be
+  // re-dialed without waiting for the probe to re-emit. The heartbeat timer sends
+  // an empty datagram on every ready link and re-dials any link gone silent.
+  var lastKnownInterfaces: [String: RelayMacInterface] = [:]
+  var heartbeatTimer: DispatchSourceTimer?
+
   var cellularConnection: NWConnection?
   var endpointFamily = RelayAddressFamily.ipv4
   var state = WireGuardDatagramRelayState.stopped
@@ -97,6 +108,7 @@ final class PhoneRelayForwarder: @unchecked Sendable {
   let didLogMacSend = Atomic<Bool>(false)
   let didLogCellularReceive = Atomic<Bool>(false)
   let didLogCellularSend = Atomic<Bool>(false)
+  let didLogHeartbeat = Atomic<Bool>(false)
 
   var onStateChange: (@Sendable (WireGuardDatagramRelayState) -> Void)?
   var onError: (@Sendable (String) -> Void)?
@@ -182,6 +194,9 @@ final class PhoneRelayForwarder: @unchecked Sendable {
         handleLinkReceiveError(error, connection: connection, interfaceName: interfaceName)
         return
       }
+      // Any datagram, empty heartbeat echo or real data, proves the link is alive,
+      // so reset its staleness counter.
+      macLinks[interfaceName]?.ticksSinceInbound = 0
       if let data, !data.isEmpty {
         metrics.addBytesIn(UInt64(data.count))
         metrics.addDatagramsFromMac()
