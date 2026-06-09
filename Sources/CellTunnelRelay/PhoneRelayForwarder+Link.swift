@@ -33,15 +33,17 @@ private let staleLinkTickLimit = 3
 /// open or close, never on a timer. Every method runs only on
 /// `PhoneRelayForwarder.queue`.
 extension PhoneRelayForwarder {
-  // MARK: - Reconcile (discovery only adds)
+  // MARK: - Reconcile (prune to the live set, then dial any missing)
 
+  /// Takes the probe's latest interface set as the source of truth. It replaces
+  /// `lastKnownInterfaces` with exactly that set, so an interface that left the
+  /// probe is pruned and never re-dialed, then dials any present interface that
+  /// has no link. The probe fires only on a set change, so the heartbeat carries
+  /// the same missing-link dial for a link that dies while its interface stays.
   func reconcileOnQueue(_ interfaces: [RelayMacInterface]) {
-    for interface in interfaces {
-      lastKnownInterfaces[interface.interfaceName] = interface
-    }
-    for interface in interfaces where macLinks[interface.interfaceName] == nil {
-      dialLink(interface)
-    }
+    let pairs = interfaces.map { interface in (interface.interfaceName, interface) }
+    lastKnownInterfaces = Dictionary(pairs) { _, latest in latest }
+    redialMissingLinks()
     startHeartbeatIfNeeded()
     recomputeEgress()
   }
@@ -291,6 +293,7 @@ extension PhoneRelayForwarder {
     for name in staleNames {
       redialStaleLink(name)
     }
+    redialMissingLinks()
   }
 
   private func redialStaleLink(_ name: String) {
@@ -300,6 +303,22 @@ extension PhoneRelayForwarder {
     removeLink(interfaceName: name, reason: "stale")
     if let interface = lastKnownInterfaces[name] {
       dialLink(interface)
+    }
+  }
+
+  /// Dials any currently-known interface that has no link, so a link removed by
+  /// error on a still-present interface is brought back within one heartbeat. The
+  /// known set is pruned to the live interfaces in `reconcileOnQueue`, so a
+  /// vanished interface is never in it and is never re-dialed. This is what keeps
+  /// the link set from decaying to zero while a usable interface is present.
+  private func redialMissingLinks() {
+    let missing = RelayLinkHealth.interfacesNeedingRedial(
+      known: Set(lastKnownInterfaces.keys), open: Set(macLinks.keys)
+    )
+    for name in missing {
+      if let interface = lastKnownInterfaces[name] {
+        dialLink(interface)
+      }
     }
   }
 

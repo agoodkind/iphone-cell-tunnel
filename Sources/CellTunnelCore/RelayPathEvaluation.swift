@@ -264,3 +264,23 @@ public enum RelayLinkPolicy {
     return ranked.first?.interfaceName
   }
 }
+
+// MARK: - RelayLinkHealth
+
+/// Decides which known interfaces need a fresh link. The relay keeps one link per
+/// reachable interface; a link removed by error on a still-present interface must
+/// be re-dialed, while an interface that has genuinely gone away must not be. This
+/// pure set difference is the seam: the caller passes the currently-known interface
+/// names and the names that already have an open link, and gets back the names that
+/// are known but unlinked. Pruning the known set to the live interfaces is the
+/// caller's job, so a vanished interface never reaches this function and is never
+/// re-dialed.
+public enum RelayLinkHealth {
+  /// The known interface names with no open link, sorted for a stable dial order.
+  /// Pure: the same inputs always produce the same result.
+  public static func interfacesNeedingRedial(
+    known: Set<String>, open: Set<String>
+  ) -> [String] {
+    known.subtracting(open).sorted()
+  }
+}
