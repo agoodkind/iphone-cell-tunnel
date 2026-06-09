@@ -64,6 +64,10 @@ func buildProject(target: BuildTarget, configuration: String) throws {
 private func runBuildPrologue() throws {
   try generateProject()
   try auditLogging()
+  // Build the WireGuard Go bridge before any xcodebuild target. Every build
+  // target routes through this prologue, so no target path can skip it, and the
+  // library exists before WireGuardKit's WireGuardKitGo target links it.
+  try buildWireGuardGoBridge()
 }
 
 private func buildCLI() throws {
@@ -76,7 +80,6 @@ private func buildMacAgent(configuration: String) throws {
   buildDispatchLogger.notice(
     "building CellTunnelAgent scheme configuration=\(configuration, privacy: .public)"
   )
-  try buildWireGuardGoBridge()
   try buildScheme(
     scheme: "CellTunnelAgent",
     configuration: configuration,
@@ -90,7 +93,6 @@ private func buildMacTunnelProvider(configuration: String) throws {
   buildDispatchLogger.notice(
     "building CellTunnelTunnelProvider scheme configuration=\(configuration, privacy: .public)"
   )
-  try buildWireGuardGoBridge()
   try buildScheme(
     scheme: "CellTunnelTunnelProvider",
     configuration: configuration,
