@@ -296,6 +296,36 @@
       await start()
     }
 
+    // MARK: - Config library
+
+    func listConfigs() -> [StoredTunnelConfig] {
+      []
+    }
+
+    var activeConfigID: String? {
+      nil
+    }
+
+    func importConfig(url _: URL, name _: String) async {
+      await Task.yield()
+    }
+
+    func activateConfig(id _: String) async {
+      await Task.yield()
+    }
+
+    func saveConfigEdit(id _: String, text _: String) async {
+      await Task.yield()
+    }
+
+    func renameConfig(id _: String, name _: String) async {
+      await Task.yield()
+    }
+
+    func deleteConfig(id _: String) async {
+      await Task.yield()
+    }
+
     private func sendStatusRequest(
       on session: NETunnelProviderSession
     ) async throws -> ProviderControlResponse {
