@@ -60,6 +60,11 @@ public final class EgressPathMonitor: @unchecked Sendable {
   private let monitorQueue = DispatchQueue(label: "io.goodkind.celltunnel.egressMonitor")
   private let monitor: NWPathMonitor
   private let requiredInterfaceType: NWInterface.InterfaceType?
+  // The last reading emitted, read and written only on monitorQueue where the
+  // path handler runs serially. NWPathMonitor delivers duplicate updates for the
+  // same path, so emitting only on a real change coalesces the public-address
+  // reprobe to actual interface or address changes.
+  private var lastReading: EgressPath?
 
   /// Fired with each new reading on the monitor queue. Set before `start()`.
   public var onChange: (@Sendable (EgressPath) -> Void)?
@@ -84,6 +89,10 @@ public final class EgressPathMonitor: @unchecked Sendable {
         return
       }
       let reading = Self.reading(from: path, requiredInterfaceType: requiredInterfaceType)
+      guard reading != lastReading else {
+        return
+      }
+      lastReading = reading
       logger.info(
         """
         egress path updated satisfied=\(reading.isSatisfied, privacy: .public) \

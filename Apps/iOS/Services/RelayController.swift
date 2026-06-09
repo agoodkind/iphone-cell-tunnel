@@ -191,6 +191,10 @@ final class RelayController {
   var localLinkAddresses = AddressPair.empty
   var peerLinkAddresses = AddressPair.empty
   var devicePublicAddresses = AddressPair.empty
+  /// Every address on the egress interface, recomputed off the render path once per
+  /// poll so the `Interface` rows read a cached value rather than calling
+  /// `getifaddrs` on every SwiftUI body evaluation.
+  var interfaceAddresses = InterfaceAddressList.empty
   var peerPublicAddresses = AddressPair.empty
   var relayHost: String?
   var relayServerIPv4Address: String?
@@ -249,15 +253,18 @@ final class RelayController {
   // `Interface` rows follow from the chosen `cellularPath`.
   private func recomputeDeviceValues() {
     if isRunning, backendCellularPath.interfaceName != nil {
-      cellularPath = backendCellularPath
+      assign(\.cellularPath, backendCellularPath)
     } else {
-      cellularPath = probeCellularPath
+      assign(\.cellularPath, probeCellularPath)
     }
     if isRunning, !backendDevicePublicAddresses.isEmpty {
-      devicePublicAddresses = backendDevicePublicAddresses
+      assign(\.devicePublicAddresses, backendDevicePublicAddresses)
     } else {
-      devicePublicAddresses = probeDevicePublicAddresses
+      assign(\.devicePublicAddresses, probeDevicePublicAddresses)
     }
+    let all = InterfaceAddressLookup.allAddresses(
+      forInterface: cellularPath.interfaceName ?? "")
+    assign(\.interfaceAddresses, all)
   }
 
   /// Suspends the status poll without touching the session, for backgrounding.
@@ -304,41 +311,51 @@ final class RelayController {
   }
 
   private func apply(_ sample: RelayStatusSample) {
-    isRunning = sample.isRunning
-    connectedPeerName = sample.connectedPeerName
-    backendCellularPath = sample.cellularPath
-    counters = sample.counters
+    assign(\.isRunning, sample.isRunning)
+    assign(\.connectedPeerName, sample.connectedPeerName)
+    assign(\.backendCellularPath, sample.cellularPath)
+    assign(\.counters, sample.counters)
     let lifetime = lifetimeStore.totals(
       sessionTransferred: sample.counters.relayBytesIn,
       sessionReceived: sample.counters.relayBytesOut
     )
-    lifetimeTransferredBytes = lifetime.transferred
-    lifetimeReceivedBytes = lifetime.received
-    lifetimeTotalBytes = lifetime.total
-    lastError = sample.lastError
-    relayStateDescription = sample.relayStateDescription
-    routeState = sample.routeState
+    assign(\.lifetimeTransferredBytes, lifetime.transferred)
+    assign(\.lifetimeReceivedBytes, lifetime.received)
+    assign(\.lifetimeTotalBytes, lifetime.total)
+    assign(\.lastError, sample.lastError)
+    assign(\.relayStateDescription, sample.relayStateDescription)
+    assign(\.routeState, sample.routeState)
     reconcileRouteIntent()
-    peerState = sample.peerState
-    isTunnelInstalled = sample.isTunnelInstalled
-    discoveredPeers = sample.discoveredPeers
-    selectedPeerID = sample.selectedPeerID
-    discoveryPhase = sample.discoveryPhase
-    relayProtocol = sample.relayProtocol
-    localLinkInterfaceName = sample.localLinkInterfaceName
-    localLinkClass = sample.localLinkClass
-    localLinkAddresses = sample.localLinkAddresses
-    peerLinkAddresses = sample.peerLinkAddresses
-    backendDevicePublicAddresses = sample.devicePublicAddresses
-    peerPublicAddresses = sample.peerPublicAddresses
-    relayHost = sample.relayHost
-    relayServerIPv4Address = sample.relayServerIPv4Address
-    relayServerIPv6Address = sample.relayServerIPv6Address
+    assign(\.peerState, sample.peerState)
+    assign(\.isTunnelInstalled, sample.isTunnelInstalled)
+    assign(\.discoveredPeers, sample.discoveredPeers)
+    assign(\.selectedPeerID, sample.selectedPeerID)
+    assign(\.discoveryPhase, sample.discoveryPhase)
+    assign(\.relayProtocol, sample.relayProtocol)
+    assign(\.localLinkInterfaceName, sample.localLinkInterfaceName)
+    assign(\.localLinkClass, sample.localLinkClass)
+    assign(\.localLinkAddresses, sample.localLinkAddresses)
+    assign(\.peerLinkAddresses, sample.peerLinkAddresses)
+    assign(\.backendDevicePublicAddresses, sample.devicePublicAddresses)
+    assign(\.peerPublicAddresses, sample.peerPublicAddresses)
+    assign(\.relayHost, sample.relayHost)
+    assign(\.relayServerIPv4Address, sample.relayServerIPv4Address)
+    assign(\.relayServerIPv6Address, sample.relayServerIPv6Address)
     recomputeDeviceValues()
     let rate = throughput.update(with: sample.counters)
-    uploadMbps = rate.upload
-    downloadMbps = rate.download
+    assign(\.uploadMbps, rate.upload)
+    assign(\.downloadMbps, rate.download)
     logger.debug("relay controller sample applied running=\(self.isRunning, privacy: .public)")
+  }
+
+  // Assigns only when the value changes, so each @Observable property notifies the
+  // views on a real change rather than on every one-second status poll.
+  private func assign<Value: Equatable>(
+    _ keyPath: ReferenceWritableKeyPath<RelayController, Value>, _ newValue: Value
+  ) {
+    if self[keyPath: keyPath] != newValue {
+      self[keyPath: keyPath] = newValue
+    }
   }
 
   // Refreshes the agent install state each poll, so the install-agent setup tier

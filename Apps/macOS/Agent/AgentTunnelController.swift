@@ -53,6 +53,13 @@ actor AgentTunnelController {
   /// Re-probes the public address on a slow backstop while the listener is up, so a
   /// missed path event cannot leave the served address stale.
   var publicRefreshTimer: DispatchSourceTimer?
+  /// One-shot timer that delays a route withdrawal after the phone link drops, so a
+  /// brief data-link blip does not flip the UI to passthrough. Cancelled when the
+  /// link returns within the grace window.
+  var routeWithdrawTimer: DispatchSourceTimer?
+  /// Bumped on every phone-link transition so a pending debounced withdrawal that
+  /// is no longer current is ignored when its timer fires.
+  var routeWithdrawGeneration = 0
 
   init(relayBridge: AgentRelayBridge, relayBrowser: RelayDeviceBrowser) {
     self.relayBridge = relayBridge
@@ -512,31 +519,4 @@ extension AgentTunnelController {
   }
 }
 
-// MARK: - AgentTunnelControllerError
-
-enum AgentTunnelControllerError: LocalizedError {
-  case missingServerEndpoint
-  case sessionUnavailable
-
-  var errorCode: TunnelControlErrorCode {
-    switch self {
-    case .missingServerEndpoint:
-      return .missingWireGuardConfigPath
-    case .sessionUnavailable:
-      return .runtimeStartFailure
-    }
-  }
-
-  var message: String {
-    switch self {
-    case .missingServerEndpoint:
-      return "wireguard config has no parseable peer Endpoint"
-    case .sessionUnavailable:
-      return "tunnel provider session is unavailable"
-    }
-  }
-
-  var errorDescription: String? {
-    message
-  }
-}
+// The AgentTunnelControllerError type lives in AgentTunnelControllerError.swift.

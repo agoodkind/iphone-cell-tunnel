@@ -13,6 +13,10 @@ import WireGuardKit
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 private let publicAddressRefreshIntervalSeconds = 60
+/// Seconds to hold the program routes after the phone link drops before treating
+/// the drop as real and withdrawing them, so a brief AWDL blip does not flip the
+/// UI to passthrough. A drop that outlasts this withdraws as before.
+private let routeWithdrawGraceSeconds = 3
 
 // MARK: - Control link hosting
 
@@ -47,9 +51,14 @@ extension AgentTunnelController {
       exchange.received(addresses)
     }
     // The iPhone carries its device name in each status push; store it so the
-    // snapshot reports it as `connectedPeerName`.
+    // snapshot reports it as `connectedPeerName`. The name follows the control
+    // link: it is set from the push and cleared only when the control link drops,
+    // so a brief data-link blip does not clear it.
     await listener.setPeerDeviceNameHandler { [weak self] name in
       self?.peerName.withLock { $0 = name }
+    }
+    await listener.setConnectionDroppedHandler { [weak self] in
+      self?.peerName.withLock { $0 = nil }
     }
 
     controlListener = listener
@@ -97,6 +106,9 @@ extension AgentTunnelController {
     egressMonitor = nil
     publicRefreshTimer?.cancel()
     publicRefreshTimer = nil
+    routeWithdrawTimer?.cancel()
+    routeWithdrawTimer = nil
+    routeWithdrawGeneration += 1
     linkInfo.withLock { $0 = AgentLinkInfo() }
     peerName.withLock { $0 = nil }
     egressPath.withLock { $0 = EgressPath() }
@@ -199,16 +211,42 @@ extension AgentTunnelController {
   /// routing resumes by itself when the link returns while routing stays on.
   func handlePhoneLink(up: Bool) async {
     phoneLinkUp = up
+    logger.notice("agent phone link changed up=\(up, privacy: .public)")
+    // Every transition invalidates a pending debounced withdrawal and cancels its
+    // timer, so a link that returns within the grace window keeps its routes.
+    routeWithdrawGeneration += 1
+    routeWithdrawTimer?.cancel()
+    routeWithdrawTimer = nil
     if up {
       if routingEnabled {
         await signalRouteState(true)
       }
     } else {
-      // The phone link is gone, so the connected peer name no longer holds; clear
-      // it so the snapshot stops reporting a peer that is not connected.
-      peerName.withLock { $0 = nil }
-      await signalRouteState(false)
+      // Debounce the withdrawal so a sub-grace AWDL blip does not flip the UI to
+      // passthrough. The peer name is not cleared here; it follows the control
+      // link and clears only when that link drops.
+      scheduleRouteWithdraw(generation: routeWithdrawGeneration)
     }
+  }
+
+  // Schedules a one-shot timer that withdraws routes only if the link is still
+  // down and no newer transition has happened when it fires.
+  private func scheduleRouteWithdraw(generation: Int) {
+    let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+    timer.schedule(deadline: .now() + .seconds(routeWithdrawGraceSeconds))
+    timer.setEventHandler { @Sendable [weak self] in
+      Task { await self?.applyDebouncedWithdraw(generation: generation) }
+    }
+    timer.resume()
+    routeWithdrawTimer = timer
+  }
+
+  private func applyDebouncedWithdraw(generation: Int) async {
+    guard generation == routeWithdrawGeneration, !phoneLinkUp else {
+      return
+    }
+    routeWithdrawTimer = nil
+    await signalRouteState(false)
   }
 
   // MARK: - Config reading

@@ -532,11 +532,11 @@ struct RelayScreenModel {
   }
 
   // The egress interface's full address list: one row per family with every
-  // non-link-local address on its own line, read live from the named interface so a
-  // multi-address interface shows them all rather than a single preferred address.
+  // non-link-local address on its own line. The controller recomputes this once
+  // per poll off the render path, so the rows read the cached value rather than
+  // calling getifaddrs on every SwiftUI body evaluation.
   private func interfaceAddressRows() -> [ConnectionRow] {
-    let all = InterfaceAddressLookup.allAddresses(
-      forInterface: controller.cellularPath.interfaceName ?? "")
+    let all = controller.interfaceAddresses
     return [
       ConnectionRow(label: "Interface IPv6", value: joinedOrPlaceholder(all.ipv6)),
       ConnectionRow(label: "Interface IPv4", value: joinedOrPlaceholder(all.ipv4)),

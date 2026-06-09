@@ -82,6 +82,10 @@ actor AgentControlListener {
   /// Invoked with the iPhone's device name carried in its status push, so the
   /// controller reports it as the connected peer name.
   private var onPeerDeviceName: (@Sendable (String) -> Void)?
+  /// Invoked when the primary control connection ends, so the controller clears
+  /// the connected peer name. The peer name follows the control link, not the
+  /// data link, so a brief data-link blip does not clear it.
+  private var onConnectionDropped: (@Sendable () -> Void)?
   /// This host's latest measured public address, set by the controller as it
   /// probes. It is sent on each accepted control connection once that connection's
   /// handshake completes, so a freshly connected peer receives it at once.
@@ -169,8 +173,14 @@ actor AgentControlListener {
       """
     )
     let previous = connection
-    newConnection.stateUpdateHandler = { state in
+    newConnection.stateUpdateHandler = { [weak self] state in
       applyAcceptedConnectionState(state)
+      switch state {
+      case .cancelled, .failed:
+        Task { await self?.noteConnectionEnded(newConnection) }
+      default:
+        break
+      }
     }
     newConnection.start(queue: connectionQueue)
     do {
@@ -388,6 +398,23 @@ extension AgentControlListener {
   /// Registers the peer-device-name handler before the listener starts.
   func setPeerDeviceNameHandler(_ handler: @escaping @Sendable (String) -> Void) {
     onPeerDeviceName = handler
+  }
+
+  /// Registers the control-connection-dropped handler before the listener starts.
+  func setConnectionDroppedHandler(_ handler: @escaping @Sendable () -> Void) {
+    onConnectionDropped = handler
+  }
+
+  /// Fires the dropped handler when the primary control connection ends, so the
+  /// controller clears the peer name. A losing transient connection from a
+  /// multi-interface dial is not the primary, so its end is ignored.
+  func noteConnectionEnded(_ ended: NWConnection) {
+    guard connection === ended else {
+      return
+    }
+    connection = nil
+    onConnectionDropped?()
+    logger.notice("agent control primary connection ended; peer name cleared")
   }
 
   /// Surfaces the fields a received status carries to the controller: the iPhone's
