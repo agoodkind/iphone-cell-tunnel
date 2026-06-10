@@ -386,6 +386,10 @@ extension PhoneControlClient {
         message=\(payload.message, privacy: .public)
         """
       )
+    case .linkInventory(let payload):
+      logger.debug(
+        "control received link-inventory count=\(payload.links.count, privacy: .public)"
+      )
     case .setRoutingEnabled:
       logger.debug("control received unexpected set-routing-enabled from peer")
     case .routeState(let payload):

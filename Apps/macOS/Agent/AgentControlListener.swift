@@ -455,6 +455,13 @@ extension AgentControlListener {
         message=\(failure.message, privacy: .public)
         """
       )
+    case .linkInventory(let payload):
+      logger.debug(
+        """
+        agent control received unexpected link-inventory \
+        count=\(payload.links.count, privacy: .public)
+        """
+      )
     case .acknowledge(let payload):
       logger.debug(
         "agent control late ack requestKind=\(payload.requestKind, privacy: .public)"

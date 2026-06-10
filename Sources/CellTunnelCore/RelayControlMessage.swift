@@ -15,6 +15,8 @@ public let relayControlWireVersion: Int = 1
 public enum RelayControlMessage: Codable, Sendable, Equatable {
   case acknowledge(Acknowledge)
   case error(Failure)
+  /// Carries the agent's relay-link candidates to the iPhone.
+  case linkInventory(LinkInventory)
   case publicAddress(PublicAddress)
   case routeState(RouteState)
   case setRoutingEnabled(SetRoutingEnabled)
@@ -84,6 +86,11 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
     /// by the host. The agent reports it as the connected peer name, so the Mac
     /// shows which iPhone is connected.
     public var deviceName: String?
+    /// The sending side's relay-link candidates, so the agent shows the
+    /// iPhone's `Available Interfaces` row. Optional so an old peer's payload
+    /// still decodes; a non-nil value also signals the sender understands the
+    /// link-inventory message.
+    public var availableLinks: [RelayLinkSummary]?
 
     public init(
       hasCellularPath: Bool,
@@ -91,6 +98,7 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
       lastError: String? = nil,
       counters: TunnelCounters? = nil,
       deviceName: String? = nil,
+      availableLinks: [RelayLinkSummary]? = nil,
       version: Int = relayControlWireVersion
     ) {
       self.hasCellularPath = hasCellularPath
@@ -98,6 +106,7 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
       self.lastError = lastError
       self.counters = counters
       self.deviceName = deviceName
+      self.availableLinks = availableLinks
       self.version = version
     }
   }
@@ -128,40 +137,65 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
     }
   }
 
+  /// Carries the agent's relay-link candidates, the open phone links keyed
+  /// by interface, to the iPhone over the control link, so the iPhone shows
+  /// the Mac's `Available Interfaces` row. Sent only to a peer whose status
+  /// push carried `availableLinks`, the capability signal, so an old iPhone
+  /// never receives a message it cannot decode.
+  public struct LinkInventory: Codable, Sendable, Equatable {
+    /// The agent's relay-link candidates in the order the iPhone should show.
+    public var links: [RelayLinkSummary]
+    /// The relay control wire version for this payload.
+    public var version: Int
+
+    /// Creates one link-inventory payload.
+    public init(
+      links: [RelayLinkSummary],
+      version: Int = relayControlWireVersion
+    ) {
+      self.links = links
+      self.version = version
+    }
+  }
+
   public var kindLabel: String {
     switch self {
-    case .setServerEndpoint:
-      return "set-server-endpoint"
-    case .setRoutingEnabled:
-      return "set-routing-enabled"
     case .acknowledge:
       return "acknowledge"
-    case .status:
-      return "status"
     case .error:
       return "error"
-    case .routeState:
-      return "route-state"
+    case .linkInventory:
+      return "link-inventory"
     case .publicAddress:
       return "public-address"
+    case .routeState:
+      return "route-state"
+    case .setRoutingEnabled:
+      return "set-routing-enabled"
+    case .setServerEndpoint:
+      return "set-server-endpoint"
+    case .status:
+      return "status"
     }
   }
 
   public var declaredVersion: Int {
     switch self {
-    case .setServerEndpoint(let payload):
-      return payload.version
-    case .setRoutingEnabled(let payload):
-      return payload.version
     case .acknowledge(let payload):
-      return payload.version
-    case .status(let payload):
       return payload.version
     case .error(let payload):
       return payload.version
-    case .routeState(let payload):
+    case .linkInventory(let payload):
       return payload.version
     case .publicAddress(let payload):
+      return payload.version
+    case .routeState(let payload):
+      return payload.version
+    case .setRoutingEnabled(let payload):
+      return payload.version
+    case .setServerEndpoint(let payload):
+      return payload.version
+    case .status(let payload):
       return payload.version
     }
   }

@@ -333,6 +333,14 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
   /// The peer's address on the carrying link, the connection's remote endpoint,
   /// shown under `Connection / Peer link`, or `nil` when no link is up.
   public var peerLinkAddresses: AddressPair?
+  /// The relay-link candidates on this side, the interfaces over which this
+  /// host can reach or is reached by the peer, shown on the local `Available
+  /// Interfaces` row, or `nil` when the producer has not reported them.
+  public var localAvailableLinks: [RelayLinkSummary]?
+  /// The relay-link candidates the peer reports about itself over the control
+  /// link, shown on the peer `Available Interfaces` row, or `nil` before the
+  /// peer reports them.
+  public var peerAvailableLinks: [RelayLinkSummary]?
   /// The configured WireGuard endpoint hostname, shown as the relay host, or
   /// `nil` when not yet surfaced.
   public var relayHost: String?
@@ -367,6 +375,8 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     peerPublicAddresses: AddressPair? = nil,
     localLinkAddresses: AddressPair? = nil,
     peerLinkAddresses: AddressPair? = nil,
+    localAvailableLinks: [RelayLinkSummary]? = nil,
+    peerAvailableLinks: [RelayLinkSummary]? = nil,
     relayHost: String? = nil,
     relayServerIPv4Address: String? = nil,
     relayServerIPv6Address: String? = nil,
@@ -391,6 +401,8 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     self.peerPublicAddresses = peerPublicAddresses
     self.localLinkAddresses = localLinkAddresses
     self.peerLinkAddresses = peerLinkAddresses
+    self.localAvailableLinks = localAvailableLinks
+    self.peerAvailableLinks = peerAvailableLinks
     self.relayHost = relayHost
     self.relayServerIPv4Address = relayServerIPv4Address
     self.relayServerIPv6Address = relayServerIPv6Address
