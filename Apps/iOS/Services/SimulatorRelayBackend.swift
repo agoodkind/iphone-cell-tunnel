@@ -39,6 +39,12 @@
       runtime.start()
     }
 
+    /// The simulator hosts the relay in process, so launch gating always proceeds.
+    func tunnelProvisioned() async -> Bool {
+      await Task.yield()
+      return true
+    }
+
     // MARK: - Sampling
 
     func sample() async -> RelayStatusSample? {

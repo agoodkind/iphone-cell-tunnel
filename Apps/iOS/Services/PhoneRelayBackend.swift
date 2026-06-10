@@ -35,6 +35,7 @@
   final class PhoneRelayBackend: RelayControlBackend {
     private var manager: NETunnelProviderManager?
     private var lastSample: RelayStatusSample?
+    private var configurationChangeObserver: NSObjectProtocol?
 
     // In the simulator the Network Extension has no launchable nehelper to start
     // the packet tunnel, so the backend delegates to SimulatorRelayBackend, which
@@ -92,7 +93,7 @@
         return await simulatorProbe.sample()
       }
       guard let session else {
-        return nil
+        return lastSample
       }
       do {
         let response = try await sendStatusRequest(on: session)
@@ -359,6 +360,65 @@
         }
         box.scheduleTimeout(providerMessageTimeoutSeconds)
       }
+    }
+  }
+
+  // MARK: - Provisioning
+
+  extension PhoneRelayBackend {
+    /// Reads saved NetworkExtension preferences without saving a tunnel manager.
+    func tunnelProvisioned() async -> Bool {
+      if isSimulator {
+        return true
+      }
+      registerConfigurationChangeObserver()
+      logger.notice("phone relay backend reading saved tunnel state")
+      do {
+        let managers = try await NETunnelProviderManager.loadAllFromPreferences()
+        let existing = managers.first { candidate in
+          let tunnelProtocol = candidate.protocolConfiguration as? NETunnelProviderProtocol
+          return tunnelProtocol?.providerBundleIdentifier == providerBundleIdentifier
+        }
+        manager = existing
+        guard existing != nil else {
+          lastSample = emptySample()
+          logger.notice("phone relay backend saved tunnel absent")
+          return false
+        }
+        let provisioned = manager?.protocolConfiguration != nil
+        logger.notice(
+          "phone relay backend saved tunnel provisioned=\(provisioned, privacy: .public)"
+        )
+        return provisioned
+      } catch {
+        logger.error(
+          """
+          phone relay backend saved tunnel read failed \
+          details=\(String(describing: error), privacy: .public) \
+          recovery=use-current-manager-state
+          """
+        )
+        return hasInstalledTunnel
+      }
+    }
+
+    private func registerConfigurationChangeObserver() {
+      guard configurationChangeObserver == nil else {
+        return
+      }
+      configurationChangeObserver = NotificationCenter.default.addObserver(
+        forName: .NEVPNConfigurationChange,
+        object: nil,
+        queue: nil
+      ) { @Sendable [weak self] _ in
+        Task { @MainActor [weak self] in
+          guard let self else {
+            return
+          }
+          _ = await tunnelProvisioned()
+        }
+      }
+      logger.notice("phone relay backend registered vpn configuration change observer")
     }
   }
 

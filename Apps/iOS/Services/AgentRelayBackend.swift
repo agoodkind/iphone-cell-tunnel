@@ -50,6 +50,12 @@
       }
     }
 
+    /// The Mac setup gating comes from the agent's status snapshot, so launch proceeds.
+    func tunnelProvisioned() async -> Bool {
+      await Task.yield()
+      return true
+    }
+
     // Sends the routing choice to the agent, which installs or withdraws the
     // program routes.
     func setRouting(enabled: Bool) async {

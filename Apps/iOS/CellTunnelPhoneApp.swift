@@ -61,7 +61,7 @@ struct CellTunnelPhoneApp: App {
       PhoneContentView()
         .environment(relayController)
         .task {
-          await relayController.start()
+          await relayController.prepare()
         }
         .onChange(of: scenePhase) { _, phase in
           handleScenePhase(phase)
@@ -85,6 +85,7 @@ struct CellTunnelPhoneApp: App {
     case .active:
       logger.notice("phone app scene phase active; resuming status poll")
       relayController.resumePolling()
+      Task { await relayController.refreshProvisioned() }
     case .background:
       logger.notice("phone app scene phase background; suspending status poll")
       relayController.suspendPolling()

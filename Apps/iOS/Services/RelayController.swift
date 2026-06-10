@@ -108,6 +108,12 @@ protocol RelayControlBackend {
   /// tunnel. The Mac leaves the agent's tunnel untouched.
   func start() async
 
+  /// Reads the saved tunnel state fresh from the platform without saving anything;
+  /// true when a usable tunnel configuration exists. The iPhone reads
+  /// NetworkExtension preferences; the Mac, the simulator, and previews answer true
+  /// because their setup gating comes from status samples.
+  func tunnelProvisioned() async -> Bool
+
   /// One status reading, or `nil` when the source is briefly unavailable.
   func sample() async -> RelayStatusSample?
 
@@ -240,6 +246,32 @@ final class RelayController {
     startDeviceProbe()
     await backend.start()
     startPolling()
+  }
+
+  /// Starts the relay only when a saved tunnel configuration is already approved.
+  func prepare() async {
+    logger.notice("relay controller prepare requested")
+    let provisioned = await backend.tunnelProvisioned()
+    if provisioned {
+      await start()
+    } else {
+      isTunnelInstalled = false
+      logger.notice("relay controller prepare found no saved tunnel")
+    }
+  }
+
+  /// Refreshes saved tunnel presence and starts the relay when provisioned and idle.
+  func refreshProvisioned() async {
+    logger.notice("relay controller provisioned refresh requested")
+    let provisioned = await backend.tunnelProvisioned()
+    if !provisioned {
+      isTunnelInstalled = false
+      logger.notice("relay controller provisioned refresh found no saved tunnel")
+      return
+    }
+    if pollTask == nil {
+      await start()
+    }
   }
 
   // Wires the app's egress probe to the device-value recompute and starts it for
