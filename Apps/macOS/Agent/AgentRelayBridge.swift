@@ -83,6 +83,9 @@ final class AgentRelayBridge: @unchecked Sendable {
   /// pairs come from the same connection's path endpoints.
   var onEgressInterfaceChange:
     (@Sendable (String?, RelayLinkClass?, AddressPair, AddressPair) -> Void)?
+  /// Fired with the full adopted-link set whenever it changes, so the status
+  /// snapshot lists every warm link, not only the carrying one.
+  var onLinkSetChange: (@Sendable ([AgentLinkStatus]) -> Void)?
 
   // MARK: - Lifecycle
 

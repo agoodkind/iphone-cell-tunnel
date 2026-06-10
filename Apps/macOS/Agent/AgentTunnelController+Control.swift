@@ -82,6 +82,9 @@ extension AgentTunnelController {
         )
       }
     }
+    relayBridge.onLinkSetChange = { [weak self] links in
+      self?.agentLinks.withLock { $0 = links }
+    }
     relayBridge.onPhoneConnected = { [weak self] in
       Task { await self?.handlePhoneLink(up: true) }
     }
@@ -110,9 +113,11 @@ extension AgentTunnelController {
     routeWithdrawTimer = nil
     routeWithdrawGeneration += 1
     linkInfo.withLock { $0 = AgentLinkInfo() }
+    agentLinks.withLock { $0 = [] }
     peerName.withLock { $0 = nil }
     egressPath.withLock { $0 = EgressPath() }
     relayBridge.onEgressInterfaceChange = nil
+    relayBridge.onLinkSetChange = nil
     relayBridge.stop()
     onRelayActiveChange?(false)
     logger.notice("agent control link cleared on tunnel stop")
@@ -185,6 +190,8 @@ extension AgentTunnelController {
     merged.peerPublicAddresses = publicAddresses.peer
     merged.connectedPeerName = peerName.withLock { $0 }
     merged.cellularPath = CellularPathSnapshot(egress: egressPath.withLock { $0 })
+    merged.routingIntentEnabled = routingEnabled
+    merged.agentLinks = agentLinks.withLock { $0 }
     return merged
   }
 

@@ -37,6 +37,9 @@ actor AgentTunnelController {
   /// read into the served snapshot. Nonisolated because the `Mutex` is its own
   /// synchronization and the bridge callback runs off the actor.
   nonisolated let linkInfo = Mutex(AgentLinkInfo())
+  /// The full adopted-link set, written from the bridge's link-set callback off the
+  /// actor and read into the served snapshot's `agentLinks`.
+  nonisolated let agentLinks = Mutex<[AgentLinkStatus]>([])
   /// The connected iPhone's name, written from the listener's status handler off
   /// the actor and read into the served snapshot as `connectedPeerName`. Cleared
   /// when the phone link drops.
