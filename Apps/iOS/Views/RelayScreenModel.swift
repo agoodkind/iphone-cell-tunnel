@@ -253,6 +253,13 @@ struct RelayScreenModel {
     )
   }
 
+  /// Whether a usable tunnel configuration exists. The iPhone root view gates its
+  /// setup screen on this flag directly, because on iPhone a denial error must keep
+  /// the setup screen rather than switch to the error dashboard.
+  var isTunnelInstalled: Bool {
+    controller.isTunnelInstalled
+  }
+
   /// Which screen the status renders: full guided setup or the reduced dashboard.
   var uiTier: RelayUITier {
     status.uiTier
