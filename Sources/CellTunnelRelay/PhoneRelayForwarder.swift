@@ -176,8 +176,8 @@ final class PhoneRelayForwarder: @unchecked Sendable {
 
   /// Receives upload datagrams on one Mac link. Every link runs its own loop, so
   /// the iPhone forwards the Mac's upload no matter which link the agent egresses
-  /// on. An empty datagram is a heartbeat: it refreshes the link's liveness and
-  /// is not forwarded to the server (it is only the agent's adoption prime).
+  /// on. A heartbeat-sized datagram is the agent's echo: it refreshes the link's
+  /// liveness and is never forwarded to the server.
   func receiveFromMac(on connection: NWConnection, interfaceName: String) {
     if didLogMacReceive.compareExchange(
       expected: false, desired: true, ordering: .relaxed
@@ -195,10 +195,10 @@ final class PhoneRelayForwarder: @unchecked Sendable {
         handleLinkReceiveError(error, connection: connection, interfaceName: interfaceName)
         return
       }
-      // Any datagram, empty heartbeat echo or real data, proves the link is alive,
-      // so reset its staleness counter.
+      // Any datagram, heartbeat echo or real data, proves the link is alive, so
+      // reset its staleness counter. Only real traffic is forwarded.
       macLinks[interfaceName]?.ticksSinceInbound = 0
-      if let data, !data.isEmpty {
+      if let data, !data.isEmpty, !RelayHeartbeat.isHeartbeat(data) {
         metrics.addBytesIn(UInt64(data.count))
         metrics.addDatagramsFromMac()
         sendToServer(data)

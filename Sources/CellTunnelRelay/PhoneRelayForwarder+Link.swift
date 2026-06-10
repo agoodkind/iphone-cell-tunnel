@@ -186,12 +186,12 @@ extension PhoneRelayForwarder {
 
   // A UDP NWConnection has no peer until the first datagram is sent, so the
   // agent cannot learn the iPhone source endpoint to route replies. Send one
-  // empty datagram so the agent adopts this connection as a link. The relay
-  // forwards only non-empty datagrams, so the prime never reaches WireGuard.
+  // heartbeat datagram so the agent adopts this connection as a link. The relay
+  // never forwards heartbeats, so the prime never reaches WireGuard.
   private func primeLink(_ connection: NWConnection) {
     let endpoint = connection.endpoint
     connection.send(
-      content: Data(),
+      content: RelayHeartbeat.payload,
       completion: .contentProcessed { error in
         if let error {
           logger.error(
@@ -335,9 +335,9 @@ extension PhoneRelayForwarder {
     }
   }
 
-  // Sends one empty datagram as a liveness heartbeat. The relay forwards only
-  // non-empty datagrams, so a heartbeat never reaches WireGuard; the agent echoes
-  // it so this side can tell the link is still alive.
+  // Sends one heartbeat datagram as liveness. The forward paths drop heartbeats
+  // by length, so a heartbeat never reaches WireGuard; the agent echoes it so
+  // this side can tell the link is still alive.
   private func sendHeartbeat(on connection: NWConnection) {
     if didLogHeartbeat.compareExchange(
       expected: false, desired: true, ordering: .relaxed
@@ -345,7 +345,7 @@ extension PhoneRelayForwarder {
       logger.notice("phone relay heartbeat send path active")
     }
     connection.send(
-      content: Data(),
+      content: RelayHeartbeat.payload,
       completion: .contentProcessed { error in
         if let error {
           logger.error(

@@ -263,10 +263,15 @@ final class AgentRelayBridge: @unchecked Sendable {
         noteLinkActivity(on: connection)
       }
       if let data, !data.isEmpty {
-        forward(data, fromMac: fromMac)
+        if !fromMac, RelayHeartbeat.isHeartbeat(data) {
+          // The iPhone's heartbeat: echo it so that side confirms this link is
+          // alive end to end and does not re-dial a working link.
+          sendHeartbeatEcho(on: connection)
+        } else {
+          forward(data, fromMac: fromMac)
+        }
       } else if !fromMac {
-        // The iPhone's empty heartbeat: echo it so that side confirms this link
-        // is alive end to end and does not re-dial a working link.
+        // A legacy empty heartbeat that survived delivery: echo it too.
         sendHeartbeatEcho(on: connection)
       }
       receive(on: connection, fromMac: fromMac)
@@ -305,15 +310,17 @@ final class AgentRelayBridge: @unchecked Sendable {
 
   // MARK: - Heartbeat and reaper
 
-  // Echoes the iPhone's empty heartbeat back on the same link so that side can
-  // tell the link is alive end to end. A heartbeat is never forwarded to the Mac.
+  // Echoes the iPhone's heartbeat back on the same link so that side can tell
+  // the link is alive end to end. A heartbeat is never forwarded to the Mac, and
+  // the echo carries the heartbeat payload because an empty datagram does not
+  // reliably arrive on the iPhone side.
   private func sendHeartbeatEcho(on connection: NWConnection) {
     if !didLogHeartbeatEcho {
       didLogHeartbeatEcho = true
       logger.notice("agent relay bridge heartbeat echo path active")
     }
     connection.send(
-      content: Data(),
+      content: RelayHeartbeat.payload,
       completion: .contentProcessed { error in
         if let error {
           logger.error(

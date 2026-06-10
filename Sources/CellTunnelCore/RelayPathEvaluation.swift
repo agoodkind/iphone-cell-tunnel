@@ -265,6 +265,23 @@ public enum RelayLinkPolicy {
   }
 }
 
+// MARK: - RelayHeartbeat
+
+/// The one-byte liveness datagram both relay ends exchange. An empty datagram is
+/// not reliably deliverable: it surfaces as an ENODATA receive error in one
+/// direction and vanishes entirely in the other, so liveness must ride on a real
+/// payload. One byte is unambiguous against WireGuard traffic, whose smallest
+/// message is far larger, so the forward paths drop heartbeats by length alone.
+public enum RelayHeartbeat {
+  /// The heartbeat and echo payload sent on every ready link.
+  public static let payload = Data([0x00])
+
+  /// Whether a received datagram is a heartbeat rather than relay traffic.
+  public static func isHeartbeat(_ data: Data) -> Bool {
+    data.count == payload.count
+  }
+}
+
 // MARK: - RelayLinkHealth
 
 /// Decides which known interfaces need a fresh link. The relay keeps one link per
