@@ -190,12 +190,14 @@ extension AgentTunnelController {
 
   // MARK: - Routing control
 
-  /// Records the user's routing choice and reconciles routes against the live
-  /// link. Routing on with a link up installs the program routes; routing off
-  /// withdraws them. The default is passthrough, so a link comes up carrying
-  /// nothing until the user turns routing on.
+  /// Records the user's routing choice, persists it, mirrors it to the phone, and
+  /// reconciles routes against the live link. Routing on with a link up installs
+  /// the program routes; routing off withdraws them. The intent persists through
+  /// `RoutingIntentStore` and defaults to on, so a fresh start routes without a
+  /// tap.
   func setRoutingEnabled(_ enabled: Bool) async {
     routingEnabled = enabled
+    RoutingIntentStore.save(enabled)
     logger.notice(
       "agent routing set enabled=\(enabled, privacy: .public) phoneLinkUp=\(self.phoneLinkUp, privacy: .public)"
     )

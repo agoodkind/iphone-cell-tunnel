@@ -64,12 +64,14 @@ actor AgentTunnelController {
   init(relayBridge: AgentRelayBridge, relayBrowser: RelayDeviceBrowser) {
     self.relayBridge = relayBridge
     self.relayBrowser = relayBrowser
+    self.routingEnabled = RoutingIntentStore.load()
   }
 
-  /// Whether the user has turned routing on. The agent installs the program
-  /// routes only while this is true and a phone link is up, so the default is
-  /// passthrough: the link stays up carrying nothing until routing is enabled.
-  var routingEnabled = false
+  /// The user's routing intent, loaded from `RoutingIntentStore` at init and
+  /// written through on every change, so it survives the agent's idle exit and a
+  /// kickstart. The agent installs the program routes only while this is true and
+  /// a phone link is up. The default is on: a fresh install routes without a tap.
+  var routingEnabled: Bool
 
   /// Whether a phone relay link is up, tracked from the relay bridge so a routing
   /// change installs or withdraws routes against the live link state.
@@ -247,6 +249,10 @@ actor AgentTunnelController {
       }
       await stopControlListener()
       manager = nil
+      // Reset restores the factory state, so the routing preference clears back
+      // to its default-on alongside the removed tunnel configuration.
+      RoutingIntentStore.clear()
+      routingEnabled = RoutingIntentStore.load()
       if let statusObserver {
         NotificationCenter.default.removeObserver(statusObserver)
         self.statusObserver = nil
