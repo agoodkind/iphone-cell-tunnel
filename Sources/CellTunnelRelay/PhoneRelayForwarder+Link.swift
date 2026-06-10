@@ -236,6 +236,15 @@ extension PhoneRelayForwarder {
     egressInterfaceName = chosen
     egressConnection = carryingConnection
     updatePeerState(hasEgress: egressConnection != nil)
+    let summaries = RelayLinkSummary.preferenceSorted(
+      macLinks.values.filter(\.isReady).map { link in
+        RelayLinkSummary(interfaceName: link.interfaceName, linkClass: link.linkClass)
+      }
+    )
+    if summaries != lastReportedAvailableLinks {
+      lastReportedAvailableLinks = summaries
+      onAvailableLinksChange?(summaries)
+    }
   }
 
   private func updatePeerState(hasEgress: Bool) {

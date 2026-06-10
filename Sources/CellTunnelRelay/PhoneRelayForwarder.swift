@@ -123,6 +123,14 @@ final class PhoneRelayForwarder: @unchecked Sendable {
   /// address with an endpoint address.
   var onEgressInterfaceChange:
     (@Sendable (String?, RelayLinkClass?, AddressPair, AddressPair) -> Void)?
+  /// Fired off the packet path whenever the set of ready mac-facing links
+  /// changes, with the lean summaries sorted best first, so the runtime
+  /// reports this side's `Available Interfaces` row and carries the list in
+  /// its status pushes.
+  var onAvailableLinksChange: (@Sendable ([RelayLinkSummary]) -> Void)?
+  /// The last reported summary set, compared on each egress recompute so the
+  /// callback fires only on a real change. Touched only on `queue`.
+  var lastReportedAvailableLinks: [RelayLinkSummary] = []
 
   // MARK: - Initialization
 

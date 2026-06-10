@@ -56,6 +56,12 @@ private struct RelayStatusState {
   var localLinkClass: RelayLinkClass?
   var localLinkAddresses: AddressPair?
   var peerLinkAddresses: AddressPair?
+  /// This side's relay-link candidates from the forwarder, shown on the
+  /// local `Available Interfaces` row and carried in each status push.
+  var localAvailableLinks: [RelayLinkSummary] = []
+  /// The candidates the Mac reports about itself over the control link, or
+  /// `nil` before the agent reports them.
+  var peerAvailableLinks: [RelayLinkSummary]?
   /// The Mac agent control services the iPhone has discovered over the local link,
   /// each a selectable peer, surfaced in the served snapshot's `discovery.services`.
   var discoveredServices: [TunnelRelayService] = []
@@ -189,6 +195,8 @@ public final class RelayRuntime: @unchecked Sendable {
       state.localLinkClass = nil
       state.localLinkAddresses = nil
       state.peerLinkAddresses = nil
+      state.localAvailableLinks = []
+      state.peerAvailableLinks = nil
     }
     logger.notice("relay runtime torn down")
   }
@@ -228,6 +236,8 @@ public final class RelayRuntime: @unchecked Sendable {
       peerPublicAddresses: publicAddresses.peer,
       localLinkAddresses: state.localLinkAddresses,
       peerLinkAddresses: state.peerLinkAddresses,
+      localAvailableLinks: state.localAvailableLinks,
+      peerAvailableLinks: state.peerAvailableLinks,
       relayHost: state.serverEndpoint?.host,
       relayServerIPv4Address: state.relayResolved?.ipv4,
       relayServerIPv6Address: state.relayResolved?.ipv6,
@@ -263,12 +273,25 @@ public final class RelayRuntime: @unchecked Sendable {
   // agent so the agent reports this device as the connected peer.
   private func currentStatusPush(deviceName: String?) -> RelayControlMessage.Status {
     let cellularPath = cellular.snapshot
+    let relayStatus = statusState.withLock { state in
+      (lastError: state.lastError, availableLinks: state.localAvailableLinks)
+    }
     return RelayControlMessage.Status(
       hasCellularPath: cellularPath.isSatisfied,
       cellularInterface: cellularPath.interfaceName,
-      lastError: statusState.withLock { $0.lastError },
+      lastError: relayStatus.lastError,
       counters: forwarder.metrics.snapshot(),
-      deviceName: deviceName
+      deviceName: deviceName,
+      availableLinks: relayStatus.availableLinks
+    )
+  }
+
+  /// Builds a minimal status push for the narrow nil-self fallback path.
+  private static func emptyStatusPush(deviceName: String?) -> RelayControlMessage.Status {
+    RelayControlMessage.Status(
+      hasCellularPath: false,
+      deviceName: deviceName,
+      availableLinks: []
     )
   }
 
@@ -304,6 +327,9 @@ public final class RelayRuntime: @unchecked Sendable {
         """
       )
     }
+    forwarder.onAvailableLinksChange = { [weak self] links in
+      self?.statusState.withLock { $0.localAvailableLinks = links }
+    }
   }
 
   private func configureTransportSelection() {
@@ -337,6 +363,7 @@ public final class RelayRuntime: @unchecked Sendable {
             state.routeInstalled = false
             state.controlPeerName = nil
             state.connectedPeerName = nil
+            state.peerAvailableLinks = nil
           }
         },
         onRouteState: { [weak self] installed in
@@ -355,14 +382,14 @@ public final class RelayRuntime: @unchecked Sendable {
         },
         statusProvider: { [weak self, hostDeviceName] in
           self?.currentStatusPush(deviceName: hostDeviceName)
-            ?? RelayControlMessage.Status(
-              hasCellularPath: false,
-              deviceName: hostDeviceName
-            )
+            ?? Self.emptyStatusPush(deviceName: hostDeviceName)
         }
       )
       client.setPeerPublicAddressHandler { [weak self] addresses in
         self?.publicExchange?.received(addresses)
+      }
+      client.setPeerAvailableLinksHandler { [weak self] links in
+        self?.statusState.withLock { $0.peerAvailableLinks = links }
       }
       client.setConnectionReadyHandler { [weak self] in
         self?.refreshDevicePublicAddress()

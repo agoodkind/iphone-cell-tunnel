@@ -63,6 +63,9 @@ final class PhoneControlClient {
   /// Fired with the peer's measured public address received over the control link,
   /// shown as the peer's public IP.
   var onPeerPublicAddress: (@MainActor (AddressPair) -> Void)?
+  /// Fired with the agent's relay-link candidates received over the control
+  /// link, shown on the peer `Available Interfaces` row.
+  var onPeerAvailableLinks: (@MainActor ([RelayLinkSummary]) -> Void)?
   /// Fired when the control connection reaches ready, so the public-address
   /// exchange sends this device's address over a link that now exists. The data
   /// link comes up on its own timeline, so the send is driven by the control link
@@ -387,9 +390,10 @@ extension PhoneControlClient {
         """
       )
     case .linkInventory(let payload):
-      logger.debug(
+      logger.notice(
         "control received link-inventory count=\(payload.links.count, privacy: .public)"
       )
+      onPeerAvailableLinks?(payload.links)
     case .setRoutingEnabled:
       logger.debug("control received unexpected set-routing-enabled from peer")
     case .routeState(let payload):

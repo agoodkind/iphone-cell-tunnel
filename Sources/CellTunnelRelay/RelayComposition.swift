@@ -31,6 +31,11 @@ protocol RelayControlChannel: Sendable {
     statusProvider: @escaping @MainActor () -> RelayControlMessage.Status
   )
   func setPeerPublicAddressHandler(_ handler: @escaping @MainActor (AddressPair) -> Void)
+  /// Registers the peer link-inventory handler, fired with the agent's
+  /// relay-link candidates received over the control link.
+  func setPeerAvailableLinksHandler(
+    _ handler: @escaping @MainActor ([RelayLinkSummary]) -> Void
+  )
   func setConnectionReadyHandler(_ handler: @escaping @MainActor () -> Void)
   /// Reports the Mac agent control services the browser currently sees, each a
   /// selectable peer. The engine stores them for the served snapshot and decides
@@ -66,6 +71,14 @@ extension PhoneControlClient: RelayControlChannel {
 
   func setPeerPublicAddressHandler(_ handler: @escaping @MainActor (AddressPair) -> Void) {
     onPeerPublicAddress = handler
+  }
+
+  /// Registers the peer link-inventory handler, fired with the agent's
+  /// relay-link candidates received over the control link.
+  func setPeerAvailableLinksHandler(
+    _ handler: @escaping @MainActor ([RelayLinkSummary]) -> Void
+  ) {
+    onPeerAvailableLinks = handler
   }
 
   func setConnectionReadyHandler(_ handler: @escaping @MainActor () -> Void) {
