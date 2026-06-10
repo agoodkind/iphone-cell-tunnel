@@ -96,13 +96,21 @@ func runRelayReload(_ arguments: [String]) throws {
 
 // MARK: - relay-status / relay-down
 
-/// Prints the current tunnel daemon status snapshot from the agent.
+/// Prints the current tunnel daemon status snapshot from the agent, followed by
+/// the full state dump: persisted and live routing intent, reported and kernel
+/// route state, control and tunnel sections, and the drift verdict. Exits
+/// non-zero when any pair of layers disagrees, so scripts can gate on drift.
 func runRelayStatus(_ arguments: [String]) throws {
   _ = arguments
   relayControlLogger.notice("relay-status requested")
   try runRelayCommand { client in
     let status = try await client.status()
     printToolOutput(status.renderedOutput)
+    let dump = RelayStateDump.render(snapshot: status)
+    printToolOutput(dump.text)
+    if dump.hasDrift {
+      throw ToolError.usage("relay-status found drift between routing layers")
+    }
   }
 }
 
