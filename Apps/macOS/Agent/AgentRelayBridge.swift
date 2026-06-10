@@ -243,7 +243,12 @@ final class AgentRelayBridge: @unchecked Sendable {
             "agent relay bridge phone receive error tolerated; re-arming, reaper owns liveness"
           )
         }
-        receive(on: connection, fromMac: false)
+        // Re-arm only while this connection is still an adopted link. A replaced
+        // or cancelled connection keeps erroring on every receive, so re-arming
+        // it would spin this callback forever on the relay queue.
+        if isAdoptedPhoneLink(connection) {
+          receive(on: connection, fromMac: false)
+        }
         return
       }
       if !fromMac {

@@ -138,17 +138,25 @@ extension PhoneRelayForwarder {
     }
   }
 
+  // A UDP receive error is a benign per-datagram flow boundary on these links
+  // (ENODATA about once per heartbeat), not proof the peer is gone. Tearing the
+  // link down on it churned the carrying choice and dropped downstream traffic.
+  // Keep the connection and re-arm the receive; the staleness counter owns true
+  // liveness and a send failure on the carrying link still fails over at once.
   func handleLinkReceiveError(
     _ error: NWError, connection: NWConnection, interfaceName: String
   ) {
-    logger.error(
-      """
-      phone relay link receive failed interface=\(interfaceName, privacy: .public) \
-      error=\(error.localizedDescription, privacy: .public)
-      """
-    )
-    connection.cancel()
-    removeLink(interfaceName: interfaceName, reason: "receive-error")
+    if didLogReceiveErrorTolerated.compareExchange(
+      expected: false, desired: true, ordering: .relaxed
+    ).exchanged {
+      logger.notice(
+        """
+        phone relay link receive error tolerated interface=\(interfaceName, privacy: .public) \
+        error=\(error.localizedDescription, privacy: .public); re-arming, staleness owns liveness
+        """
+      )
+    }
+    receiveFromMac(on: connection, interfaceName: interfaceName)
   }
 
   // MARK: - Membership helpers

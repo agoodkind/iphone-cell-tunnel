@@ -103,6 +103,12 @@ extension AgentRelayBridge {
     return nil
   }
 
+  /// Whether a connection is still the live connection of an adopted link, so a
+  /// tolerated receive error re-arms only a connection that still carries a link.
+  func isAdoptedPhoneLink(_ connection: NWConnection) -> Bool {
+    interfaceName(of: connection) != nil
+  }
+
   // MARK: - Carrying selection
 
   /// Recomputes the cached carrying pointer from the chooser off the packet path.

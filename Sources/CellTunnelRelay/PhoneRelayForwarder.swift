@@ -109,6 +109,7 @@ final class PhoneRelayForwarder: @unchecked Sendable {
   let didLogCellularReceive = Atomic<Bool>(false)
   let didLogCellularSend = Atomic<Bool>(false)
   let didLogHeartbeat = Atomic<Bool>(false)
+  let didLogReceiveErrorTolerated = Atomic<Bool>(false)
 
   var onStateChange: (@Sendable (WireGuardDatagramRelayState) -> Void)?
   var onError: (@Sendable (String) -> Void)?
