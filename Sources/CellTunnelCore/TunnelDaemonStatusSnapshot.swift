@@ -299,23 +299,6 @@ public struct TunnelEnvironmentReport: Codable, Equatable, Sendable {
   }
 }
 
-// MARK: - AgentLinkStatus
-
-/// One adopted relay link as the agent's bridge holds it, reported in the status
-/// snapshot so the full warm-link set is visible from one status call rather than
-/// only the carrying link.
-public struct AgentLinkStatus: Codable, Equatable, Sendable {
-  public var interfaceName: String
-  public var linkClass: RelayLinkClass
-  public var isCarrying: Bool
-
-  public init(interfaceName: String, linkClass: RelayLinkClass, isCarrying: Bool) {
-    self.interfaceName = interfaceName
-    self.linkClass = linkClass
-    self.isCarrying = isCarrying
-  }
-}
-
 // MARK: - TunnelDaemonStatusSnapshot
 
 public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
@@ -366,7 +349,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
   /// The user's routing intent as the agent holds it, the value behind the Route
   /// traffic switch. Separate from `routeState`, which reports the routes actually
   /// installed. `nil` from a producer that predates the field.
-  public var routingIntentEnabled: Bool?
+  public var routingIntentEnabled: TunnelRoutingIntent?
   /// Every relay link the agent's bridge currently holds, carrying and warm, so
   /// one status call shows the whole link set. `nil` from a producer that
   /// predates the field.
@@ -396,7 +379,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     relayServerIPv4Address: String? = nil,
     relayServerIPv6Address: String? = nil,
     relayProtocol: String? = nil,
-    routingIntentEnabled: Bool? = nil,
+    routingIntentEnabled: TunnelRoutingIntent? = nil,
     agentLinks: [AgentLinkStatus]? = nil
   ) {
     self.running = running
@@ -435,7 +418,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
       "ipv6=\(ipv6Address)",
     ]
     if let routingIntentEnabled {
-      lines.append("routing_intent=\(routingIntentEnabled ? "on" : "off")")
+      lines.append("routing_intent=\(routingIntentEnabled.rawValue)")
     }
     if let agentLinks {
       lines.append("links=\(agentLinks.count)")

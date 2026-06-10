@@ -36,7 +36,7 @@ struct RelayStatusSample: Sendable {
   var routeState: TunnelRouteState
   /// The agent's persisted routing intent, the value behind the Route traffic
   /// switch, or `nil` from a producer that predates the field.
-  var routingIntent: Bool?
+  var routingIntent: TunnelRoutingIntent?
   /// Whether a WireGuard peer is configured, which gates the connected states.
   var peerState: TunnelPeerState
   /// Whether a tunnel profile is saved, the gate between the install-tunnel setup
@@ -195,7 +195,7 @@ final class RelayController {
   /// The agent's persisted routing intent mirrored from the snapshot, the value
   /// the Route traffic switch shows. `nil` until a producer reports it, which
   /// falls back to the route-state reading for an old agent.
-  var routingIntent: Bool?
+  var routingIntent: TunnelRoutingIntent?
   var peerState: TunnelPeerState = .notSelected
   /// The routing value the user last requested, held while a request is pending so
   /// the switch shows the requested state until the agent's real `routeState`
@@ -439,7 +439,10 @@ final class RelayController {
     if isRouteRequestPending {
       return requestedRouting
     }
-    return routingIntent ?? (routeState == .installed)
+    guard let routingIntent else {
+      return routeState == .installed
+    }
+    return routingIntent.isEnabled
   }
 
   /// Whether a routing request is awaiting the agent's confirmation, so the screen
@@ -464,7 +467,7 @@ final class RelayController {
     guard isRouteRequestPending else {
       return
     }
-    let confirmed = routingIntent ?? (routeState == .installed)
+    let confirmed = routingIntent?.isEnabled ?? (routeState == .installed)
     if confirmed == requestedRouting {
       routeIntentPollsRemaining = 0
       return

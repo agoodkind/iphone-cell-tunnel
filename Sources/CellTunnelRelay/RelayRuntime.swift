@@ -47,7 +47,7 @@ private struct RelayStatusState {
   /// The agent's persisted routing intent, mirrored over the control link. The
   /// Route traffic switch shows this; `nil` until the agent's first push, so an
   /// old agent that never sends it leaves the switch on the route-state fallback.
-  var routingIntentEnabled: Bool?
+  var routingIntent: TunnelRoutingIntent?
   /// The WireGuard server endpoint the agent sent over the control link. The host
   /// is shown as the relay host; the resolved addresses are the server's IPs.
   var serverEndpoint: RelayEndpoint?
@@ -236,7 +236,7 @@ public final class RelayRuntime: @unchecked Sendable {
       relayServerIPv4Address: state.relayResolved?.ipv4,
       relayServerIPv6Address: state.relayResolved?.ipv6,
       relayProtocol: relayProtocolName,
-      routingIntentEnabled: state.routingIntentEnabled
+      routingIntentEnabled: state.routingIntent
     )
   }
 
@@ -347,9 +347,6 @@ public final class RelayRuntime: @unchecked Sendable {
         onRouteState: { [weak self] installed in
           self?.statusState.withLock { $0.routeInstalled = installed }
         },
-        onRoutingIntent: { [weak self] enabled in
-          self?.statusState.withLock { $0.routingIntentEnabled = enabled }
-        },
         onPeerName: { [weak self] name in
           self?.statusState.withLock { state in
             state.controlPeerName = name
@@ -374,6 +371,9 @@ public final class RelayRuntime: @unchecked Sendable {
       }
       client.setConnectionReadyHandler { [weak self] in
         self?.refreshDevicePublicAddress()
+      }
+      client.setRoutingIntentHandler { [weak self] enabled in
+        self?.statusState.withLock { $0.routingIntent = TunnelRoutingIntent(enabled: enabled) }
       }
       client.setServicesChangedHandler { [weak self] services in
         self?.applyDiscoveredServices(services)

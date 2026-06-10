@@ -67,9 +67,9 @@ extension AgentTunnelController {
       guard let self else {
         return (intent: true, installed: false)
       }
-      let intent = await self.routingEnabled
-      let installed = await intent && self.phoneLinkUp
-      return (intent: intent, installed: installed)
+      let intent = await routingEnabled
+      let linkUp = await phoneLinkUp
+      return (intent: intent, installed: intent && linkUp)
     }
 
     controlListener = listener
@@ -81,8 +81,21 @@ extension AgentTunnelController {
     // late-completing probe re-sends to whatever connection is then current.
     Task { await self.refreshDeviceAddress() }
 
-    // The bridge reports the carrying link; store its interface, class, and
-    // addresses for the snapshot the same way the iPhone does.
+    wireBridgeCallbacks()
+    relayBridge.start(serviceName: stableHostName())
+    onRelayActiveChange?(true)
+    logger.notice(
+      """
+      agent control listener started host=\(endpoint.host, privacy: .public) \
+      port=\(endpoint.port, privacy: .public)
+      """
+    )
+  }
+
+  // Wires the relay bridge's off-actor callbacks into the controller's mirrors:
+  // the carrying link's identity and addresses, the full adopted-link set, and
+  // the any-link-up transitions that reconcile routes.
+  private func wireBridgeCallbacks() {
     relayBridge.onEgressInterfaceChange = { [weak self] name, linkClass, local, peer in
       self?.linkInfo.withLock { current in
         current = AgentLinkInfo(
@@ -102,14 +115,6 @@ extension AgentTunnelController {
     relayBridge.onPhoneDisconnected = { [weak self] in
       Task { await self?.handlePhoneLink(up: false) }
     }
-    relayBridge.start(serviceName: stableHostName())
-    onRelayActiveChange?(true)
-    logger.notice(
-      """
-      agent control listener started host=\(endpoint.host, privacy: .public) \
-      port=\(endpoint.port, privacy: .public)
-      """
-    )
   }
 
   func stopControlListener() async {
@@ -201,7 +206,7 @@ extension AgentTunnelController {
     merged.peerPublicAddresses = publicAddresses.peer
     merged.connectedPeerName = peerName.withLock { $0 }
     merged.cellularPath = CellularPathSnapshot(egress: egressPath.withLock { $0 })
-    merged.routingIntentEnabled = routingEnabled
+    merged.routingIntentEnabled = TunnelRoutingIntent(enabled: routingEnabled)
     merged.agentLinks = agentLinks.withLock { $0 }
     return merged
   }

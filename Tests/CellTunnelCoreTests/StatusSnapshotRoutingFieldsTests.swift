@@ -22,7 +22,7 @@ struct StatusSnapshotRoutingFieldsTests {
     let snapshot = TunnelDaemonStatusSnapshot(
       running: true,
       routeState: .installed,
-      routingIntentEnabled: true,
+      routingIntentEnabled: .on,
       agentLinks: [
         AgentLinkStatus(interfaceName: "en11", linkClass: .wired, isCarrying: true),
         AgentLinkStatus(interfaceName: "en0", linkClass: .wifiLan, isCarrying: false),
@@ -31,7 +31,7 @@ struct StatusSnapshotRoutingFieldsTests {
     let data = try JSONEncoder().encode(snapshot)
     let decoded = try JSONDecoder().decode(TunnelDaemonStatusSnapshot.self, from: data)
 
-    #expect(decoded.routingIntentEnabled == true)
+    #expect(decoded.routingIntentEnabled == .on)
     #expect(decoded.agentLinks?.count == 2)
     #expect(decoded.agentLinks?.first?.interfaceName == "en11")
     #expect(decoded.agentLinks?.first?.isCarrying == true)
@@ -41,15 +41,19 @@ struct StatusSnapshotRoutingFieldsTests {
   // MARK: - Old payloads stay decodable
 
   @Test func oldPayloadWithoutRoutingFieldsDecodesNil() throws {
-    let old = TunnelDaemonStatusSnapshot(running: true, routeState: .installed)
-    var object = try #require(
-      try JSONSerialization.jsonObject(
-        with: JSONEncoder().encode(old)
-      ) as? [String: Any]
-    )
-    object.removeValue(forKey: "routingIntentEnabled")
-    object.removeValue(forKey: "agentLinks")
-    let data = try JSONSerialization.data(withJSONObject: object)
+    // A producer that predates the routing fields encodes a payload without
+    // them; decoding must read both as nil rather than failing.
+    let oldPayload = """
+      {
+        "running": true,
+        "routeState": "installed",
+        "peerState": "not-selected",
+        "ipv4Address": "",
+        "ipv6Address": "",
+        "discovery": {"phase": "browsing", "services": []}
+      }
+      """
+    let data = try #require(oldPayload.data(using: .utf8))
 
     let decoded = try JSONDecoder().decode(TunnelDaemonStatusSnapshot.self, from: data)
 
@@ -64,7 +68,7 @@ struct StatusSnapshotRoutingFieldsTests {
     let snapshot = TunnelDaemonStatusSnapshot(
       running: true,
       routeState: .installed,
-      routingIntentEnabled: true,
+      routingIntentEnabled: .on,
       agentLinks: [
         AgentLinkStatus(interfaceName: "en11", linkClass: .wired, isCarrying: true)
       ]

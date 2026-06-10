@@ -27,10 +27,12 @@ protocol RelayControlChannel: Sendable {
     onSetServerEndpoint: @escaping @MainActor (RelayEndpoint) -> Void,
     onConnectionDropped: @escaping @MainActor () -> Void,
     onRouteState: @escaping @MainActor (Bool) -> Void,
-    onRoutingIntent: @escaping @MainActor (Bool) -> Void,
     onPeerName: @escaping @MainActor (String?) -> Void,
     statusProvider: @escaping @MainActor () -> RelayControlMessage.Status
   )
+  /// Reports the agent's persisted routing intent, the value behind the Route
+  /// traffic switch, pushed on every change and on each connection handshake.
+  func setRoutingIntentHandler(_ handler: @escaping @MainActor (Bool) -> Void)
   func setPeerPublicAddressHandler(_ handler: @escaping @MainActor (AddressPair) -> Void)
   func setConnectionReadyHandler(_ handler: @escaping @MainActor () -> Void)
   /// Reports the Mac agent control services the browser currently sees, each a
@@ -55,16 +57,18 @@ extension PhoneControlClient: RelayControlChannel {
     onSetServerEndpoint: @escaping @MainActor (RelayEndpoint) -> Void,
     onConnectionDropped: @escaping @MainActor () -> Void,
     onRouteState: @escaping @MainActor (Bool) -> Void,
-    onRoutingIntent: @escaping @MainActor (Bool) -> Void,
     onPeerName: @escaping @MainActor (String?) -> Void,
     statusProvider: @escaping @MainActor () -> RelayControlMessage.Status
   ) {
     self.onSetServerEndpoint = onSetServerEndpoint
     self.onConnectionDropped = onConnectionDropped
     self.onRouteState = onRouteState
-    self.onRoutingIntent = onRoutingIntent
     self.onPeerName = onPeerName
     self.statusProvider = statusProvider
+  }
+
+  func setRoutingIntentHandler(_ handler: @escaping @MainActor (Bool) -> Void) {
+    onRoutingIntent = handler
   }
 
   func setPeerPublicAddressHandler(_ handler: @escaping @MainActor (AddressPair) -> Void) {
