@@ -231,12 +231,16 @@ final class AgentRelayBridge: @unchecked Sendable {
           clearIfCurrent(connection, isLoopback: true, reason: "receive-error")
           return
         }
-        // The peer-to-peer UDP flow to a phone link ends with NWError 96 (no
-        // message available on stream) about once per heartbeat even while the
-        // interface is healthy. Dropping the link on that benign flow boundary
-        // tore en0 down every ~2s and collapsed the carrying link to none. Keep
-        // the connection and re-arm the receive; the reaper removes a link that
-        // truly goes silent and a send error still drives fast failover.
+        // An empty UDP datagram on a phone link, the iPhone's prime and its
+        // heartbeats, surfaces here as NWError ENODATA rather than as data, so
+        // this error IS the heartbeat. Treat it as one: admit or refresh the
+        // link and echo it back so the iPhone's staleness counter resets.
+        // Dropping the link here instead tore healthy links down every ~2s.
+        if case .posix(let code) = error, code == .ENODATA {
+          notePhoneActivity(on: connection)
+          noteLinkActivity(on: connection)
+          sendHeartbeatEcho(on: connection)
+        }
         if !didLogPhoneReceiveError {
           didLogPhoneReceiveError = true
           logger.notice(

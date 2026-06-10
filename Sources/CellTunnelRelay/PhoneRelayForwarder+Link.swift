@@ -138,14 +138,19 @@ extension PhoneRelayForwarder {
     }
   }
 
-  // A UDP receive error is a benign per-datagram flow boundary on these links
-  // (ENODATA about once per heartbeat), not proof the peer is gone. Tearing the
-  // link down on it churned the carrying choice and dropped downstream traffic.
-  // Keep the connection and re-arm the receive; the staleness counter owns true
-  // liveness and a send failure on the carrying link still fails over at once.
+  // A UDP receive error is a benign per-datagram flow boundary on these links,
+  // not proof the peer is gone; tearing the link down on it churned the carrying
+  // choice and dropped downstream traffic. An empty datagram, the agent's
+  // heartbeat echo, surfaces here as ENODATA rather than as data, so that error
+  // IS the echo: credit it as liveness so a quiet link is not re-dialed as
+  // stale. Re-arm the receive either way; a send failure on the carrying link
+  // still fails over at once.
   func handleLinkReceiveError(
     _ error: NWError, connection: NWConnection, interfaceName: String
   ) {
+    if case .posix(let code) = error, code == .ENODATA {
+      macLinks[interfaceName]?.ticksSinceInbound = 0
+    }
     if didLogReceiveErrorTolerated.compareExchange(
       expected: false, desired: true, ordering: .relaxed
     ).exchanged {
