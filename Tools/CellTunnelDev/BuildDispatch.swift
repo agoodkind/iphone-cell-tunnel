@@ -62,6 +62,7 @@ func buildProject(target: BuildTarget, configuration: String) throws {
 }
 
 private func runBuildPrologue() throws {
+  buildDispatchLogger.notice("build prologue starting generate, audit, wireguard go bridge")
   try generateProject()
   try auditLogging()
   // Build the WireGuard Go bridge before any xcodebuild target. Every build
