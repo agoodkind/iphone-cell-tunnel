@@ -214,6 +214,9 @@ func launchPhoneDevice() throws {
   try launchInstalledPhoneDevice()
 }
 
+// MARK: - WireGuard Go bridge
+
+/// The wireguard-apple Go bridge sources, vendored through Tuist.
 private let wireGuardGoBridgeSourcePath: URL =
   repoRoot
   .appendingPathComponent("Tuist", isDirectory: true)
@@ -223,16 +226,24 @@ private let wireGuardGoBridgeSourcePath: URL =
   .appendingPathComponent("Sources", isDirectory: true)
   .appendingPathComponent("WireGuardKitGo", isDirectory: true)
 
+/// Where `libwg-go.a` lands so WireGuardKit's `LIBRARY_SEARCH_PATHS` finds it.
 private let wireGuardGoBridgeLibraryDirectory: URL =
   repoRoot
   .appendingPathComponent(".build", isDirectory: true)
   .appendingPathComponent("vendor", isDirectory: true)
 
+/// Scratch directory for the bridge build.
 private let wireGuardGoBridgeTempDirectory: URL =
   repoRoot
   .appendingPathComponent(".build", isDirectory: true)
   .appendingPathComponent("vendor-temp", isDirectory: true)
 
+/// Builds the WireGuard Go bridge static library before xcodebuild runs. The
+/// library is consumed by WireGuardKit's `WireGuardKitGo` target, an external
+/// Tuist-generated target with no dependencies that links `-lwg-go` and so
+/// builds first in the graph. No xcodebuild build phase can produce the library
+/// in time, so it is built here, at the start of every build, before the
+/// xcodebuild graph starts.
 func buildWireGuardGoBridge() throws {
   guard fileManager.fileExists(atPath: wireGuardGoBridgeSourcePath.path) else {
     throw ToolError.failure(

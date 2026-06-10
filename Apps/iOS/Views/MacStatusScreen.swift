@@ -63,6 +63,7 @@
             }
             masonry(
               availableWidth: proxy.size.width - contentPadding * contentInsetColumns)
+            ConfigLibraryView()
           }
           .padding(contentPadding)
           .frame(maxWidth: .infinity, alignment: .leading)

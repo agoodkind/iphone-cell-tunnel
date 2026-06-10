@@ -39,6 +39,12 @@
       runtime.start()
     }
 
+    /// The simulator hosts the relay in process, so launch gating always proceeds.
+    func tunnelProvisioned() async -> Bool {
+      await Task.yield()
+      return true
+    }
+
     // MARK: - Sampling
 
     func sample() async -> RelayStatusSample? {
@@ -75,6 +81,36 @@
       await Task.yield()
       logger.notice("simulator relay backend install tunnel: starting runtime")
       runtime.start()
+    }
+
+    // MARK: - Config library
+
+    func listConfigs() -> [StoredTunnelConfig] {
+      []
+    }
+
+    var activeConfigID: String? {
+      nil
+    }
+
+    func importConfig(url _: URL, name _: String) async {
+      await Task.yield()
+    }
+
+    func activateConfig(id _: String) async {
+      await Task.yield()
+    }
+
+    func saveConfigEdit(id _: String, text _: String) async {
+      await Task.yield()
+    }
+
+    func renameConfig(id _: String, name _: String) async {
+      await Task.yield()
+    }
+
+    func deleteConfig(id _: String) async {
+      await Task.yield()
     }
   }
 

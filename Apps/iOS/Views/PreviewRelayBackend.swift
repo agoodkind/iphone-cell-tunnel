@@ -20,6 +20,12 @@ final class PreviewRelayBackend: RelayControlBackend {
     await Task.yield()
   }
 
+  /// Previews have no platform setup gate, so launch gating always proceeds.
+  func tunnelProvisioned() async -> Bool {
+    await Task.yield()
+    return true
+  }
+
   func sample() async -> RelayStatusSample? {
     await Task.yield()
     return nil
@@ -34,6 +40,36 @@ final class PreviewRelayBackend: RelayControlBackend {
   }
 
   func installTunnel(configURL _: URL) async {
+    await Task.yield()
+  }
+
+  // MARK: - Config library
+
+  func listConfigs() -> [StoredTunnelConfig] {
+    []
+  }
+
+  var activeConfigID: String? {
+    nil
+  }
+
+  func importConfig(url _: URL, name _: String) async {
+    await Task.yield()
+  }
+
+  func activateConfig(id _: String) async {
+    await Task.yield()
+  }
+
+  func saveConfigEdit(id _: String, text _: String) async {
+    await Task.yield()
+  }
+
+  func renameConfig(id _: String, name _: String) async {
+    await Task.yield()
+  }
+
+  func deleteConfig(id _: String) async {
     await Task.yield()
   }
 }

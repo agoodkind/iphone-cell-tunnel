@@ -108,6 +108,12 @@ protocol RelayControlBackend {
   /// tunnel. The Mac leaves the agent's tunnel untouched.
   func start() async
 
+  /// Reads the saved tunnel state fresh from the platform without saving anything;
+  /// true when a usable tunnel configuration exists. The iPhone reads
+  /// NetworkExtension preferences; the Mac, the simulator, and previews answer true
+  /// because their setup gating comes from status samples.
+  func tunnelProvisioned() async -> Bool
+
   /// One status reading, or `nil` when the source is briefly unavailable.
   func sample() async -> RelayStatusSample?
 
@@ -123,6 +129,27 @@ protocol RelayControlBackend {
   /// Installs the tunnel profile from an imported configuration. The Mac hands the
   /// config to the agent's start path; the iPhone saves its own tunnel manager.
   func installTunnel(configURL: URL) async
+
+  /// Lists the stored WireGuard configurations available to this backend.
+  func listConfigs() -> [StoredTunnelConfig]
+
+  /// The identifier of the active stored configuration, or `nil` when none exists.
+  var activeConfigID: String? { get }
+
+  /// Imports a WireGuard configuration file into this backend's config library.
+  func importConfig(url: URL, name: String) async
+
+  /// Makes a stored configuration the active relay configuration.
+  func activateConfig(id: String) async
+
+  /// Saves edited WireGuard configuration text for a stored configuration.
+  func saveConfigEdit(id: String, text: String) async
+
+  /// Renames a stored configuration in this backend's config library.
+  func renameConfig(id: String, name: String) async
+
+  /// Deletes a stored configuration from this backend's config library.
+  func deleteConfig(id: String) async
 }
 
 // MARK: - RelayController
@@ -223,6 +250,32 @@ final class RelayController {
     startDeviceProbe()
     await backend.start()
     startPolling()
+  }
+
+  /// Starts the relay only when a saved tunnel configuration is already approved.
+  func prepare() async {
+    logger.notice("relay controller prepare requested")
+    let provisioned = await backend.tunnelProvisioned()
+    if provisioned {
+      await start()
+    } else {
+      isTunnelInstalled = false
+      logger.notice("relay controller prepare found no saved tunnel")
+    }
+  }
+
+  /// Refreshes saved tunnel presence and starts the relay when provisioned and idle.
+  func refreshProvisioned() async {
+    logger.notice("relay controller provisioned refresh requested")
+    let provisioned = await backend.tunnelProvisioned()
+    if !provisioned {
+      isTunnelInstalled = false
+      logger.notice("relay controller provisioned refresh found no saved tunnel")
+      return
+    }
+    if pollTask == nil {
+      await start()
+    }
   }
 
   // Wires the app's egress probe to the device-value recompute and starts it for
@@ -439,6 +492,48 @@ final class RelayController {
   func installTunnel(configURL: URL) async {
     logger.notice("relay controller install tunnel requested")
     await backend.installTunnel(configURL: configURL)
+  }
+
+  // MARK: - Config library
+
+  /// The stored configurations the views list, read from the backend on demand.
+  func listConfigs() -> [StoredTunnelConfig] {
+    backend.listConfigs()
+  }
+
+  /// The active stored configuration's identifier, or `nil` when none is active.
+  var activeConfigID: String? {
+    backend.activeConfigID
+  }
+
+  /// Imports a picked configuration file, then validates, stores, and applies it.
+  func importConfig(url: URL, name: String) {
+    logger.notice("relay controller import config requested")
+    Task { await backend.importConfig(url: url, name: name) }
+  }
+
+  /// Makes a stored configuration active and applies it.
+  func activateConfig(id: String) {
+    logger.notice("relay controller activate config requested")
+    Task { await backend.activateConfig(id: id) }
+  }
+
+  /// Saves edited configuration text and reloads it when it is the active config.
+  func saveConfigEdit(id: String, text: String) {
+    logger.notice("relay controller save config edit requested")
+    Task { await backend.saveConfigEdit(id: id, text: text) }
+  }
+
+  /// Renames a stored configuration.
+  func renameConfig(id: String, name: String) {
+    logger.notice("relay controller rename config requested")
+    Task { await backend.renameConfig(id: id, name: name) }
+  }
+
+  /// Deletes a stored configuration.
+  func deleteConfig(id: String) {
+    logger.notice("relay controller delete config requested")
+    Task { await backend.deleteConfig(id: id) }
   }
 
   /// Spaces polls without `Task.sleep` by resuming off a dispatch queue after the
