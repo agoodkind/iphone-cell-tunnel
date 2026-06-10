@@ -37,6 +37,14 @@ actor AgentTunnelController {
   /// read into the served snapshot. Nonisolated because the `Mutex` is its own
   /// synchronization and the bridge callback runs off the actor.
   nonisolated let linkInfo = Mutex(AgentLinkInfo())
+  /// This Mac's relay-link candidates, the open phone links from the bridge,
+  /// written off the actor and read into the served snapshot's
+  /// `localAvailableLinks`.
+  nonisolated let localLinks = Mutex<[RelayLinkSummary]>([])
+  /// The candidates the iPhone reports about itself in its status pushes,
+  /// read into the served snapshot's `peerAvailableLinks`. Cleared when the
+  /// phone link drops.
+  nonisolated let peerLinks = Mutex<[RelayLinkSummary]?>(nil)
   /// The connected iPhone's name, written from the listener's status handler off
   /// the actor and read into the served snapshot as `connectedPeerName`. Cleared
   /// when the phone link drops.

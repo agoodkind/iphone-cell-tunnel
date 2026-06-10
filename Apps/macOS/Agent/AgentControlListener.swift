@@ -31,33 +31,6 @@ func stableHostName() -> String {
   Host.current().localizedName ?? fallbackHostName
 }
 
-// MARK: - Errors
-
-enum AgentControlListenerError: LocalizedError {
-  case acknowledgeMissing
-  case connectionFailed(String)
-  case listenerFailed(String)
-  case remoteError(RemoteErrorPayload)
-
-  struct RemoteErrorPayload: Sendable, Equatable {
-    var code: String
-    var message: String
-  }
-
-  var errorDescription: String? {
-    switch self {
-    case .acknowledgeMissing:
-      return "control listener did not receive set-server-endpoint acknowledgement"
-    case .connectionFailed(let detail):
-      return "control listener connection failed: \(detail)"
-    case .listenerFailed(let detail):
-      return "control listener failed: \(detail)"
-    case .remoteError(let payload):
-      return "control listener remote error code=\(payload.code) message=\(payload.message)"
-    }
-  }
-}
-
 // MARK: - AgentControlListener
 
 /// Hosts the control link in the agent, a normal process that receives inbound
@@ -72,6 +45,15 @@ actor AgentControlListener {
   private var listener: NWListener?
   private var connection: NWConnection?
   private var didStart = false
+  /// This Mac's latest relay-link candidates, published by the controller as
+  /// the bridge's link set changes, sent to a capable peer on each change and
+  /// when the capability first appears.
+  private var latestLinkInventory: [RelayLinkSummary] = []
+  /// Whether the connected iPhone's status push carried `availableLinks`, the
+  /// signal that it decodes the link-inventory message. Reset when a new
+  /// connection is promoted, so an old iPhone never receives a message it
+  /// cannot decode.
+  private var peerSupportsLinkInventory = false
 
   /// Invoked with the user's routing choice when the iPhone pushes it over the
   /// control link, so the controller can install or withdraw the program routes.
@@ -82,6 +64,9 @@ actor AgentControlListener {
   /// Invoked with the iPhone's device name carried in its status push, so the
   /// controller reports it as the connected peer name.
   private var onPeerDeviceName: (@Sendable (String) -> Void)?
+  /// Invoked with the iPhone's relay-link candidates carried in its status push,
+  /// so the controller reports them as the peer available links.
+  private var onPeerAvailableLinks: (@Sendable ([RelayLinkSummary]) -> Void)?
   /// Invoked when the primary control connection ends, so the controller clears
   /// the connected peer name. The peer name follows the control link, not the
   /// data link, so a brief data-link blip does not clear it.
@@ -190,6 +175,7 @@ actor AgentControlListener {
       // and never handshakes is dropped in the catch without disturbing the
       // live connection, so a multi-interface dial does not tear down a good link.
       connection = newConnection
+      peerSupportsLinkInventory = false
       previous?.cancel()
       startReceiveLoop(on: newConnection)
       if !latestDeviceAddress.isEmpty {
@@ -400,6 +386,13 @@ extension AgentControlListener {
     onPeerDeviceName = handler
   }
 
+  /// Registers the peer link-inventory handler before the listener starts.
+  func setPeerAvailableLinksHandler(
+    _ handler: @escaping @Sendable ([RelayLinkSummary]) -> Void
+  ) {
+    onPeerAvailableLinks = handler
+  }
+
   /// Registers the control-connection-dropped handler before the listener starts.
   func setConnectionDroppedHandler(_ handler: @escaping @Sendable () -> Void) {
     onConnectionDropped = handler
@@ -423,6 +416,13 @@ extension AgentControlListener {
   func surface(status snapshot: RelayControlMessage.Status) {
     if let deviceName = snapshot.deviceName, !deviceName.isEmpty {
       onPeerDeviceName?(deviceName)
+    }
+    if let links = snapshot.availableLinks {
+      onPeerAvailableLinks?(links)
+      if !peerSupportsLinkInventory {
+        peerSupportsLinkInventory = true
+        Task { await self.sendLinkInventoryToCurrent() }
+      }
     }
   }
 
@@ -492,6 +492,35 @@ extension AgentControlListener {
     latestDeviceAddress = addresses
   }
 
+  /// Records this Mac's latest relay-link candidates and pushes them to a
+  /// capable connected iPhone, so the iPhone's peer row tracks link churn.
+  func publishLinkInventory(_ links: [RelayLinkSummary]) async {
+    latestLinkInventory = links
+    await sendLinkInventoryToCurrent()
+  }
+
+  /// Sends the latest inventory on the current control connection. A no-op
+  /// without a connection or before the peer signals the capability.
+  private func sendLinkInventoryToCurrent() async {
+    guard peerSupportsLinkInventory, let connection else {
+      return
+    }
+    do {
+      try await send(
+        .linkInventory(RelayControlMessage.LinkInventory(links: latestLinkInventory)),
+        on: connection
+      )
+    } catch {
+      logger.error(
+        """
+        agent control link-inventory send failed \
+        count=\(self.latestLinkInventory.count, privacy: .public) \
+        error=\(error.localizedDescription, privacy: .public) recovery=await-next-change
+        """
+      )
+    }
+  }
+
   /// Sends this host's measured public address on the current control connection.
   /// Used by the path-change, routing, and periodic refresh triggers. A no-op when
   /// no iPhone is connected.
@@ -518,47 +547,5 @@ extension AgentControlListener {
         """
       )
     }
-  }
-}
-
-// MARK: - Listener and connection state handling
-
-/// Logs the control listener lifecycle. The listener binds the fixed control
-/// port and advertises the Bonjour service the iPhone dials.
-private func applyListenerState(_ state: NWListener.State) {
-  switch state {
-  case .ready:
-    logger.notice(
-      "agent control listener ready port=\(relayControlListenerDefaultPort, privacy: .public)"
-    )
-  case .failed(let error):
-    logger.error(
-      "agent control listener failed error=\(error.localizedDescription, privacy: .public)"
-    )
-  case .cancelled:
-    logger.notice("agent control listener cancelled")
-  default:
-    break
-  }
-}
-
-/// Logs the accepted connection lifecycle so an iPhone dial that reaches the
-/// agent is visible in the log.
-private func applyAcceptedConnectionState(_ state: NWConnection.State) {
-  switch state {
-  case .ready:
-    logger.notice("agent control connection ready")
-  case .waiting(let error):
-    logger.error(
-      "agent control connection waiting error=\(error.localizedDescription, privacy: .public)"
-    )
-  case .failed(let error):
-    logger.error(
-      "agent control connection failed error=\(error.localizedDescription, privacy: .public)"
-    )
-  case .cancelled:
-    logger.notice("agent control connection cancelled")
-  default:
-    break
   }
 }

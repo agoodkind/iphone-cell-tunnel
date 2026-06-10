@@ -83,6 +83,13 @@ final class AgentRelayBridge: @unchecked Sendable {
   /// pairs come from the same connection's path endpoints.
   var onEgressInterfaceChange:
     (@Sendable (String?, RelayLinkClass?, AddressPair, AddressPair) -> Void)?
+  /// Fired off the datagram path whenever the set of open phone links changes,
+  /// with the lean summaries sorted best first, so the agent reports this
+  /// side's `Available Interfaces` row and pushes the list to the iPhone.
+  var onAvailableLinksChange: (@Sendable ([RelayLinkSummary]) -> Void)?
+  /// The last reported summary set, compared on each egress recompute so the
+  /// callback fires only on a real change. Touched only on `queue`.
+  var lastReportedAvailableLinks: [RelayLinkSummary] = []
 
   // MARK: - Lifecycle
 
@@ -145,9 +152,14 @@ final class AgentRelayBridge: @unchecked Sendable {
     for link in phoneLinks.values {
       link.connection.cancel()
     }
+    let hadReportedAvailableLinks = !lastReportedAvailableLinks.isEmpty
     phoneLinks.removeAll()
+    lastReportedAvailableLinks = []
     egressConnection = nil
     egressInterfaceName = nil
+    if hadReportedAvailableLinks {
+      onAvailableLinksChange?([])
+    }
     listener?.cancel()
     listener = nil
     logger.notice("agent relay bridge stopped")

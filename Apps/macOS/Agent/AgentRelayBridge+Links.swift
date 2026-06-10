@@ -117,6 +117,15 @@ extension AgentRelayBridge {
   /// the score order, the same order the iPhone uses, so both ends carry on the
   /// same link.
   func recomputeEgress() {
+    let summaries = RelayLinkSummary.preferenceSorted(
+      phoneLinks.map { name, link in
+        RelayLinkSummary(interfaceName: name, linkClass: link.linkClass)
+      }
+    )
+    if summaries != lastReportedAvailableLinks {
+      lastReportedAvailableLinks = summaries
+      onAvailableLinksChange?(summaries)
+    }
     let openLinks = phoneLinks.values.map { link in
       RelayLinkSnapshot(interfaceName: link.interfaceName, linkClass: link.linkClass)
     }

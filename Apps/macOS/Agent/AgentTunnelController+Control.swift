@@ -37,9 +37,6 @@ extension AgentTunnelController {
     }
     await controlListener?.stop()
     let listener = AgentControlListener(serverEndpoint: endpoint)
-    await listener.setRoutingHandler { [weak self] enabled in
-      Task { await self?.setRoutingEnabled(enabled) }
-    }
 
     // The public-address exchange holds this host's and the iPhone's measured
     // public addresses; the snapshot reads both so the Mac shows `Device / Public`
@@ -47,19 +44,7 @@ extension AgentTunnelController {
     // the listener sends the result; the listener stores the iPhone's address here.
     let exchange = PublicAddressExchange()
     publicExchange = exchange
-    await listener.setPeerPublicAddressHandler { addresses in
-      exchange.received(addresses)
-    }
-    // The iPhone carries its device name in each status push; store it so the
-    // snapshot reports it as `connectedPeerName`. The name follows the control
-    // link: it is set from the push and cleared only when the control link drops,
-    // so a brief data-link blip does not clear it.
-    await listener.setPeerDeviceNameHandler { [weak self] name in
-      self?.peerName.withLock { $0 = name }
-    }
-    await listener.setConnectionDroppedHandler { [weak self] in
-      self?.peerName.withLock { $0 = nil }
-    }
+    await configurePeerHandlers(on: listener, exchange: exchange)
 
     controlListener = listener
     try await listener.start()
@@ -70,8 +55,48 @@ extension AgentTunnelController {
     // late-completing probe re-sends to whatever connection is then current.
     Task { await self.refreshDeviceAddress() }
 
-    // The bridge reports the carrying link; store its interface, class, and
-    // addresses for the snapshot the same way the iPhone does.
+    configureRelayBridgeHandlers()
+    relayBridge.start(serviceName: stableHostName())
+    onRelayActiveChange?(true)
+    logger.notice(
+      """
+      agent control listener started host=\(endpoint.host, privacy: .public) \
+      port=\(endpoint.port, privacy: .public)
+      """
+    )
+  }
+
+  /// Registers listener callbacks that surface peer control messages into
+  /// controller state.
+  private func configurePeerHandlers(
+    on listener: AgentControlListener,
+    exchange: PublicAddressExchange
+  ) async {
+    await listener.setRoutingHandler { [weak self] enabled in
+      Task { await self?.setRoutingEnabled(enabled) }
+    }
+    await listener.setPeerPublicAddressHandler { addresses in
+      exchange.received(addresses)
+    }
+    // The iPhone carries its device name in each status push; store it so the
+    // snapshot reports it as `connectedPeerName`. The name follows the control
+    // link: it is set from the push and cleared only when the control link drops,
+    // so a brief data-link blip does not clear it.
+    await listener.setPeerDeviceNameHandler { [weak self] name in
+      self?.peerName.withLock { $0 = name }
+    }
+    await listener.setPeerAvailableLinksHandler { [weak self] links in
+      self?.peerLinks.withLock { $0 = links }
+    }
+    await listener.setConnectionDroppedHandler { [weak self] in
+      self?.peerName.withLock { $0 = nil }
+      self?.peerLinks.withLock { $0 = nil }
+    }
+  }
+
+  /// Registers relay bridge callbacks that surface local link state and drive
+  /// route reconciliation.
+  private func configureRelayBridgeHandlers() {
     relayBridge.onEgressInterfaceChange = { [weak self] name, linkClass, local, peer in
       self?.linkInfo.withLock { current in
         current = AgentLinkInfo(
@@ -82,20 +107,16 @@ extension AgentTunnelController {
         )
       }
     }
+    relayBridge.onAvailableLinksChange = { [weak self] links in
+      self?.localLinks.withLock { $0 = links }
+      Task { await self?.controlListener?.publishLinkInventory(links) }
+    }
     relayBridge.onPhoneConnected = { [weak self] in
       Task { await self?.handlePhoneLink(up: true) }
     }
     relayBridge.onPhoneDisconnected = { [weak self] in
       Task { await self?.handlePhoneLink(up: false) }
     }
-    relayBridge.start(serviceName: stableHostName())
-    onRelayActiveChange?(true)
-    logger.notice(
-      """
-      agent control listener started host=\(endpoint.host, privacy: .public) \
-      port=\(endpoint.port, privacy: .public)
-      """
-    )
   }
 
   func stopControlListener() async {
@@ -110,9 +131,12 @@ extension AgentTunnelController {
     routeWithdrawTimer = nil
     routeWithdrawGeneration += 1
     linkInfo.withLock { $0 = AgentLinkInfo() }
+    localLinks.withLock { $0 = [] }
+    peerLinks.withLock { $0 = nil }
     peerName.withLock { $0 = nil }
     egressPath.withLock { $0 = EgressPath() }
     relayBridge.onEgressInterfaceChange = nil
+    relayBridge.onAvailableLinksChange = nil
     relayBridge.stop()
     onRelayActiveChange?(false)
     logger.notice("agent control link cleared on tunnel stop")
@@ -184,6 +208,8 @@ extension AgentTunnelController {
     merged.devicePublicAddresses = publicAddresses.device
     merged.peerPublicAddresses = publicAddresses.peer
     merged.connectedPeerName = peerName.withLock { $0 }
+    merged.localAvailableLinks = localLinks.withLock { $0 }
+    merged.peerAvailableLinks = peerLinks.withLock { $0 }
     merged.cellularPath = CellularPathSnapshot(egress: egressPath.withLock { $0 })
     return merged
   }
@@ -225,6 +251,7 @@ extension AgentTunnelController {
       // Debounce the withdrawal so a sub-grace AWDL blip does not flip the UI to
       // passthrough. The peer name is not cleared here; it follows the control
       // link and clears only when that link drops.
+      peerLinks.withLock { $0 = nil }
       scheduleRouteWithdraw(generation: routeWithdrawGeneration)
     }
   }
