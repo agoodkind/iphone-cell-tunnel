@@ -90,6 +90,10 @@ actor AgentControlListener {
   /// probes. It is sent on each accepted control connection once that connection's
   /// handshake completes, so a freshly connected peer receives it at once.
   private var latestDeviceAddress = AddressPair.empty
+  /// Answers the current routing intent and installed-route state at handshake
+  /// time, so every accepted connection is synced immediately instead of waiting
+  /// for the next change or status poll. Set by the controller before `start()`.
+  private var routingSyncProvider: (@Sendable () async -> (intent: Bool, installed: Bool))?
 
   init(serverEndpoint: RelayEndpoint) {
     self.serverEndpoint = serverEndpoint
@@ -195,6 +199,14 @@ actor AgentControlListener {
       if !latestDeviceAddress.isEmpty {
         await sendPublicAddress(latestDeviceAddress, on: newConnection)
       }
+      // Sync the routing truth on every accepted connection: a reconnect or app
+      // relaunch otherwise shows stale intent and route state until the next
+      // change, because the phone clears its mirror when the control link drops.
+      if let routingSyncProvider {
+        let sync = await routingSyncProvider()
+        await sendRoutingIntent(sync.intent)
+        await sendRouteState(sync.installed)
+      }
     } catch {
       logger.error(
         """
@@ -240,6 +252,28 @@ actor AgentControlListener {
       logger.error(
         """
         agent control route-state send failed installed=\(installed, privacy: .public) \
+        error=\(error.localizedDescription, privacy: .public) recovery=await-next-change
+        """
+      )
+    }
+  }
+
+  /// Sends the agent's persisted routing intent to the connected iPhone, the
+  /// value behind the Route traffic switch, so the phone mirrors the agent's
+  /// truth instead of holding its own copy. A no-op when no iPhone is connected.
+  func sendRoutingIntent(_ enabled: Bool) async {
+    guard let connection else {
+      return
+    }
+    do {
+      try await send(
+        .routingIntent(RelayControlMessage.RoutingIntent(enabled: enabled)),
+        on: connection
+      )
+    } catch {
+      logger.error(
+        """
+        agent control routing-intent send failed enabled=\(enabled, privacy: .public) \
         error=\(error.localizedDescription, privacy: .public) recovery=await-next-change
         """
       )
@@ -403,6 +437,14 @@ extension AgentControlListener {
   /// Registers the control-connection-dropped handler before the listener starts.
   func setConnectionDroppedHandler(_ handler: @escaping @Sendable () -> Void) {
     onConnectionDropped = handler
+  }
+
+  /// Registers the provider answering the current routing intent and installed
+  /// state, queried once per accepted connection so the handshake syncs both.
+  func setRoutingSyncProvider(
+    _ provider: @escaping @Sendable () async -> (intent: Bool, installed: Bool)
+  ) {
+    routingSyncProvider = provider
   }
 
   /// Fires the dropped handler when the primary control connection ends, so the

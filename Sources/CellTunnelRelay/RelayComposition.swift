@@ -27,6 +27,7 @@ protocol RelayControlChannel: Sendable {
     onSetServerEndpoint: @escaping @MainActor (RelayEndpoint) -> Void,
     onConnectionDropped: @escaping @MainActor () -> Void,
     onRouteState: @escaping @MainActor (Bool) -> Void,
+    onRoutingIntent: @escaping @MainActor (Bool) -> Void,
     onPeerName: @escaping @MainActor (String?) -> Void,
     statusProvider: @escaping @MainActor () -> RelayControlMessage.Status
   )
@@ -54,12 +55,14 @@ extension PhoneControlClient: RelayControlChannel {
     onSetServerEndpoint: @escaping @MainActor (RelayEndpoint) -> Void,
     onConnectionDropped: @escaping @MainActor () -> Void,
     onRouteState: @escaping @MainActor (Bool) -> Void,
+    onRoutingIntent: @escaping @MainActor (Bool) -> Void,
     onPeerName: @escaping @MainActor (String?) -> Void,
     statusProvider: @escaping @MainActor () -> RelayControlMessage.Status
   ) {
     self.onSetServerEndpoint = onSetServerEndpoint
     self.onConnectionDropped = onConnectionDropped
     self.onRouteState = onRouteState
+    self.onRoutingIntent = onRoutingIntent
     self.onPeerName = onPeerName
     self.statusProvider = statusProvider
   }

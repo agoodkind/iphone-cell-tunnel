@@ -60,6 +60,17 @@ extension AgentTunnelController {
     await listener.setConnectionDroppedHandler { [weak self] in
       self?.peerName.withLock { $0 = nil }
     }
+    // Each accepted connection syncs the routing truth at handshake: the
+    // persisted intent and the route state the agent currently derives from
+    // intent and link, so a reconnect or app relaunch mirrors immediately.
+    await listener.setRoutingSyncProvider { [weak self] in
+      guard let self else {
+        return (intent: true, installed: false)
+      }
+      let intent = await self.routingEnabled
+      let installed = await intent && self.phoneLinkUp
+      return (intent: intent, installed: installed)
+    }
 
     controlListener = listener
     try await listener.start()
@@ -205,6 +216,7 @@ extension AgentTunnelController {
   func setRoutingEnabled(_ enabled: Bool) async {
     routingEnabled = enabled
     RoutingIntentStore.save(enabled)
+    await controlListener?.sendRoutingIntent(enabled)
     logger.notice(
       "agent routing set enabled=\(enabled, privacy: .public) phoneLinkUp=\(self.phoneLinkUp, privacy: .public)"
     )
