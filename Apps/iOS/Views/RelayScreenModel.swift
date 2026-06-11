@@ -546,15 +546,20 @@ struct RelayScreenModel {
   private func interfaceAddressRows() -> [ConnectionRow] {
     let all = controller.interfaceAddresses
     return [
-      ConnectionRow(label: "Interface IPv6", value: joinedOrPlaceholder(all.ipv6)),
-      ConnectionRow(label: "Interface IPv4", value: joinedOrPlaceholder(all.ipv4)),
+      multilineRow(label: "Interface IPv6", values: all.ipv6),
+      multilineRow(label: "Interface IPv4", values: all.ipv4),
     ]
   }
 
-  // Joins every address onto its own line, or the placeholder when the family has
-  // none, so a row renders one address per line.
-  private func joinedOrPlaceholder(_ values: [String]) -> String {
-    values.isEmpty ? emptyValuePlaceholder : values.joined(separator: "\n")
+  // The one builder for every list-valued row: one value per line in a single row,
+  // or the placeholder when the list is empty, so the iPhone hides the empty state
+  // and the Mac skeletonizes it. The Interface IPv6/IPv4 and Available Interfaces
+  // rows all build here, so a list row cannot drift to its own layout.
+  private func multilineRow(label: String, values: [String]) -> ConnectionRow {
+    ConnectionRow(
+      label: label,
+      value: values.isEmpty ? emptyValuePlaceholder : values.joined(separator: "\n")
+    )
   }
 
   private var relayServerAddresses: AddressPair {
@@ -588,13 +593,12 @@ struct RelayScreenModel {
     )
   }
 
-  // The one Available Interfaces row, its value one path per line through the same
-  // joined-multiline rendering as the Interface IPv6 row, or the placeholder when
-  // none are known, so the iPhone hides the empty state and the Mac skeletonizes it.
+  // The one Available Interfaces row, built through the same multiline-row builder
+  // as the Interface IPv6 row so the two cannot render differently.
   private var availableInterfacesRow: ConnectionRow {
-    ConnectionRow(
+    multilineRow(
       label: "Available Interfaces",
-      value: joinedOrPlaceholder(availableLinks.map(availableLinkValue))
+      values: availableLinks.map(availableLinkValue)
     )
   }
 
