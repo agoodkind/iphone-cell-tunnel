@@ -37,6 +37,7 @@ let package = Package(
     .package(path: "../.make/dev/iphone-cell-tunnel"),
     swiftMakefileDependency,
     .package(url: "https://github.com/swiftlang/swift-syntax.git", exact: "603.0.0"),
+    .package(url: "https://github.com/rarestype/swift-ip.git", from: "0.3.10"),
   ],
   targets: [
     .executableTarget(
@@ -44,6 +45,7 @@ let package = Package(
       dependencies: [
         .product(name: "CellTunnelCore", package: "iphone-cell-tunnel"),
         .product(name: "CellTunnelLog", package: "iphone-cell-tunnel"),
+        .product(name: "IP", package: "swift-ip"),
         .product(name: "SwiftMkCore", package: "swift-makefile"),
       ],
       path: "CellTunnelDev"

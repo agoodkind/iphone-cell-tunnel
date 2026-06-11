@@ -9,6 +9,7 @@
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
+import IP
 
 // MARK: - Constants
 
@@ -51,7 +52,9 @@ enum RelayStateDump {
       driftPairs.append("intent.persisted!=intent.live")
     }
 
-    let kernelRouteCount = kernelTunnelRouteCount(tunnelIPv4: snapshot.ipv4Address)
+    let kernelRouteCount = kernelTunnelRouteCount(
+      tunnelIPv4: snapshot.ipv4Address, tunnelIPv6: snapshot.ipv6Address
+    )
     lines.append("routes.reported=\(snapshot.routeState.rawValue)")
     lines.append("routes.kernel=\(kernelRouteCount.map(String.init) ?? "unknown")")
     if let kernelRouteCount {
@@ -100,10 +103,14 @@ enum RelayStateDump {
   // routing table: find the interface owning the tunnel's own IPv4 host route,
   // then count the other routes bound to that interface. Returns nil when the
   // table cannot be read or the tunnel interface is not present.
-  private static func kernelTunnelRouteCount(tunnelIPv4: String) -> Int? {
+  private static func kernelTunnelRouteCount(
+    tunnelIPv4: String, tunnelIPv6: String
+  ) -> Int? {
     guard !tunnelIPv4.isEmpty, let table = routingTable() else {
       return nil
     }
+    let tunnelV4 = IP.V4(tunnelIPv4)
+    let tunnelV6 = IP.V6(tunnelIPv6)
     let rows = table.split(separator: "\n").map { row in
       row.split(separator: " ", omittingEmptySubsequences: true).map(String.init)
     }
@@ -113,13 +120,14 @@ enum RelayStateDump {
     }
     return rows.count { columns in
       guard columns.count >= routeMinimumColumns,
-        columns[routeInterfaceColumn] == tunnelInterface
+        columns[routeInterfaceColumn] == tunnelInterface,
+        let destination = RouteDestination(
+          netstatDestination: columns[routeDestinationColumn]
+        )
       else {
         return false
       }
-      return isProgramRouteDestination(
-        columns[routeDestinationColumn], tunnelIPv4: tunnelIPv4
-      )
+      return !destination.isScaffolding(tunnelV4: tunnelV4, tunnelV6: tunnelV6)
     }
   }
 
@@ -134,16 +142,6 @@ enum RelayStateDump {
         && columns[routeInterfaceColumn].hasPrefix("utun")
     }
     return match?[routeInterfaceColumn]
-  }
-
-  // The tunnel's own host route, the defaults, and the multicast and broadcast
-  // scaffolding are not program routes; everything else scoped to the tunnel
-  // interface counts as one.
-  private static func isProgramRouteDestination(
-    _ destination: String, tunnelIPv4: String
-  ) -> Bool {
-    destination != tunnelIPv4 && destination != "default"
-      && !destination.hasPrefix("224.0.0") && !destination.hasPrefix("255.255.255.255")
   }
 
   private static func routingTable() -> String? {
