@@ -8,10 +8,11 @@
 
 import Foundation
 
-// MARK: - Errors
+// MARK: - AgentControlListenerError
 
-/// Errors raised while accepting, handshaking, or decoding an agent control
-/// connection.
+/// The control listener's failure cases: a missing handshake acknowledgement, a
+/// connection or listener failure with its detail, and an error the peer reported
+/// over the link.
 enum AgentControlListenerError: LocalizedError {
   /// The peer did not acknowledge the expected request during the handshake.
   case acknowledgeMissing

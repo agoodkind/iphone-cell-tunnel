@@ -1,5 +1,5 @@
 {
-  "originHash" : "3f89e26eb4232c6c2e9f5b44a3f7a8818ff6c5848baf47d2092f5c116baa648a",
+  "originHash" : "4b87cb016945bf7cd02f69be7bfb96a643abaac00d4ceec2532f87525f80a29b",
   "pins" : [
     {
       "identity" : "aexml",
@@ -11,12 +11,30 @@
       }
     },
     {
+      "identity" : "gram",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rarestype/gram",
+      "state" : {
+        "revision" : "d9276e23523174cd04213e945f146dd9a553a571",
+        "version" : "2.0.0"
+      }
+    },
+    {
       "identity" : "grpc-swift",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/grpc/grpc-swift.git",
       "state" : {
         "revision" : "6a8927df5a91710b414caba4f8a088dead4633db",
         "version" : "1.27.5"
+      }
+    },
+    {
+      "identity" : "h",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rarestype/h",
+      "state" : {
+        "revision" : "aa3626829160917d4378330617971977cbd78f5b",
+        "version" : "1.0.1"
       }
     },
     {
@@ -110,6 +128,15 @@
       }
     },
     {
+      "identity" : "swift-bson",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rarestype/swift-bson",
+      "state" : {
+        "revision" : "dad631e26c3bf9137c9bd741b6baaa974eaf3124",
+        "version" : "2.1.0"
+      }
+    },
+    {
       "identity" : "swift-certificates",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-certificates.git",
@@ -160,6 +187,24 @@
       "location" : "https://github.com/ileitch/swift-index-store",
       "state" : {
         "revision" : "ed1f232d33b8e03956af0f4206fbd30171a43138"
+      }
+    },
+    {
+      "identity" : "swift-ip",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rarestype/swift-ip.git",
+      "state" : {
+        "revision" : "37538ef70b45f23d7e6ec2b3aea36c432419c90d",
+        "version" : "0.3.10"
+      }
+    },
+    {
+      "identity" : "swift-json",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rarestype/swift-json",
+      "state" : {
+        "revision" : "f35f303a9c20af505fd2f03c97a283de53707ec4",
+        "version" : "3.4.0"
       }
     },
     {
@@ -277,6 +322,15 @@
       "state" : {
         "revision" : "18ff09e6b30e589ed38f90a1af23e193b8ecef8e",
         "version" : "1.1.2"
+      }
+    },
+    {
+      "identity" : "u",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/rarestype/u",
+      "state" : {
+        "revision" : "991bc9fbe56be39ecb96a239ddd866f96a41fa0a",
+        "version" : "1.1.0"
       }
     },
     {

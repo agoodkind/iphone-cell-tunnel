@@ -34,6 +34,9 @@ struct RelayStatusSample: Sendable {
   /// Whether the program routes are installed, which the screen reads as routing
   /// (installed) versus passthrough (not installed).
   var routeState: TunnelRouteState
+  /// The agent's persisted routing intent, the value behind the Route traffic
+  /// switch, or `nil` from a producer that predates the field.
+  var routingIntent: TunnelRoutingIntent?
   /// Whether a WireGuard peer is configured, which gates the connected states.
   var peerState: TunnelPeerState
   /// Whether a tunnel profile is saved, the gate between the install-tunnel setup
@@ -84,6 +87,7 @@ struct RelayStatusSample: Sendable {
     counters = snapshot.phoneCounters ?? snapshot.macCounters ?? TunnelCounters()
     lastError = snapshot.lastError
     routeState = snapshot.routeState
+    routingIntent = snapshot.routingIntentEnabled
     peerState = snapshot.peerState
     isTunnelInstalled = snapshot.peerState != .notSelected
     discoveredPeers = snapshot.discovery.services
@@ -196,6 +200,10 @@ final class RelayController {
   var lastError: String?
   var relayStateDescription = relayStoppedStateText
   var routeState: TunnelRouteState = .notInstalled
+  /// The agent's persisted routing intent mirrored from the snapshot, the value
+  /// the Route traffic switch shows. `nil` until a producer reports it, which
+  /// falls back to the route-state reading for an old agent.
+  var routingIntent: TunnelRoutingIntent?
   var peerState: TunnelPeerState = .notSelected
   /// The routing value the user last requested, held while a request is pending so
   /// the switch shows the requested state until the agent's real `routeState`
@@ -392,6 +400,7 @@ final class RelayController {
     assign(\.lastError, sample.lastError)
     assign(\.relayStateDescription, sample.relayStateDescription)
     assign(\.routeState, sample.routeState)
+    assign(\.routingIntent, sample.routingIntent)
     reconcileRouteIntent()
     assign(\.peerState, sample.peerState)
     assign(\.isTunnelInstalled, sample.isTunnelInstalled)
@@ -437,14 +446,19 @@ final class RelayController {
 
   // MARK: - Routing control
 
-  /// Requests routing (on) or passthrough (off) for the `Route traffic` switch.
-  /// The backend forwards the choice to the agent, which installs or withdraws
-  /// the program routes. The displayed routing-versus-passthrough state reads from
-  /// the real `routeState` in the next status snapshot.
   /// The routing value the switch shows: the pending request while one is in
-  /// flight, otherwise the agent's confirmed route state.
+  /// flight, otherwise the agent's mirrored intent. The switch represents the
+  /// user's choice, not the live route state, so a link blip does not flip it;
+  /// the status word reports the live state separately. The route-state reading
+  /// is the fallback for an old agent that never reports intent.
   var displayedRouting: Bool {
-    isRouteRequestPending ? requestedRouting : (routeState == .installed)
+    if isRouteRequestPending {
+      return requestedRouting
+    }
+    guard let routingIntent else {
+      return routeState == .installed
+    }
+    return routingIntent.isEnabled
   }
 
   /// Whether a routing request is awaiting the agent's confirmation, so the screen
@@ -461,14 +475,16 @@ final class RelayController {
     await backend.setRouting(enabled: enabled)
   }
 
-  // Clears the optimistic routing intent once the agent's real route state matches
-  // it, or after the poll budget elapses, so the switch follows the confirmed state
-  // and a request the agent never applies snaps back rather than spinning forever.
+  // Clears the optimistic pending request once the agent's mirrored intent (or
+  // the route state, for an old agent) confirms it, or after the poll budget
+  // elapses, so the switch follows the confirmed value and a request the agent
+  // never applies snaps back rather than spinning forever.
   private func reconcileRouteIntent() {
     guard isRouteRequestPending else {
       return
     }
-    if (routeState == .installed) == requestedRouting {
+    let confirmed = routingIntent?.isEnabled ?? (routeState == .installed)
+    if confirmed == requestedRouting {
       routeIntentPollsRemaining = 0
       return
     }

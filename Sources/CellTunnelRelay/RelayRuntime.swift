@@ -44,6 +44,10 @@ private struct RelayStatusState {
   /// owns the routes and reports this over the control link, so it is the truth
   /// the route state reports, not the local routing intent.
   var routeInstalled = false
+  /// The agent's persisted routing intent, mirrored over the control link. The
+  /// Route traffic switch shows this; `nil` until the agent's first push, so an
+  /// old agent that never sends it leaves the switch on the route-state fallback.
+  var routingIntent: TunnelRoutingIntent?
   /// The WireGuard server endpoint the agent sent over the control link. The host
   /// is shown as the relay host; the resolved addresses are the server's IPs.
   var serverEndpoint: RelayEndpoint?
@@ -241,7 +245,8 @@ public final class RelayRuntime: @unchecked Sendable {
       relayHost: state.serverEndpoint?.host,
       relayServerIPv4Address: state.relayResolved?.ipv4,
       relayServerIPv6Address: state.relayResolved?.ipv6,
-      relayProtocol: relayProtocolName
+      relayProtocol: relayProtocolName,
+      routingIntentEnabled: state.routingIntent
     )
   }
 
@@ -385,19 +390,30 @@ public final class RelayRuntime: @unchecked Sendable {
             ?? Self.emptyStatusPush(deviceName: hostDeviceName)
         }
       )
-      client.setPeerPublicAddressHandler { [weak self] addresses in
-        self?.publicExchange?.received(addresses)
-      }
-      client.setPeerAvailableLinksHandler { [weak self] links in
-        self?.statusState.withLock { $0.peerAvailableLinks = links }
-      }
-      client.setConnectionReadyHandler { [weak self] in
-        self?.refreshDevicePublicAddress()
-      }
-      client.setServicesChangedHandler { [weak self] services in
-        self?.applyDiscoveredServices(services)
-      }
+      self?.registerControlHandlers(on: client)
       client.start()
+    }
+  }
+
+  // Registers the secondary control handlers: the peer's public address, the
+  // peer's link inventory, the connection-ready refresh, the mirrored routing
+  // intent, and the discovered-services feed.
+  @MainActor
+  private func registerControlHandlers(on client: any RelayControlChannel) {
+    client.setPeerPublicAddressHandler { [weak self] addresses in
+      self?.publicExchange?.received(addresses)
+    }
+    client.setPeerAvailableLinksHandler { [weak self] links in
+      self?.statusState.withLock { $0.peerAvailableLinks = links }
+    }
+    client.setConnectionReadyHandler { [weak self] in
+      self?.refreshDevicePublicAddress()
+    }
+    client.setRoutingIntentHandler { [weak self] enabled in
+      self?.statusState.withLock { $0.routingIntent = TunnelRoutingIntent(enabled: enabled) }
+    }
+    client.setServicesChangedHandler { [weak self] services in
+      self?.applyDiscoveredServices(services)
     }
   }
 

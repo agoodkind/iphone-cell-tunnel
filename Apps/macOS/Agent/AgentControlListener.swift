@@ -57,10 +57,12 @@ actor AgentControlListener {
 
   /// Invoked with the user's routing choice when the iPhone pushes it over the
   /// control link, so the controller can install or withdraw the program routes.
-  private var onSetRoutingEnabled: (@Sendable (Bool) -> Void)?
+  /// Internal so the message-routing extension file can drive it.
+  var onSetRoutingEnabled: (@Sendable (Bool) -> Void)?
   /// Invoked with the iPhone's measured public address received over the control
   /// link, so the public-address exchange stores it as the peer's address.
-  private var onPeerPublicAddress: (@Sendable (AddressPair) -> Void)?
+  /// Internal so the message-routing extension file can drive it.
+  var onPeerPublicAddress: (@Sendable (AddressPair) -> Void)?
   /// Invoked with the iPhone's device name carried in its status push, so the
   /// controller reports it as the connected peer name.
   private var onPeerDeviceName: (@Sendable (String) -> Void)?
@@ -75,6 +77,10 @@ actor AgentControlListener {
   /// probes. It is sent on each accepted control connection once that connection's
   /// handshake completes, so a freshly connected peer receives it at once.
   private var latestDeviceAddress = AddressPair.empty
+  /// Answers the current routing intent and installed-route state at handshake
+  /// time, so every accepted connection is synced immediately instead of waiting
+  /// for the next change or status poll. Set by the controller before `start()`.
+  private var routingSyncProvider: (@Sendable () async -> (intent: Bool, installed: Bool))?
 
   init(serverEndpoint: RelayEndpoint) {
     self.serverEndpoint = serverEndpoint
@@ -181,6 +187,14 @@ actor AgentControlListener {
       if !latestDeviceAddress.isEmpty {
         await sendPublicAddress(latestDeviceAddress, on: newConnection)
       }
+      // Sync the routing truth on every accepted connection: a reconnect or app
+      // relaunch otherwise shows stale intent and route state until the next
+      // change, because the phone clears its mirror when the control link drops.
+      if let routingSyncProvider {
+        let sync = await routingSyncProvider()
+        await sendRoutingIntent(sync.intent)
+        await sendRouteState(sync.installed)
+      }
     } catch {
       logger.error(
         """
@@ -226,6 +240,28 @@ actor AgentControlListener {
       logger.error(
         """
         agent control route-state send failed installed=\(installed, privacy: .public) \
+        error=\(error.localizedDescription, privacy: .public) recovery=await-next-change
+        """
+      )
+    }
+  }
+
+  /// Sends the agent's persisted routing intent to the connected iPhone, the
+  /// value behind the Route traffic switch, so the phone mirrors the agent's
+  /// truth instead of holding its own copy. A no-op when no iPhone is connected.
+  func sendRoutingIntent(_ enabled: Bool) async {
+    guard let connection else {
+      return
+    }
+    do {
+      try await send(
+        .routingIntent(RelayControlMessage.RoutingIntent(enabled: enabled)),
+        on: connection
+      )
+    } catch {
+      logger.error(
+        """
+        agent control routing-intent send failed enabled=\(enabled, privacy: .public) \
         error=\(error.localizedDescription, privacy: .public) recovery=await-next-change
         """
       )
@@ -398,6 +434,14 @@ extension AgentControlListener {
     onConnectionDropped = handler
   }
 
+  /// Registers the provider answering the current routing intent and installed
+  /// state, queried once per accepted connection so the handshake syncs both.
+  func setRoutingSyncProvider(
+    _ provider: @escaping @Sendable () async -> (intent: Bool, installed: Bool)
+  ) {
+    routingSyncProvider = provider
+  }
+
   /// Fires the dropped handler when the primary control connection ends, so the
   /// controller clears the peer name. A losing transient connection from a
   /// multi-interface dial is not the primary, so its end is ignored.
@@ -423,66 +467,6 @@ extension AgentControlListener {
         peerSupportsLinkInventory = true
         Task { await self.sendLinkInventoryToCurrent() }
       }
-    }
-  }
-
-  /// Decodes one framed message from the status receive loop and routes it: a status
-  /// push surfaces its fields, a routing change drives the handler, a public address
-  /// updates the exchange, and the rest are logged.
-  func handleStreamPayload(_ data: Data) {
-    let message: RelayControlMessage
-    do {
-      message = try RelayControlMessageCodec.decode(data)
-    } catch {
-      logger.error(
-        "agent control decode failed error=\(error.localizedDescription, privacy: .public)"
-      )
-      return
-    }
-    switch message {
-    case .status(let snapshot):
-      logger.notice(
-        """
-        agent control status hasCellularPath=\(snapshot.hasCellularPath, privacy: .public) \
-        interface=\(snapshot.cellularInterface ?? "none", privacy: .public)
-        """
-      )
-      surface(status: snapshot)
-    case .error(let failure):
-      logger.error(
-        """
-        agent control error from peer code=\(failure.code, privacy: .public) \
-        message=\(failure.message, privacy: .public)
-        """
-      )
-    case .linkInventory(let payload):
-      logger.debug(
-        """
-        agent control received unexpected link-inventory \
-        count=\(payload.links.count, privacy: .public)
-        """
-      )
-    case .acknowledge(let payload):
-      logger.debug(
-        "agent control late ack requestKind=\(payload.requestKind, privacy: .public)"
-      )
-    case .setServerEndpoint:
-      logger.debug("agent control received unexpected set-server-endpoint from peer")
-    case .setRoutingEnabled(let payload):
-      logger.notice(
-        "agent control received routing enabled=\(payload.enabled, privacy: .public)")
-      onSetRoutingEnabled?(payload.enabled)
-    case .routeState:
-      logger.debug("agent control received unexpected route-state from peer")
-    case .publicAddress(let payload):
-      logger.notice(
-        """
-        agent control received peer public address \
-        ipv4=\(payload.addresses.ipv4 ?? "none", privacy: .public) \
-        ipv6=\(payload.addresses.ipv6 ?? "none", privacy: .public)
-        """
-      )
-      onPeerPublicAddress?(payload.addresses)
     }
   }
 

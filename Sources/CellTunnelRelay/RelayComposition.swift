@@ -30,6 +30,9 @@ protocol RelayControlChannel: Sendable {
     onPeerName: @escaping @MainActor (String?) -> Void,
     statusProvider: @escaping @MainActor () -> RelayControlMessage.Status
   )
+  /// Reports the agent's persisted routing intent, the value behind the Route
+  /// traffic switch, pushed on every change and on each connection handshake.
+  func setRoutingIntentHandler(_ handler: @escaping @MainActor (Bool) -> Void)
   func setPeerPublicAddressHandler(_ handler: @escaping @MainActor (AddressPair) -> Void)
   /// Registers the peer link-inventory handler, fired with the agent's
   /// relay-link candidates received over the control link.
@@ -67,6 +70,10 @@ extension PhoneControlClient: RelayControlChannel {
     self.onRouteState = onRouteState
     self.onPeerName = onPeerName
     self.statusProvider = statusProvider
+  }
+
+  func setRoutingIntentHandler(_ handler: @escaping @MainActor (Bool) -> Void) {
+    onRoutingIntent = handler
   }
 
   func setPeerPublicAddressHandler(_ handler: @escaping @MainActor (AddressPair) -> Void) {

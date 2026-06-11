@@ -273,32 +273,6 @@ public struct TunnelStartSettings: Codable, Equatable, Sendable {
   }
 }
 
-// MARK: - TunnelEnvironmentCheckResult
-
-public struct TunnelEnvironmentCheckResult: Codable, Equatable, Sendable {
-  public var name: String
-  public var value: String
-
-  public init(name: String, value: String) {
-    self.name = name
-    self.value = value
-  }
-}
-
-// MARK: - TunnelEnvironmentReport
-
-public struct TunnelEnvironmentReport: Codable, Equatable, Sendable {
-  public var checks: [TunnelEnvironmentCheckResult]
-
-  public init(checks: [TunnelEnvironmentCheckResult] = []) {
-    self.checks = checks
-  }
-
-  public var renderedOutput: String {
-    checks.map { "\($0.name)=\($0.value)" }.joined(separator: "\n")
-  }
-}
-
 // MARK: - TunnelDaemonStatusSnapshot
 
 public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
@@ -354,6 +328,14 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
   /// only by the WireGuard providers that build the snapshot, or `nil` elsewhere so
   /// the status surface reads the producer's value rather than a hardcoded literal.
   public var relayProtocol: String?
+  /// The user's routing intent as the agent holds it, the value behind the Route
+  /// traffic switch. Separate from `routeState`, which reports the routes actually
+  /// installed. `nil` from a producer that predates the field.
+  public var routingIntentEnabled: TunnelRoutingIntent?
+  /// Every relay link the agent's bridge currently holds, carrying and warm, so
+  /// one status call shows the whole link set. `nil` from a producer that
+  /// predates the field.
+  public var agentLinks: [AgentLinkStatus]?
 
   public init(
     running: Bool = false,
@@ -380,7 +362,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     relayHost: String? = nil,
     relayServerIPv4Address: String? = nil,
     relayServerIPv6Address: String? = nil,
-    relayProtocol: String? = nil
+    relayProtocol: String? = nil,
+    routingIntentEnabled: TunnelRoutingIntent? = nil,
+    agentLinks: [AgentLinkStatus]? = nil
   ) {
     self.running = running
     self.routeState = routeState
@@ -407,6 +391,8 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     self.relayServerIPv4Address = relayServerIPv4Address
     self.relayServerIPv6Address = relayServerIPv6Address
     self.relayProtocol = relayProtocol
+    self.routingIntentEnabled = routingIntentEnabled
+    self.agentLinks = agentLinks
   }
 
   public var renderedOutput: String {
@@ -417,6 +403,18 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
       "ipv4=\(ipv4Address)",
       "ipv6=\(ipv6Address)",
     ]
+    if let routingIntentEnabled {
+      lines.append("routing_intent=\(routingIntentEnabled.rawValue)")
+    }
+    if let agentLinks {
+      lines.append("links=\(agentLinks.count)")
+      for link in agentLinks {
+        lines.append(
+          "link.\(link.interfaceName)=\(link.linkClass.rawValue)"
+            + (link.isCarrying ? " carrying" : " warm")
+        )
+      }
+    }
     if let activeRelayEndpoint {
       lines.append("relay=\(activeRelayEndpoint.socketAddress)")
     }

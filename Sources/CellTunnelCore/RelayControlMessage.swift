@@ -19,6 +19,7 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
   case linkInventory(LinkInventory)
   case publicAddress(PublicAddress)
   case routeState(RouteState)
+  case routingIntent(RoutingIntent)
   case setRoutingEnabled(SetRoutingEnabled)
   case setServerEndpoint(SetServerEndpoint)
   case status(Status)
@@ -125,6 +126,20 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
     }
   }
 
+  /// Carries the agent's persisted routing intent to the iPhone over the control
+  /// link, the value behind the Route traffic switch. Sent on every intent change
+  /// and once per connection handshake, so a reconnect or app relaunch mirrors
+  /// the agent's truth immediately instead of waiting for a status poll.
+  public struct RoutingIntent: Codable, Sendable, Equatable {
+    public var version: Int
+    public var enabled: Bool
+
+    public init(enabled: Bool, version: Int = relayControlWireVersion) {
+      self.enabled = enabled
+      self.version = version
+    }
+  }
+
   public struct Failure: Codable, Sendable, Equatable {
     public var version: Int
     public var code: String
@@ -170,6 +185,8 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
       return "public-address"
     case .routeState:
       return "route-state"
+    case .routingIntent:
+      return "routing-intent"
     case .setRoutingEnabled:
       return "set-routing-enabled"
     case .setServerEndpoint:
@@ -186,6 +203,8 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
     case .error(let payload):
       return payload.version
     case .linkInventory(let payload):
+      return payload.version
+    case .routingIntent(let payload):
       return payload.version
     case .publicAddress(let payload):
       return payload.version

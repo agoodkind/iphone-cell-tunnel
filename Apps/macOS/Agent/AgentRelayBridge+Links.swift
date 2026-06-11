@@ -143,6 +143,25 @@ extension AgentRelayBridge {
     }
     egressInterfaceName = chosen
     egressConnection = carryingConnection
+    publishLinkSet(carrying: chosen)
+  }
+
+  // Publishes the full adopted-link set whenever it changes, so the status
+  // snapshot reports every warm link rather than only the carrying one. Sorted
+  // by interface name for a stable rendering.
+  private func publishLinkSet(carrying: String?) {
+    let links = phoneLinks.values
+      .map { link in
+        AgentLinkStatus(
+          interfaceName: link.interfaceName,
+          linkClass: link.linkClass,
+          isCarrying: link.interfaceName == carrying
+        )
+      }
+      .sorted { lhs, rhs in
+        lhs.interfaceName < rhs.interfaceName
+      }
+    onLinkSetChange?(links)
   }
 
   // MARK: - Interface derivation

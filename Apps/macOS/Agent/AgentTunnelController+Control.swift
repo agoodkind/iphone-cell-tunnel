@@ -92,10 +92,21 @@ extension AgentTunnelController {
       self?.peerName.withLock { $0 = nil }
       self?.peerLinks.withLock { $0 = nil }
     }
+    // Each accepted connection syncs the routing truth at handshake: the
+    // persisted intent and the route state the agent currently derives from
+    // intent and link, so a reconnect or app relaunch mirrors immediately.
+    await listener.setRoutingSyncProvider { [weak self] in
+      guard let self else {
+        return (intent: true, installed: false)
+      }
+      let intent = await routingEnabled
+      let linkUp = await phoneLinkUp
+      return (intent: intent, installed: intent && linkUp)
+    }
   }
 
-  /// Registers relay bridge callbacks that surface local link state and drive
-  /// route reconciliation.
+  /// Registers relay bridge callbacks that surface local link state, the full
+  /// adopted-link set, and the any-link-up transitions that reconcile routes.
   private func configureRelayBridgeHandlers() {
     relayBridge.onEgressInterfaceChange = { [weak self] name, linkClass, local, peer in
       self?.linkInfo.withLock { current in
@@ -110,6 +121,9 @@ extension AgentTunnelController {
     relayBridge.onAvailableLinksChange = { [weak self] links in
       self?.localLinks.withLock { $0 = links }
       Task { await self?.controlListener?.publishLinkInventory(links) }
+    }
+    relayBridge.onLinkSetChange = { [weak self] links in
+      self?.agentLinks.withLock { $0 = links }
     }
     relayBridge.onPhoneConnected = { [weak self] in
       Task { await self?.handlePhoneLink(up: true) }
@@ -133,10 +147,12 @@ extension AgentTunnelController {
     linkInfo.withLock { $0 = AgentLinkInfo() }
     localLinks.withLock { $0 = [] }
     peerLinks.withLock { $0 = nil }
+    agentLinks.withLock { $0 = [] }
     peerName.withLock { $0 = nil }
     egressPath.withLock { $0 = EgressPath() }
     relayBridge.onEgressInterfaceChange = nil
     relayBridge.onAvailableLinksChange = nil
+    relayBridge.onLinkSetChange = nil
     relayBridge.stop()
     onRelayActiveChange?(false)
     logger.notice("agent control link cleared on tunnel stop")
@@ -211,17 +227,22 @@ extension AgentTunnelController {
     merged.localAvailableLinks = localLinks.withLock { $0 }
     merged.peerAvailableLinks = peerLinks.withLock { $0 }
     merged.cellularPath = CellularPathSnapshot(egress: egressPath.withLock { $0 })
+    merged.routingIntentEnabled = TunnelRoutingIntent(enabled: routingEnabled)
+    merged.agentLinks = agentLinks.withLock { $0 }
     return merged
   }
 
   // MARK: - Routing control
 
-  /// Records the user's routing choice and reconciles routes against the live
-  /// link. Routing on with a link up installs the program routes; routing off
-  /// withdraws them. The default is passthrough, so a link comes up carrying
-  /// nothing until the user turns routing on.
+  /// Records the user's routing choice, persists it, mirrors it to the phone, and
+  /// reconciles routes against the live link. Routing on with a link up installs
+  /// the program routes; routing off withdraws them. The intent persists through
+  /// `RoutingIntentStore` and defaults to on, so a fresh start routes without a
+  /// tap.
   func setRoutingEnabled(_ enabled: Bool) async {
     routingEnabled = enabled
+    RoutingIntentStore.save(enabled)
+    await controlListener?.sendRoutingIntent(enabled)
     logger.notice(
       "agent routing set enabled=\(enabled, privacy: .public) phoneLinkUp=\(self.phoneLinkUp, privacy: .public)"
     )

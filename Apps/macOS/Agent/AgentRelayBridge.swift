@@ -90,6 +90,9 @@ final class AgentRelayBridge: @unchecked Sendable {
   /// The last reported summary set, compared on each egress recompute so the
   /// callback fires only on a real change. Touched only on `queue`.
   var lastReportedAvailableLinks: [RelayLinkSummary] = []
+  /// Fired with the full adopted-link set whenever it changes, so the status
+  /// snapshot lists every warm link, not only the carrying one.
+  var onLinkSetChange: (@Sendable ([AgentLinkStatus]) -> Void)?
 
   // MARK: - Lifecycle
 

@@ -56,6 +56,10 @@ final class PhoneControlClient {
   /// Fired with the agent's confirmed route state, so the status path reports
   /// installed routes from the agent's truth rather than the local routing intent.
   var onRouteState: (@MainActor (Bool) -> Void)?
+  /// Fired with the agent's persisted routing intent, the value behind the Route
+  /// traffic switch, so the phone mirrors the agent's truth rather than holding
+  /// its own copy. The agent re-sends it on every connection handshake.
+  var onRoutingIntent: (@MainActor (Bool) -> Void)?
   /// Fired with the connected peer's name, the agent control service the phone
   /// dialed (the Mac hostname), or `nil` when the link drops. The displayed peer
   /// name comes from here.
@@ -401,6 +405,11 @@ extension PhoneControlClient {
         "control received route-state installed=\(payload.installed, privacy: .public)"
       )
       onRouteState?(payload.installed)
+    case .routingIntent(let payload):
+      logger.notice(
+        "control received routing-intent enabled=\(payload.enabled, privacy: .public)"
+      )
+      onRoutingIntent?(payload.enabled)
     case .publicAddress(let payload):
       logger.notice(
         """
