@@ -31,11 +31,8 @@ struct ConnectionRow: Identifiable, Equatable {
   let label: String
   let value: String
   var isQualifier = false
-  /// An explicit identity for rows whose label is empty or repeated, such as the
-  /// per-path lines under the Available Interfaces header.
-  var idOverride: String?
 
-  var id: String { idOverride ?? label }
+  var id: String { label }
 
   /// Whether the value has not arrived yet, so the Mac renders the row as a redacted
   /// skeleton placeholder rather than the literal placeholder text.
@@ -506,9 +503,6 @@ struct RelayScreenModel {
         value: nonEmptyOrPlaceholder(controller.localLinkAddresses.preferredAddress)
       )
     )
-    rows.append(
-      contentsOf: availableInterfaceRows(
-        label: "Available Interfaces", links: controller.localAvailableLinks))
     rows.append(contentsOf: addressRows(prefix: "Public", controller.devicePublicAddresses))
     return ConnectionSection(title: "This Device", rows: rows)
   }
@@ -520,14 +514,12 @@ struct RelayScreenModel {
     var rows = [
       ConnectionRow(label: "Connected to", value: connectedToValue),
       ConnectionRow(label: "Connected via", value: connectedViaValue),
+      availableInterfacesRow,
       ConnectionRow(
         label: "Link IP",
         value: nonEmptyOrPlaceholder(controller.peerLinkAddresses.preferredAddress)
       ),
     ]
-    rows.append(
-      contentsOf: availableInterfaceRows(
-        label: "Available Interfaces", links: controller.peerAvailableLinks))
     rows.append(contentsOf: addressRows(prefix: "Public", controller.peerPublicAddresses))
     return ConnectionSection(title: "Peer", rows: rows)
   }
@@ -596,30 +588,25 @@ struct RelayScreenModel {
     )
   }
 
-  // The rows for one Available Interfaces entry: a single inline row for one path,
-  // a label-only header plus one value-only row per path for several, and one
-  // placeholder row for none, so the iPhone hides the empty state and the Mac
-  // skeletonizes it. The device-to-device class renders as the compact word P2P on
-  // this row only.
-  private func availableInterfaceRows(
-    label: String, links: [RelayLinkSummary]
-  ) -> [ConnectionRow] {
-    guard !links.isEmpty else {
-      return [ConnectionRow(label: label, value: emptyValuePlaceholder)]
+  // The one Available Interfaces row, its value one path per line through the same
+  // joined-multiline rendering as the Interface IPv6 row, or the placeholder when
+  // none are known, so the iPhone hides the empty state and the Mac skeletonizes it.
+  private var availableInterfacesRow: ConnectionRow {
+    ConnectionRow(
+      label: "Available Interfaces",
+      value: joinedOrPlaceholder(availableLinks.map(availableLinkValue))
+    )
+  }
+
+  // The candidates both sides report, merged and deduped by interface, so the one
+  // shared row shows the set even when only one side has reported it. Both sides
+  // describe the same device-to-device links, so the sets coincide when both report.
+  private var availableLinks: [RelayLinkSummary] {
+    var linksByInterface: [String: RelayLinkSummary] = [:]
+    for link in controller.localAvailableLinks + controller.peerAvailableLinks {
+      linksByInterface[link.interfaceName] = link
     }
-    if links.count == 1, let only = links.first {
-      return [ConnectionRow(label: label, value: availableLinkValue(only))]
-    }
-    var rows = [ConnectionRow(label: label, value: "")]
-    rows.append(
-      contentsOf: links.map { link in
-        ConnectionRow(
-          label: "",
-          value: availableLinkValue(link),
-          idOverride: "\(label)-\(link.interfaceName)"
-        )
-      })
-    return rows
+    return RelayLinkSummary.preferenceSorted(Array(linksByInterface.values))
   }
 
   // One path through the shared transport-with-id format, with `.peerToPeer`
