@@ -13,3 +13,4 @@ Sources/CellTunnelCore/Generated/
 *.xcodeproj/
 *.xcworkspace/
 xcuserdata/
+.config/mise/conf.d/swift-mk.toml
