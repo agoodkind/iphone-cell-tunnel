@@ -59,6 +59,12 @@ struct RelayStatusSample: Sendable {
   /// The carrying link's local and peer addresses, shown under `Connection`.
   var localLinkAddresses: AddressPair
   var peerLinkAddresses: AddressPair
+  /// The relay-link candidates on this side, shown on the local `Available
+  /// Interfaces` row.
+  var localAvailableLinks: [RelayLinkSummary]
+  /// The candidates the peer reports about itself, shown on the peer
+  /// `Available Interfaces` row.
+  var peerAvailableLinks: [RelayLinkSummary]
   /// The configured WireGuard endpoint hostname, shown as the relay host.
   var relayHost: String?
   /// The WireGuard server's IPv4 address, the endpoint hostname resolved to A.
@@ -90,6 +96,8 @@ struct RelayStatusSample: Sendable {
     peerPublicAddresses = snapshot.peerPublicAddresses ?? .empty
     localLinkAddresses = snapshot.localLinkAddresses ?? .empty
     peerLinkAddresses = snapshot.peerLinkAddresses ?? .empty
+    localAvailableLinks = snapshot.localAvailableLinks ?? []
+    peerAvailableLinks = snapshot.peerAvailableLinks ?? []
     relayHost = snapshot.relayHost
     relayServerIPv4Address = snapshot.relayServerIPv4Address
     relayServerIPv6Address = snapshot.relayServerIPv6Address
@@ -217,6 +225,12 @@ final class RelayController {
   var localLinkClass: RelayLinkClass?
   var localLinkAddresses = AddressPair.empty
   var peerLinkAddresses = AddressPair.empty
+  /// The relay-link candidates on this side, shown on the local `Available
+  /// Interfaces` row.
+  var localAvailableLinks: [RelayLinkSummary] = []
+  /// The candidates the peer reports about itself, shown on the peer
+  /// `Available Interfaces` row.
+  var peerAvailableLinks: [RelayLinkSummary] = []
   var devicePublicAddresses = AddressPair.empty
   /// Every address on the egress interface, recomputed off the render path once per
   /// poll so the `Interface` rows read a cached value rather than calling
@@ -389,6 +403,8 @@ final class RelayController {
     assign(\.localLinkClass, sample.localLinkClass)
     assign(\.localLinkAddresses, sample.localLinkAddresses)
     assign(\.peerLinkAddresses, sample.peerLinkAddresses)
+    assign(\.localAvailableLinks, sample.localAvailableLinks)
+    assign(\.peerAvailableLinks, sample.peerAvailableLinks)
     assign(\.backendDevicePublicAddresses, sample.devicePublicAddresses)
     assign(\.peerPublicAddresses, sample.peerPublicAddresses)
     assign(\.relayHost, sample.relayHost)

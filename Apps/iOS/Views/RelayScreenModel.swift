@@ -31,8 +31,11 @@ struct ConnectionRow: Identifiable, Equatable {
   let label: String
   let value: String
   var isQualifier = false
+  /// An explicit identity for rows whose label is empty or repeated, such as the
+  /// per-path lines under the Available Interfaces header.
+  var idOverride: String?
 
-  var id: String { label }
+  var id: String { idOverride ?? label }
 
   /// Whether the value has not arrived yet, so the Mac renders the row as a redacted
   /// skeleton placeholder rather than the literal placeholder text.
@@ -503,6 +506,9 @@ struct RelayScreenModel {
         value: nonEmptyOrPlaceholder(controller.localLinkAddresses.preferredAddress)
       )
     )
+    rows.append(
+      contentsOf: availableInterfaceRows(
+        label: "Available Interfaces", links: controller.localAvailableLinks))
     rows.append(contentsOf: addressRows(prefix: "Public", controller.devicePublicAddresses))
     return ConnectionSection(title: "This Device", rows: rows)
   }
@@ -519,6 +525,9 @@ struct RelayScreenModel {
         value: nonEmptyOrPlaceholder(controller.peerLinkAddresses.preferredAddress)
       ),
     ]
+    rows.append(
+      contentsOf: availableInterfaceRows(
+        label: "Available Interfaces", links: controller.peerAvailableLinks))
     rows.append(contentsOf: addressRows(prefix: "Public", controller.peerPublicAddresses))
     return ConnectionSection(title: "Peer", rows: rows)
   }
@@ -585,6 +594,39 @@ struct RelayScreenModel {
       controller.localLinkClass?.displayName,
       interface: controller.localLinkInterfaceName
     )
+  }
+
+  // The rows for one Available Interfaces entry: a single inline row for one path,
+  // a label-only header plus one value-only row per path for several, and one
+  // placeholder row for none, so the iPhone hides the empty state and the Mac
+  // skeletonizes it. The device-to-device class renders as the compact word P2P on
+  // this row only.
+  private func availableInterfaceRows(
+    label: String, links: [RelayLinkSummary]
+  ) -> [ConnectionRow] {
+    guard !links.isEmpty else {
+      return [ConnectionRow(label: label, value: emptyValuePlaceholder)]
+    }
+    if links.count == 1, let only = links.first {
+      return [ConnectionRow(label: label, value: availableLinkValue(only))]
+    }
+    var rows = [ConnectionRow(label: label, value: "")]
+    rows.append(
+      contentsOf: links.map { link in
+        ConnectionRow(
+          label: "",
+          value: availableLinkValue(link),
+          idOverride: "\(label)-\(link.interfaceName)"
+        )
+      })
+    return rows
+  }
+
+  // One path through the shared transport-with-id format, with `.peerToPeer`
+  // compacted to `P2P` here while the `Connected via` row keeps `displayName`.
+  private func availableLinkValue(_ link: RelayLinkSummary) -> String {
+    let classWord = link.linkClass == .peerToPeer ? "P2P" : link.linkClass.displayName
+    return transportLabel(classWord, interface: link.interfaceName)
   }
 
   // `name (interface)`, or `name` alone when the interface id is absent, falling
