@@ -59,6 +59,32 @@ extension PhoneRelayForwarder {
     macLinks.removeAll()
     egressConnection = nil
     egressInterfaceName = nil
+    // The control link dropped, so the prior session id is stale; clear it so
+    // re-dialed links wait for the next promotion's id rather than priming with a
+    // value the agent no longer honors.
+    currentSessionID = nil
+    recomputeEgress()
+  }
+
+  /// Stores the session id and primes every ready link not yet primed under it,
+  /// so a link brought up before the id arrived becomes carryable. A changed id
+  /// clears the primed flags first, so each ready link re-primes under the new
+  /// value.
+  func applySessionIDOnQueue(_ sessionID: UInt64) {
+    let changed = currentSessionID != sessionID
+    currentSessionID = sessionID
+    if changed {
+      for name in macLinks.keys {
+        macLinks[name]?.isPrimed = false
+      }
+    }
+    for (name, link) in macLinks where link.isReady && !link.isPrimed {
+      sendPrime(on: link.connection, sessionID: sessionID)
+      macLinks[name]?.isPrimed = true
+    }
+    logger.notice(
+      "phone relay session applied changed=\(changed, privacy: .public)"
+    )
     recomputeEgress()
   }
 
@@ -109,7 +135,7 @@ extension PhoneRelayForwarder {
       logger.notice(
         "phone relay link ready interface=\(interfaceName, privacy: .public)"
       )
-      primeLink(connection)
+      primeLinkIfPossible(interfaceName: interfaceName)
       receiveFromMac(on: connection, interfaceName: interfaceName)
       recomputeEgress()
     case .failed(let error):
@@ -184,14 +210,30 @@ extension PhoneRelayForwarder {
     recomputeEgress()
   }
 
-  // A UDP NWConnection has no peer until the first datagram is sent, so the
-  // agent cannot learn the iPhone source endpoint to route replies. Send one
-  // heartbeat datagram so the agent adopts this connection as a link. The relay
-  // never forwards heartbeats, so the prime never reaches WireGuard.
-  private func primeLink(_ connection: NWConnection) {
+  // Primes a ready link with the current session id when one is known. A link
+  // dialed before the control session existed stays unprimed and uncarryable
+  // until `applySessionIDOnQueue` primes it, so the iPhone never sends relay
+  // traffic on a link the agent would reject for lacking the id.
+  private func primeLinkIfPossible(interfaceName: String) {
+    guard let sessionID = currentSessionID,
+      let link = macLinks[interfaceName],
+      link.isReady, !link.isPrimed
+    else {
+      return
+    }
+    sendPrime(on: link.connection, sessionID: sessionID)
+    macLinks[interfaceName]?.isPrimed = true
+  }
+
+  // A UDP NWConnection has no peer until the first datagram is sent, so the agent
+  // cannot learn the iPhone source endpoint to route replies. Send the session
+  // prime carrying the agent's current id so the agent adopts this connection as
+  // a link bound to the promoted control session. The relay never forwards primes
+  // by length, so the prime never reaches WireGuard.
+  private func sendPrime(on connection: NWConnection, sessionID: UInt64) {
     let endpoint = connection.endpoint
     connection.send(
-      content: RelayHeartbeat.payload,
+      content: RelaySessionPrime.payload(sessionID: sessionID),
       completion: .contentProcessed { error in
         if let error {
           logger.error(
@@ -214,7 +256,7 @@ extension PhoneRelayForwarder {
   /// ready links are carrying candidates.
   func recomputeEgress() {
     let openReady = macLinks.values
-      .filter(\.isReady)
+      .filter(\.isCarryable)
       .map { link in
         RelayLinkSnapshot(interfaceName: link.interfaceName, linkClass: link.linkClass)
       }
@@ -237,7 +279,7 @@ extension PhoneRelayForwarder {
     egressConnection = carryingConnection
     updatePeerState(hasEgress: egressConnection != nil)
     let summaries = RelayLinkSummary.preferenceSorted(
-      macLinks.values.filter(\.isReady).map { link in
+      macLinks.values.filter(\.isCarryable).map { link in
         RelayLinkSummary(interfaceName: link.interfaceName, linkClass: link.linkClass)
       }
     )
@@ -304,7 +346,7 @@ extension PhoneRelayForwarder {
   /// link keeps resetting its counter while a dead link's counter climbs.
   private func onHeartbeatTick() {
     var staleNames: [String] = []
-    for (name, link) in macLinks where link.isReady {
+    for (name, link) in macLinks where link.isCarryable {
       sendHeartbeat(on: link.connection)
       let ticks = (macLinks[name]?.ticksSinceInbound ?? 0) + 1
       macLinks[name]?.ticksSinceInbound = ticks

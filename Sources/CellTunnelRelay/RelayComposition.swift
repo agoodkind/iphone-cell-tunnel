@@ -39,6 +39,9 @@ protocol RelayControlChannel: Sendable {
   func setPeerAvailableLinksHandler(
     _ handler: @escaping @MainActor ([RelayLinkSummary]) -> Void
   )
+  /// Registers the relay-session handler, fired with the agent's current session
+  /// id so the forwarder stamps it on every relay prime.
+  func setRelaySessionHandler(_ handler: @escaping @MainActor (UInt64) -> Void)
   func setConnectionReadyHandler(_ handler: @escaping @MainActor () -> Void)
   /// Reports the Mac agent control services the browser currently sees, each a
   /// selectable peer. The engine stores them for the served snapshot and decides
@@ -86,6 +89,12 @@ extension PhoneControlClient: RelayControlChannel {
     _ handler: @escaping @MainActor ([RelayLinkSummary]) -> Void
   ) {
     onPeerAvailableLinks = handler
+  }
+
+  /// Registers the relay-session handler, fired with the agent's current session
+  /// id so the forwarder stamps it on every relay prime.
+  func setRelaySessionHandler(_ handler: @escaping @MainActor (UInt64) -> Void) {
+    onRelaySession = handler
   }
 
   func setConnectionReadyHandler(_ handler: @escaping @MainActor () -> Void) {

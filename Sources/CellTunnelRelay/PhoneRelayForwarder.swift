@@ -27,11 +27,22 @@ struct PhoneMacLink {
   let linkClass: RelayLinkClass
   let connection: NWConnection
   var isReady: Bool
+  /// Whether this link has sent its session prime, the datagram carrying the
+  /// agent's current relay-session token. A link is a carrying candidate and a
+  /// heartbeat target only once primed, so the iPhone never sends relay traffic
+  /// on a link the agent would reject for lacking the session token.
+  var isPrimed: Bool = false
   /// Heartbeat ticks elapsed since the last datagram arrived on this link. Reset
   /// to zero on every inbound datagram and incremented once per heartbeat tick;
   /// a link that crosses the stale limit is re-dialed because a UDP connection
   /// never reports that its peer went away.
   var ticksSinceInbound: Int = 0
+
+  /// Whether the link may carry relay traffic: its connection is up and it has
+  /// primed with the current session token.
+  var isCarryable: Bool {
+    isReady && isPrimed
+  }
 }
 
 // MARK: - PhoneRelayForwarder
@@ -82,6 +93,10 @@ final class PhoneRelayForwarder: @unchecked Sendable {
   // an empty datagram on every ready link and re-dials any link gone silent.
   var lastKnownInterfaces: [String: RelayMacInterface] = [:]
   var heartbeatTimer: DispatchSourceTimer?
+  // The agent's current relay-session id, received over the control link and
+  // stamped on every link's prime. `nil` until the first control session is
+  // established, when no link may prime and so none may carry.
+  var currentSessionID: UInt64?
 
   var cellularConnection: NWConnection?
   var endpointFamily = RelayAddressFamily.ipv4
@@ -170,6 +185,16 @@ final class PhoneRelayForwarder: @unchecked Sendable {
   func resetLinks() {
     queue.async { [weak self] in
       self?.resetLinksOnQueue()
+    }
+  }
+
+  /// Stores the agent's current relay-session id and primes every ready link with
+  /// it, so links brought up before the control session existed become carryable
+  /// and a rotated id re-primes the links under the new value. The agent admits a
+  /// link only from a prime carrying this id.
+  func updateSessionID(_ sessionID: UInt64) {
+    queue.async { [weak self] in
+      self?.applySessionIDOnQueue(sessionID)
     }
   }
 

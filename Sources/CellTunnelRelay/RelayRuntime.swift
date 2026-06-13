@@ -395,28 +395,6 @@ public final class RelayRuntime: @unchecked Sendable {
     }
   }
 
-  // Registers the secondary control handlers: the peer's public address, the
-  // peer's link inventory, the connection-ready refresh, the mirrored routing
-  // intent, and the discovered-services feed.
-  @MainActor
-  private func registerControlHandlers(on client: any RelayControlChannel) {
-    client.setPeerPublicAddressHandler { [weak self] addresses in
-      self?.publicExchange?.received(addresses)
-    }
-    client.setPeerAvailableLinksHandler { [weak self] links in
-      self?.statusState.withLock { $0.peerAvailableLinks = links }
-    }
-    client.setConnectionReadyHandler { [weak self] in
-      self?.refreshDevicePublicAddress()
-    }
-    client.setRoutingIntentHandler { [weak self] enabled in
-      self?.statusState.withLock { $0.routingIntent = TunnelRoutingIntent(enabled: enabled) }
-    }
-    client.setServicesChangedHandler { [weak self] services in
-      self?.applyDiscoveredServices(services)
-    }
-  }
-
   // Stores the discovered Mac control services for the snapshot and resolves which
   // one to dial: the standing selection when still present, otherwise the lone peer
   // auto-selected. With several peers and no selection nothing dials until the user
@@ -465,6 +443,35 @@ public final class RelayRuntime: @unchecked Sendable {
         hasIPv6=\(resolved.ipv6 != nil, privacy: .public)
         """
       )
+    }
+  }
+}
+
+// MARK: - Control handler registration
+
+extension RelayRuntime {
+  // Registers the secondary control handlers: the peer's public address, the
+  // peer's link inventory, the relay-session id feed, the connection-ready
+  // refresh, the mirrored routing intent, and the discovered-services feed.
+  @MainActor
+  func registerControlHandlers(on client: any RelayControlChannel) {
+    client.setPeerPublicAddressHandler { [weak self] addresses in
+      self?.publicExchange?.received(addresses)
+    }
+    client.setPeerAvailableLinksHandler { [weak self] links in
+      self?.statusState.withLock { $0.peerAvailableLinks = links }
+    }
+    client.setRelaySessionHandler { [weak self] sessionID in
+      self?.forwarder.updateSessionID(sessionID)
+    }
+    client.setConnectionReadyHandler { [weak self] in
+      self?.refreshDevicePublicAddress()
+    }
+    client.setRoutingIntentHandler { [weak self] enabled in
+      self?.statusState.withLock { $0.routingIntent = TunnelRoutingIntent(enabled: enabled) }
+    }
+    client.setServicesChangedHandler { [weak self] services in
+      self?.applyDiscoveredServices(services)
     }
   }
 }

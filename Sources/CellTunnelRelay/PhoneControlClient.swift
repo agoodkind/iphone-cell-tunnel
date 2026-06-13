@@ -70,6 +70,10 @@ final class PhoneControlClient {
   /// Fired with the agent's relay-link candidates received over the control
   /// link, shown on the peer `Available Interfaces` row.
   var onPeerAvailableLinks: (@MainActor ([RelayLinkSummary]) -> Void)?
+  /// Fired with the agent's current relay-session id, minted on each control
+  /// promotion, so the forwarder stamps it on every relay prime and the agent
+  /// admits this phone's links.
+  var onRelaySession: (@MainActor (UInt64) -> Void)?
   /// Fired when the control connection reaches ready, so the public-address
   /// exchange sends this device's address over a link that now exists. The data
   /// link comes up on its own timeline, so the send is driven by the control link
@@ -419,6 +423,9 @@ extension PhoneControlClient {
         """
       )
       onPeerPublicAddress?(payload.addresses)
+    case .relaySession(let payload):
+      logger.notice("control received relay-session")
+      onRelaySession?(payload.sessionID)
     }
   }
 
