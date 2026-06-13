@@ -33,6 +33,9 @@ struct AgentPhoneLink {
   let interfaceName: String
   let linkClass: RelayLinkClass
   let connection: NWConnection
+  /// The relay-session id the admitting prime carried, so a session rotation can
+  /// drop the links that belong to a prior promoted peer.
+  let sessionID: UInt64
   /// Reaper ticks elapsed since the last datagram arrived on this link. Reset to
   /// zero on every inbound datagram and incremented once per reaper tick; a link
   /// past the reap limit is dropped because a UDP connection never reports that
@@ -59,7 +62,9 @@ struct AgentPhoneLink {
 final class AgentRelayBridge: @unchecked Sendable {
   let queue = DispatchQueue(label: "io.goodkind.celltunnel.agent.relay")
   private var listener: NWListener?
-  private var macConnection: NWConnection?
+  // The Mac tunnel-extension loopback connection. Read by the receive extension's
+  // forward path, so it is internal rather than private.
+  var macConnection: NWConnection?
 
   // The open phone links keyed by Mac-facing interface name, the cached carrying
   // pointer the upload path reads per datagram, and the interface it points at.
@@ -70,6 +75,13 @@ final class AgentRelayBridge: @unchecked Sendable {
   var reaperTimer: DispatchSourceTimer?
   var didLogHeartbeatEcho = false
   var didLogPhoneReceiveError = false
+  var didLogForeignSession = false
+  var didLogPhoneReceive = false
+  /// The relay-session id the control listener last minted on promotion. A phone
+  /// connection is admitted only when its prime carries this value, so the data
+  /// plane serves only the promoted control peer. `nil` before the first control
+  /// connection is promoted, when no relay link may be admitted.
+  var currentSessionID: UInt64?
 
   /// Fired when the first phone link goes live and when the last one drops, so
   /// the agent tells the Mac extension to install or withdraw routes with the
@@ -106,6 +118,32 @@ final class AgentRelayBridge: @unchecked Sendable {
     queue.async { [weak self] in
       self?.stopOnQueue()
     }
+  }
+
+  /// Installs the relay-session id minted when the control listener promoted a
+  /// connection. The bridge admits new links only from primes carrying this id,
+  /// and immediately drops links stamped with a prior id, so a new promotion (a
+  /// reconnect or a switch to a different peer) rebinds the data plane to the
+  /// peer just promoted with no overlap.
+  func updateSessionID(_ sessionID: UInt64) {
+    queue.async { [weak self] in
+      self?.applySessionID(sessionID)
+    }
+  }
+
+  private func applySessionID(_ sessionID: UInt64) {
+    guard currentSessionID != sessionID else {
+      return
+    }
+    currentSessionID = sessionID
+    let stale = phoneLinks.values.filter { $0.sessionID != sessionID }
+    for link in stale {
+      link.connection.cancel()
+      removePhoneLink(for: link.connection, reason: "session-rotated")
+    }
+    logger.notice(
+      "agent relay bridge session updated dropped=\(stale.count, privacy: .public)"
+    )
   }
 
   private func startOnQueue(serviceName: String) {
@@ -160,6 +198,8 @@ final class AgentRelayBridge: @unchecked Sendable {
     lastReportedAvailableLinks = []
     egressConnection = nil
     egressInterfaceName = nil
+    currentSessionID = nil
+    didLogForeignSession = false
     if hadReportedAvailableLinks {
       onAvailableLinksChange?([])
     }
@@ -217,7 +257,7 @@ final class AgentRelayBridge: @unchecked Sendable {
     }
   }
 
-  private func clearIfCurrent(_ connection: NWConnection, isLoopback: Bool, reason: String) {
+  func clearIfCurrent(_ connection: NWConnection, isLoopback: Bool, reason: String) {
     if isLoopback {
       if macConnection === connection {
         macConnection = nil
@@ -225,125 +265,6 @@ final class AgentRelayBridge: @unchecked Sendable {
     } else {
       removePhoneLink(for: connection, reason: reason)
     }
-  }
-
-  // MARK: - Datagram bridge
-
-  private func receive(on connection: NWConnection, fromMac: Bool) {
-    connection.receiveMessage { [weak self, weak connection] data, _, _, error in
-      guard let self, let connection else {
-        return
-      }
-      if let error {
-        if fromMac {
-          logger.error(
-            """
-            agent relay bridge receive failed mac=true \
-            error=\(error.localizedDescription, privacy: .public)
-            """
-          )
-          connection.cancel()
-          clearIfCurrent(connection, isLoopback: true, reason: "receive-error")
-          return
-        }
-        // An empty UDP datagram on a phone link, the iPhone's prime and its
-        // heartbeats, surfaces here as NWError ENODATA rather than as data, so
-        // this error IS the heartbeat. Treat it as one: admit or refresh the
-        // link and echo it back so the iPhone's staleness counter resets.
-        // Dropping the link here instead tore healthy links down every ~2s.
-        if case .posix(let code) = error, code == .ENODATA {
-          notePhoneActivity(on: connection)
-          noteLinkActivity(on: connection)
-          sendHeartbeatEcho(on: connection)
-        }
-        if !didLogPhoneReceiveError {
-          didLogPhoneReceiveError = true
-          logger.notice(
-            "agent relay bridge phone receive error tolerated; re-arming, reaper owns liveness"
-          )
-        }
-        // Re-arm only while this connection is still an adopted link. A replaced
-        // or cancelled connection keeps erroring on every receive, so re-arming
-        // it would spin this callback forever on the relay queue.
-        if isAdoptedPhoneLink(connection) {
-          receive(on: connection, fromMac: false)
-        }
-        return
-      }
-      if !fromMac {
-        // The first datagram on a phone connection (the prime) admits the
-        // link; every later datagram, empty heartbeat or real data,
-        // refreshes its liveness so a quiet but working link is not reaped.
-        notePhoneActivity(on: connection)
-        noteLinkActivity(on: connection)
-      }
-      if let data, !data.isEmpty {
-        if !fromMac, RelayHeartbeat.isHeartbeat(data) {
-          // The iPhone's heartbeat: echo it so that side confirms this link is
-          // alive end to end and does not re-dial a working link.
-          sendHeartbeatEcho(on: connection)
-        } else {
-          forward(data, fromMac: fromMac)
-        }
-      } else if !fromMac {
-        // A legacy empty heartbeat that survived delivery: echo it too.
-        sendHeartbeatEcho(on: connection)
-      }
-      receive(on: connection, fromMac: fromMac)
-    }
-  }
-
-  private func forward(_ data: Data, fromMac: Bool) {
-    let target = fromMac ? egressConnection : macConnection
-    guard let target else {
-      return
-    }
-    target.send(
-      content: data,
-      completion: .contentProcessed { [weak self, weak target] error in
-        guard let error else {
-          return
-        }
-        logger.error(
-          """
-          agent relay bridge send failed toMac=\(!fromMac, privacy: .public) \
-          error=\(error.localizedDescription, privacy: .public)
-          """
-        )
-        // A send failure on the carrying phone link (interface gone, no
-        // route to host) is the reliable signal that a UDP path went away,
-        // since the connection state may never reach .failed. Drop the link
-        // so the carrying choice moves to another open link at once.
-        guard fromMac, let self, let target else {
-          return
-        }
-        target.cancel()
-        removePhoneLink(for: target, reason: "send-error")
-      }
-    )
-  }
-
-  // MARK: - Heartbeat and reaper
-
-  // Echoes the iPhone's heartbeat back on the same link so that side can tell
-  // the link is alive end to end. A heartbeat is never forwarded to the Mac, and
-  // the echo carries the heartbeat payload because an empty datagram does not
-  // reliably arrive on the iPhone side.
-  private func sendHeartbeatEcho(on connection: NWConnection) {
-    if !didLogHeartbeatEcho {
-      didLogHeartbeatEcho = true
-      logger.notice("agent relay bridge heartbeat echo path active")
-    }
-    connection.send(
-      content: RelayHeartbeat.payload,
-      completion: .contentProcessed { error in
-        if let error {
-          logger.error(
-            "agent relay bridge heartbeat echo failed error=\(error.localizedDescription, privacy: .public)"
-          )
-        }
-      }
-    )
   }
 
   /// Starts the repeating reaper once the listener is up. It ages each phone link

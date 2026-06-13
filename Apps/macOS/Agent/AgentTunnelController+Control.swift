@@ -92,6 +92,12 @@ extension AgentTunnelController {
       self?.peerName.withLock { $0 = nil }
       self?.peerLinks.withLock { $0 = nil }
     }
+    // Each promotion mints a relay-session id; install it into the bridge so it
+    // admits relay links only from the peer just promoted and drops links
+    // stamped with a prior session's id.
+    await listener.setSessionEstablishedHandler { [weak self] sessionID in
+      self?.relayBridge.updateSessionID(sessionID)
+    }
     // Each accepted connection syncs the routing truth at handshake: the
     // persisted intent and the route state the agent currently derives from
     // intent and link, so a reconnect or app relaunch mirrors immediately.

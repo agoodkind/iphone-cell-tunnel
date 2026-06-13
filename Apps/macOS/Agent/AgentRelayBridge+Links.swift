@@ -24,10 +24,12 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 extension AgentRelayBridge {
   // MARK: - Membership
 
-  /// Adds or replaces the phone link for the interface a connection arrived on.
-  /// A redial on the same interface replaces the old connection. The first link
-  /// installs routes; the carrying link is recomputed every time the set changes.
-  func addPhoneLink(for connection: NWConnection) {
+  /// Adds or replaces the phone link for the interface a connection arrived on,
+  /// stamped with the session token its admitting prime carried so a later
+  /// session rotation can drop it. A redial on the same interface replaces the
+  /// old connection. The first link installs routes; the carrying link is
+  /// recomputed every time the set changes.
+  func addPhoneLink(for connection: NWConnection, sessionID: UInt64) {
     let resolved = phoneInterface(for: connection)
     let wasEmpty = phoneLinks.isEmpty
     if let existing = phoneLinks[resolved.name], existing.connection !== connection {
@@ -42,7 +44,8 @@ extension AgentRelayBridge {
     phoneLinks[resolved.name] = AgentPhoneLink(
       interfaceName: resolved.name,
       linkClass: resolved.linkClass,
-      connection: connection
+      connection: connection,
+      sessionID: sessionID
     )
     logger.notice(
       """
@@ -76,19 +79,9 @@ extension AgentRelayBridge {
     }
   }
 
-  /// Admits a phone link on the first datagram seen on its connection (the
-  /// iPhone's adoption prime). Later datagrams find the link already present and
-  /// do nothing here.
-  func notePhoneActivity(on connection: NWConnection) {
-    if interfaceName(of: connection) != nil {
-      return
-    }
-    addPhoneLink(for: connection)
-  }
-
   /// Resets the reaper counter for the link a datagram arrived on, so an active
   /// link is never reaped. Called on every inbound phone datagram, after the link
-  /// has been admitted by `notePhoneActivity`.
+  /// has been admitted by its session prime.
   func noteLinkActivity(on connection: NWConnection) {
     guard let name = interfaceName(of: connection) else {
       return

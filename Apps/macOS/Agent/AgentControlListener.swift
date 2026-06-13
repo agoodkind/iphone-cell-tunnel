@@ -54,6 +54,11 @@ actor AgentControlListener {
   /// connection is promoted, so an old iPhone never receives a message it
   /// cannot decode.
   private var peerSupportsLinkInventory = false
+  /// The relay-session id for the currently promoted control connection, minted
+  /// on each promotion and sent to the iPhone. The relay bridge admits a link
+  /// only from a prime carrying this value, so the data plane follows the
+  /// promoted peer.
+  private var currentSessionID: UInt64 = 0
 
   /// Invoked with the user's routing choice when the iPhone pushes it over the
   /// control link, so the controller can install or withdraw the program routes.
@@ -73,6 +78,10 @@ actor AgentControlListener {
   /// the connected peer name. The peer name follows the control link, not the
   /// data link, so a brief data-link blip does not clear it.
   private var onConnectionDropped: (@Sendable () -> Void)?
+  /// Invoked with the freshly minted relay-session id each time a connection is
+  /// promoted, so the controller installs it into the relay bridge as the value
+  /// relay primes must carry to be admitted.
+  private var onSessionEstablished: (@Sendable (UInt64) -> Void)?
   /// This host's latest measured public address, set by the controller as it
   /// probes. It is sent on each accepted control connection once that connection's
   /// handshake completes, so a freshly connected peer receives it at once.
@@ -184,6 +193,13 @@ actor AgentControlListener {
       peerSupportsLinkInventory = false
       previous?.cancel()
       startReceiveLoop(on: newConnection)
+      // Mint a fresh relay-session id for this promotion, install it into the
+      // bridge before the iPhone could prime with it, then send it. The bridge
+      // admits relay links only from primes carrying this id, so a new promotion
+      // rebinds the data plane to the peer just promoted.
+      currentSessionID = UInt64.random(in: .min ... .max)
+      onSessionEstablished?(currentSessionID)
+      await sendRelaySession(currentSessionID, on: newConnection)
       if !latestDeviceAddress.isEmpty {
         await sendPublicAddress(latestDeviceAddress, on: newConnection)
       }
@@ -432,6 +448,32 @@ extension AgentControlListener {
   /// Registers the control-connection-dropped handler before the listener starts.
   func setConnectionDroppedHandler(_ handler: @escaping @Sendable () -> Void) {
     onConnectionDropped = handler
+  }
+
+  /// Registers the session-established handler before the listener starts, fired
+  /// with the minted relay-session id on each promotion.
+  func setSessionEstablishedHandler(_ handler: @escaping @Sendable (UInt64) -> Void) {
+    onSessionEstablished = handler
+  }
+
+  /// Sends the freshly minted relay-session id to the iPhone on the just promoted
+  /// connection, so the phone stamps it on every relay prime and the bridge
+  /// admits its links. Sent on the promoted connection directly, since it is the
+  /// first thing after promotion.
+  func sendRelaySession(_ sessionID: UInt64, on connection: NWConnection) async {
+    do {
+      try await send(
+        .relaySession(RelayControlMessage.RelaySession(sessionID: sessionID)),
+        on: connection
+      )
+    } catch {
+      logger.error(
+        """
+        agent control relay-session send failed \
+        error=\(error.localizedDescription, privacy: .public) recovery=await-next-promotion
+        """
+      )
+    }
   }
 
   /// Registers the provider answering the current routing intent and installed

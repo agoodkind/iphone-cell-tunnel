@@ -65,6 +65,8 @@ extension AgentControlListener {
       logger.debug("agent control received unexpected route-state from peer")
     case .routingIntent:
       logger.debug("agent control received unexpected routing-intent from peer")
+    case .relaySession:
+      logger.debug("agent control received unexpected relay-session from peer")
     case .publicAddress(let payload):
       logger.notice(
         """
