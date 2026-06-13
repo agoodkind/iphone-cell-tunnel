@@ -16,6 +16,9 @@ private let logger = CellTunnelLog.logger(category: .app)
 
 private let emptyValuePlaceholder = "(none)"
 private let openLoginItemsTitle = "Open Login Items"
+// The Mac selector subtitle when no iPhone has dialed in, the only new copy the
+// roster introduces; the one-or-more not-selected case reuses the status label.
+private let noPeersAvailableSubtitle = "No peers available"
 private let dataSectionTitle = "Data"
 private let currentSpeedSectionTitle = "Current Speed"
 private let bytesCountStyle = ByteCountFormatStyle(style: .file, spellsOutZero: false)
@@ -321,12 +324,6 @@ struct RelayScreenModel {
     Task { await controller.installTunnel(configURL: configURL) }
   }
 
-  /// Selects the discovered peer to connect to, the reduced-tier peers control.
-  func selectPeer(id: String) {
-    logger.notice("relay screen select peer requested")
-    Task { await controller.selectPeer(id: id) }
-  }
-
   /// The title for the setup screen's primary action, deferring to the agent
   /// approval state when the agent is registered but pending.
   var setupActionTitle: String {
@@ -343,25 +340,33 @@ struct RelayScreenModel {
 
   // MARK: - Peers
 
-  /// The discovered peers, the selected peer's id, and whether the peers group shows.
-  /// The group appears only once discovery has found peers and none is selected, so the
-  /// user can pick a Mac to relay through. While discovery has found nothing the header
-  /// already reads the searching state, so the group stays hidden to avoid repeating it.
-  var discoveredPeers: [TunnelRelayService] {
-    controller.discoveredPeers
+  /// The roster of iPhones dialed into the Mac, the set the Mac selector lists and
+  /// chooses egress through. Empty on the iPhone, which hosts no roster and shows no
+  /// selector.
+  var connectedPeers: [ConnectedPeer] {
+    controller.connectedPeers
   }
 
-  var selectedPeerID: String? {
-    controller.selectedPeerID
-  }
-
-  var showsPeers: Bool {
-    switch status {
-    case .noPeerSelected:
-      return true
-    case .error, .noAgent, .noPeersFound, .noTunnelInstalled, .passthrough, .relayEnabled:
-      return false
+  /// The Mac selector's subtitle, from the state matrix over (a peer selected or not)
+  /// and the roster count. None selected with no peers reads the new
+  /// `No peers available`; none selected with one or more reuses the existing
+  /// `No peer selected`; a selected peer leaves the subtitle to the screen's own
+  /// status word, so the tile shows only the checked roster.
+  var rosterSubtitle: String? {
+    if connectedPeers.contains(where: \.isSelected) {
+      return nil
     }
+    if connectedPeers.isEmpty {
+      return noPeersAvailableSubtitle
+    }
+    return RelayStatus.noPeerSelected.label
+  }
+
+  /// Selects which dialed-in iPhone the Mac routes egress through, the reduced-tier
+  /// roster control.
+  func selectEgressPeer(id: String) {
+    logger.notice("relay screen select egress peer requested")
+    Task { await controller.selectEgressPeer(id: id) }
   }
 
   // MARK: - Sections
@@ -504,12 +509,7 @@ struct RelayScreenModel {
     )
     var rows = [egress]
     rows.append(interfaceAddressRow())
-    rows.append(
-      ConnectionRow(
-        label: "Link IP",
-        value: nonEmptyOrPlaceholder(controller.localLinkAddresses.preferredAddress)
-      )
-    )
+    rows.append(addressRow(prefix: "Link", controller.localLinkAddresses))
     rows.append(addressRow(prefix: "Public", controller.devicePublicAddresses))
     return ConnectionSection(title: "This Device", rows: rows)
   }
@@ -521,10 +521,7 @@ struct RelayScreenModel {
     var rows = [
       ConnectionRow(label: "Connected to", value: connectedToValue),
       ConnectionRow(label: "Connected via", value: connectedViaValue),
-      ConnectionRow(
-        label: "Link IP",
-        value: nonEmptyOrPlaceholder(controller.peerLinkAddresses.preferredAddress)
-      ),
+      addressRow(prefix: "Link", controller.peerLinkAddresses),
     ]
     rows.append(addressRow(prefix: "Public", controller.peerPublicAddresses))
     return ConnectionSection(title: "Peer", rows: rows)

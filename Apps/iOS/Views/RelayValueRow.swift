@@ -64,11 +64,14 @@ struct RelayValueRow: View {
   }
 
   // Label on top, value beneath, left-aligned: the layout for any value that cannot
-  // share the line, including a multi-line value.
+  // share the line, including a multi-line value. The value is fixed to its natural
+  // height so a long line wraps in full rather than truncating with an ellipsis when
+  // the container is narrow.
   private var stacked: some View {
     VStack(alignment: .leading, spacing: stackedRowSpacing) {
       Text(row.label)
       value
+        .fixedSize(horizontal: false, vertical: true)
     }
   }
 
