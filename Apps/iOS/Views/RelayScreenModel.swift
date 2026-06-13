@@ -384,12 +384,19 @@ struct RelayScreenModel {
   /// Every section in order for the Mac, with placeholder rows dropped but empty
   /// sections kept, so the Mac shows its full structure rather than collapsing to a
   /// single card. The iPhone uses `sections`, which drops empty sections entirely.
+  /// The one exception is the `Connection` section: it carries only the peer-derived
+  /// available interfaces, so when those are unknown it has nothing to show and is
+  /// dropped rather than rendered as a lone skeleton tile, matching the iPhone.
   var macSections: [ConnectionSection] {
     var result = [dataSection]
     if let currentSpeedSection {
       result.append(currentSpeedSection)
     }
-    let connection = [deviceSection, peerSection, connectionSection, relaySection]
+    var connection = [deviceSection, peerSection]
+    if hasData(connectionSection) {
+      connection.append(connectionSection)
+    }
+    connection.append(relaySection)
     result.append(contentsOf: connection.map(macRows))
     return result
   }
