@@ -282,6 +282,48 @@ public enum RelayHeartbeat {
   }
 }
 
+// MARK: - RelaySessionPrime
+
+/// The adoption-prime datagram the iPhone sends as the first message on every
+/// relay link it dials, carrying the agent's current relay-session id. The agent
+/// admits a link only when the prime's id matches the session it is serving, so
+/// the connectionless relay plane inherits the peer identity the control plane
+/// established. The frame is a one-byte tag followed by the id in big-endian, a
+/// fixed nine bytes, unambiguous by length against the one-byte heartbeat and
+/// against WireGuard traffic, whose smallest message is far larger.
+public enum RelaySessionPrime {
+  /// The leading tag byte that marks a datagram as a session prime. Distinct
+  /// from the heartbeat's `0x00` so a prime is never mistaken for liveness.
+  private static let tag: UInt8 = 0x01
+  /// The total prime length: one tag byte plus eight id bytes.
+  private static let frameLength = 9
+
+  /// The prime datagram for one session id, the tag followed by the id in
+  /// big-endian byte order.
+  public static func payload(sessionID: UInt64) -> Data {
+    var data = Data([tag])
+    var bigEndian = sessionID.bigEndian
+    withUnsafeBytes(of: &bigEndian) { buffer in
+      data.append(contentsOf: buffer)
+    }
+    return data
+  }
+
+  /// The session id carried by a datagram, or `nil` when the datagram is not a
+  /// well-formed session prime, so a heartbeat, a WireGuard packet, or any other
+  /// payload reads as `nil` and never admits a link.
+  public static func sessionID(from data: Data) -> UInt64? {
+    guard data.count == frameLength, data.first == tag else {
+      return nil
+    }
+    var value: UInt64 = 0
+    for byte in data[data.index(after: data.startIndex)...] {
+      value = (value << 8) | UInt64(byte)
+    }
+    return value
+  }
+}
+
 // MARK: - RelayLinkHealth
 
 /// Decides which known interfaces need a fresh link. The relay keeps one link per

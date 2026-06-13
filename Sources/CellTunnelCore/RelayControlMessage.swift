@@ -18,6 +18,8 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
   /// Carries the agent's relay-link candidates to the iPhone.
   case linkInventory(LinkInventory)
   case publicAddress(PublicAddress)
+  /// Carries the agent's current relay-session token to the iPhone.
+  case relaySession(RelaySession)
   case routeState(RouteState)
   case routingIntent(RoutingIntent)
   case setRoutingEnabled(SetRoutingEnabled)
@@ -152,6 +154,25 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
     }
   }
 
+  /// Carries the agent's current relay-session id to the iPhone over the control
+  /// link, minted each time the agent promotes a control connection. The iPhone
+  /// stamps it on every relay adoption-prime datagram, so the agent admits a
+  /// relay link only from the peer it is currently serving and a stray sender
+  /// cannot create or hold a link. Not a secret; a plain correlation id that
+  /// binds the connectionless relay plane to the promoted control session.
+  public struct RelaySession: Codable, Sendable, Equatable {
+    /// The session id the iPhone must echo on its relay primes.
+    public var sessionID: UInt64
+    /// The relay control wire version for this payload.
+    public var version: Int
+
+    /// Creates one relay-session payload.
+    public init(sessionID: UInt64, version: Int = relayControlWireVersion) {
+      self.sessionID = sessionID
+      self.version = version
+    }
+  }
+
   /// Carries the agent's relay-link candidates, the open phone links keyed
   /// by interface, to the iPhone over the control link, so the iPhone shows
   /// the Mac's `Available Interfaces` row. Sent only to a peer whose status
@@ -183,6 +204,8 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
       return "link-inventory"
     case .publicAddress:
       return "public-address"
+    case .relaySession:
+      return "relay-session"
     case .routeState:
       return "route-state"
     case .routingIntent:
@@ -207,6 +230,8 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
     case .routingIntent(let payload):
       return payload.version
     case .publicAddress(let payload):
+      return payload.version
+    case .relaySession(let payload):
       return payload.version
     case .routeState(let payload):
       return payload.version
