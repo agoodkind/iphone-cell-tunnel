@@ -23,6 +23,8 @@ func activateTarget(
     try activatePhoneDevice(configuration: configuration, listenerPort: listenerPort)
   case .iphoneSimulator:
     try activatePhoneSimulator(configuration: configuration, listenerPort: listenerPort)
+  case .macCatalyst:
+    try activateMacCatalyst(configuration: configuration, listenerPort: listenerPort)
   }
 }
 
@@ -56,6 +58,35 @@ func phoneSimulatorAppPath(configuration: String) -> URL {
   xcodeConfigurationBuildDirectory(
     configuration: configuration,
     platformName: iOSSimulatorPlatformName
+  ).appendingPathComponent("CellTunnelPhone.app")
+}
+
+/// Build-products launch of the Mac Catalyst UI app, symmetric with the iPhone
+/// activation paths. The app must already be built (`make run` builds before it
+/// activates); a missing bundle is a clear error rather than a silent fallback. Any
+/// running instance is terminated first so the freshly built binary runs, the Mac
+/// equivalent of the `--terminate-existing` launch the device and simulator paths
+/// use, then the bundle is opened through LaunchServices. The activation and
+/// listener-port arguments are inert on Catalyst and are forwarded only for symmetry.
+func activateMacCatalyst(configuration: String, listenerPort: UInt16? = nil) throws {
+  let appPath = macCatalystAppPath(configuration: configuration)
+  guard fileManager.fileExists(atPath: appPath.path) else {
+    throw ToolError.failure("built Mac Catalyst app not found: \(appPath.path)")
+  }
+  printToolOutput("launching: \(appPath.path)")
+  _ = runBestEffort("pkill", ["-x", "CellTunnelPhone"])
+  var openArguments = [appPath.path, "--args", phoneActivationArgument]
+  openArguments.append(contentsOf: phoneListenerPortLaunchArguments(listenerPort))
+  try run("open", openArguments)
+}
+
+/// The Mac Catalyst product bundle, resolved through `xcodeConfigurationBuildDirectory`
+/// so it lands at the signed `Products/Debug-maccatalyst` location every build writes
+/// to, never the unsigned dead-code copy under `build/`.
+func macCatalystAppPath(configuration: String) -> URL {
+  xcodeConfigurationBuildDirectory(
+    configuration: configuration,
+    platformName: macCatalystPlatformName
   ).appendingPathComponent("CellTunnelPhone.app")
 }
 

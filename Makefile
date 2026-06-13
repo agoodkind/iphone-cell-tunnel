@@ -9,7 +9,7 @@
 
 CONFIG ?= Debug
 CELL_TUNNEL_DEV := swift Tools/cell-tunnel-dev.swift
-ACTIVATION_TARGET_USAGE := mac|iphone|iphone-simulator
+ACTIVATION_TARGET_USAGE := iphone|iphone-simulator|mac-catalyst
 BUILD_TARGET_USAGE := daemon|mac|mac-catalyst|iphone-simulator|iphone-device|all
 
 SWIFT_MK_MODULES := swift-build.mk xcconfig.mk
