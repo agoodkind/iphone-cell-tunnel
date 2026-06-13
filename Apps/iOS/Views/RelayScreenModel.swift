@@ -389,7 +389,7 @@ struct RelayScreenModel {
     if let currentSpeedSection {
       result.append(currentSpeedSection)
     }
-    let connection = [deviceSection, peerSection, relaySection]
+    let connection = [deviceSection, peerSection, connectionSection, relaySection]
     result.append(contentsOf: connection.map(macRows))
     return result
   }
@@ -451,7 +451,7 @@ struct RelayScreenModel {
   /// as having data when any non-qualifier row holds a value other than the
   /// placeholder, and a qualifier such as the protocol stays whenever its section does.
   var connectionSections: [ConnectionSection] {
-    [deviceSection, peerSection, relaySection]
+    [deviceSection, peerSection, connectionSection, relaySection]
       .filter(hasData)
       .map(visibleRows)
   }
@@ -514,7 +514,6 @@ struct RelayScreenModel {
     var rows = [
       ConnectionRow(label: "Connected to", value: connectedToValue),
       ConnectionRow(label: "Connected via", value: connectedViaValue),
-      availableInterfacesRow,
       ConnectionRow(
         label: "Link IP",
         value: nonEmptyOrPlaceholder(controller.peerLinkAddresses.preferredAddress)
@@ -522,6 +521,14 @@ struct RelayScreenModel {
     ]
     rows.append(contentsOf: addressRows(prefix: "Public", controller.peerPublicAddresses))
     return ConnectionSection(title: "Peer", rows: rows)
+  }
+
+  // The connection between the two devices: the link candidates both sides report,
+  // merged into one shared row. Both ends describe the same device-to-device links,
+  // so the row is a fact about the connection rather than either side, and it sits in
+  // its own generic section instead of being duplicated under This Device and Peer.
+  private var connectionSection: ConnectionSection {
+    ConnectionSection(title: "Connection", rows: [availableInterfacesRow])
   }
 
   // The WireGuard relay: the protocol, the configured endpoint hostname, and the
