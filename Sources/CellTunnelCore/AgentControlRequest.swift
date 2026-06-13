@@ -22,6 +22,8 @@ public protocol TunnelControlClientProtocol: Sendable {
   func stopRelayDiscovery() async throws -> TunnelDiscoverySnapshot
   func listRelayServices() async throws -> TunnelDiscoverySnapshot
   func selectRelayService(serviceID: String) async throws -> TunnelDiscoverySnapshot
+  /// Selects which dialed-in iPhone the agent routes egress through, by the roster id.
+  func selectEgressPeer(peerID: String) async throws -> TunnelDaemonStatusSnapshot
 }
 
 // MARK: - AgentControlRequest

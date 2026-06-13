@@ -91,43 +91,45 @@ struct TunnelControlModelsTests {
     #expect(action == .select(reference: "relay-1"))
   }
 
-  @Test func cliExecutorPeersListsNumberedServices() async throws {
+  @Test func cliExecutorPeersListsRoster() async throws {
     let client = FakeTunnelControlClient()
 
     let output = try await runCLI(.peers, on: client)
 
-    #expect(client.events == ["listRelayServices"])
-    #expect(output == "1) CellTunnelPhone  relay-1")
+    #expect(client.events == ["status"])
+    #expect(output == "1) Alex iPhone  13452847362910")
   }
 
-  @Test func cliExecutorPeersReportsEmptyListing() async throws {
+  @Test func cliExecutorPeersReportsEmptyRoster() async throws {
     let client = FakeTunnelControlClient()
-    client.listedDiscoverySnapshotOverride = TunnelDiscoverySnapshot(
-      phase: .browsing,
-      services: []
-    )
+    client.connectedPeersOverride = []
 
     let output = try await runCLI(.peers, on: client)
 
     #expect(output == "no peers found")
   }
 
-  @Test func cliExecutorSelectByServiceIDCallsSelectRelayService() async throws {
-    let client = FakeTunnelControlClient()
-
-    let output = try await runCLI(.select(reference: "relay-1"), on: client)
-
-    #expect(client.events == ["selectRelayService"])
-    #expect(output == client.selectedDiscoverySnapshot.renderedOutput)
-  }
-
-  @Test func cliExecutorSelectByIndexResolvesServiceID() async throws {
+  @Test func cliExecutorSelectByIndexSelectsEgressPeer() async throws {
     let client = FakeTunnelControlClient()
 
     let output = try await runCLI(.select(reference: "1"), on: client)
 
-    #expect(client.events == ["listRelayServices", "selectRelayService"])
-    #expect(output == client.selectedDiscoverySnapshot.renderedOutput)
+    #expect(client.events == ["status", "selectEgressPeer"])
+    #expect(output == client.selectedStatusSnapshot.renderedOutput)
+  }
+
+  @Test func cliExecutorSelectRejectsNonIndexReference() async {
+    let client = FakeTunnelControlClient()
+
+    let thrownError = await captureError {
+      _ = try await runCLI(.select(reference: "abc"), on: client)
+    }
+
+    guard let daemonError = thrownError as? TunnelDaemonError, case .usage = daemonError else {
+      Issue.record("expected usage error, got \(String(describing: thrownError))")
+      return
+    }
+    #expect(client.events.isEmpty)
   }
 
   @Test func cliExecutorSelectByOutOfRangeIndexThrows() async {
@@ -141,7 +143,7 @@ struct TunnelControlModelsTests {
       Issue.record("expected usage error, got \(String(describing: thrownError))")
       return
     }
-    #expect(client.events == ["listRelayServices"])
+    #expect(client.events == ["status"])
   }
 
   @Test func statusSnapshotRendersDiscoverySelection() {
@@ -237,7 +239,6 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
     selectedEndpoint: nil,
     lastError: nil
   )
-  var listedDiscoverySnapshotOverride: TunnelDiscoverySnapshot?
   let listedDiscoverySnapshot = TunnelDiscoverySnapshot(
     phase: .ready,
     services: [
@@ -253,31 +254,23 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
     selectedEndpoint: nil,
     lastError: nil
   )
-  let selectedDiscoverySnapshot = TunnelDiscoverySnapshot(
-    phase: .ready,
-    services: [
-      makeRelayService(
-        serviceID: "relay-1",
-        serviceName: "CellTunnelPhone",
-        host: "iphone.local",
-        endpointHost: "fd00::44",
-        endpointPort: relayPort,
-        isSelected: true
-      )
-    ],
-    selectedServiceID: "relay-1",
-    selectedEndpoint: TunnelRelayEndpoint(
-      host: "fd00::44",
-      port: relayPort,
-      addressFamily: .ipv6
-    ),
-    lastError: nil
+  // The egress roster the CLI lists and selects from. The id is a numeric token like
+  // the real `String(UInt64)` ids, so `select` resolves by index rather than by id.
+  var connectedPeersOverride: [ConnectedPeer]?
+  let connectedRoster = [
+    ConnectedPeer(id: "13452847362910", name: "Alex iPhone", isSelected: false)
+  ]
+  let selectedStatusSnapshot = TunnelDaemonStatusSnapshot(
+    running: true,
+    connectedPeers: [
+      ConnectedPeer(id: "13452847362910", name: "Alex iPhone", isSelected: true)
+    ]
   )
 
   func status() async -> TunnelDaemonStatusSnapshot {
     await Task.yield()
     events.append("status")
-    return TunnelDaemonStatusSnapshot()
+    return TunnelDaemonStatusSnapshot(connectedPeers: connectedPeersOverride ?? connectedRoster)
   }
 
   func check() async -> TunnelEnvironmentReport {
@@ -326,13 +319,20 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
   func listRelayServices() async -> TunnelDiscoverySnapshot {
     await Task.yield()
     events.append("listRelayServices")
-    return listedDiscoverySnapshotOverride ?? listedDiscoverySnapshot
+    return listedDiscoverySnapshot
   }
 
   func selectRelayService(serviceID: String) async -> TunnelDiscoverySnapshot {
     await Task.yield()
     events.append("selectRelayService")
     #expect(serviceID == "relay-1")
-    return selectedDiscoverySnapshot
+    return listedDiscoverySnapshot
+  }
+
+  func selectEgressPeer(peerID: String) async -> TunnelDaemonStatusSnapshot {
+    await Task.yield()
+    events.append("selectEgressPeer")
+    #expect(peerID == "13452847362910")
+    return selectedStatusSnapshot
   }
 }

@@ -58,14 +58,14 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
 
   private static func parseSelect(arguments: [String]) throws -> String {
     guard let reference = arguments.first else {
-      throw TunnelDaemonError.usage("select requires <n|serviceID>")
+      throw TunnelDaemonError.usage("select requires <n>")
     }
     guard arguments.count == 1 else {
-      throw TunnelDaemonError.usage("select accepts only <n|serviceID>")
+      throw TunnelDaemonError.usage("select accepts only <n>")
     }
     let trimmed = reference.trimmingCharacters(in: .whitespacesAndNewlines)
     guard !trimmed.isEmpty else {
-      throw TunnelDaemonError.usage("select <n|serviceID> must not be empty")
+      throw TunnelDaemonError.usage("select <n> must not be empty")
     }
     return trimmed
   }
@@ -143,42 +143,48 @@ public struct TunnelControlCLIExecutor: Sendable {
   }
 
   private func listPeers() async throws -> String {
-    let snapshot = try await client.listRelayServices()
-    return renderPeerListing(services: snapshot.services)
+    let snapshot = try await client.status()
+    return renderPeerListing(peers: snapshot.connectedPeers ?? [])
   }
 
   private func selectPeer(reference: String) async throws -> String {
-    let serviceID = try await resolveServiceID(reference: reference)
-    let snapshot = try await client.selectRelayService(serviceID: serviceID)
+    let peerID = try await resolvePeerID(reference: reference)
+    let snapshot = try await client.selectEgressPeer(peerID: peerID)
     return snapshot.renderedOutput
   }
 
-  // A bare integer is a 1-based index into the most recent `peers` listing;
-  // anything else is treated as a literal service id.
-  private func resolveServiceID(reference: String) async throws -> String {
+  // Resolves a 1-based index into the current roster to its peer id. Selection is
+  // index-only because a roster id is an opaque numeric token, indistinguishable from
+  // an index, so a non-integer reference is a usage error.
+  private func resolvePeerID(reference: String) async throws -> String {
     guard let index = Int(reference) else {
-      return reference
+      throw TunnelDaemonError.usage("select requires a 1-based index from `peers`")
     }
-    let snapshot = try await client.listRelayServices()
-    let services = snapshot.services
+    let snapshot = try await client.status()
+    let peers = snapshot.connectedPeers ?? []
     let offset = index - peerListingIndexBase
-    guard offset >= 0, offset < services.count else {
+    guard offset >= 0, offset < peers.count else {
       throw TunnelDaemonError.usage(
-        "select index \(index) is out of range (\(services.count) peers)"
+        "select index \(index) is out of range (\(peers.count) peers)"
       )
     }
-    return services[offset].id
+    return peers[offset].id
   }
 
-  private func renderPeerListing(services: [TunnelRelayService]) -> String {
-    guard !services.isEmpty else {
+  // One row per dialed-in iPhone: its name and id, or just its id when the name has not
+  // arrived yet, so no device-type word is ever fabricated.
+  private func renderPeerListing(peers: [ConnectedPeer]) -> String {
+    guard !peers.isEmpty else {
       return noRelayPeersMessage
     }
     var lines: [String] = []
-    for (offset, service) in services.enumerated() {
+    for (offset, peer) in peers.enumerated() {
       let position = offset + peerListingIndexBase
-      var line = "\(position)) \(service.serviceName)  \(service.id)"
-      if service.isSelected {
+      var line = "\(position)) \(peer.id)"
+      if !peer.name.isEmpty {
+        line = "\(position)) \(peer.name)  \(peer.id)"
+      }
+      if peer.isSelected {
         line += " (selected)"
       }
       lines.append(line)
