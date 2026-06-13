@@ -28,14 +28,9 @@
   private let tileContentSpacing: CGFloat = 12
   private let tileRowSpacing: CGFloat = 10
   private let tilePadding: CGFloat = 16
-  private let valueRowSpacing: CGFloat = 12
-  private let valueRowMinTrailing: CGFloat = 12
   // Gap between the routing switch and the in-flight spinner shown on its trailing
   // side while a routing request awaits the agent's confirmation.
   private let routeSpinnerSpacing: CGFloat = 8
-  // A value-width string drawn only as a redacted skeleton, so its characters never
-  // show; it sets the placeholder bar's width.
-  private let skeletonValue = "000.000.000.000"
 
   // MARK: - MacStatusScreen
 
@@ -179,16 +174,19 @@
 
     // MARK: - Tile
 
-    // One rounded tile: the section title over its aligned rows.
+    // One rounded tile: the section title over its aligned rows, each rendered through
+    // the shared `RelayValueRow` so a tile row reads the same as the iPhone list row.
+    // The compact font sits on the rows container so every shared row inherits it.
     private func tile(_ section: ConnectionSection) -> some View {
       VStack(alignment: .leading, spacing: tileContentSpacing) {
         Text(section.title)
           .font(.headline)
         VStack(spacing: tileRowSpacing) {
           ForEach(section.rows) { row in
-            valueRow(row)
+            RelayValueRow(row: row)
           }
         }
+        .font(.subheadline)
       }
       .frame(maxWidth: .infinity, alignment: .leading)
       .padding(tilePadding)
@@ -196,25 +194,6 @@
         RoundedRectangle(cornerRadius: tileCornerRadius, style: .continuous)
           .fill(Color(uiColor: .secondarySystemBackground))
       )
-    }
-
-    // Label on the leading edge, value on the trailing edge, so every row in a tile
-    // lines up. An unknown value is a redacted skeleton of fixed width.
-    private func valueRow(_ row: ConnectionRow) -> some View {
-      HStack(alignment: .firstTextBaseline, spacing: valueRowSpacing) {
-        Text(row.label)
-          .foregroundStyle(.secondary)
-        Spacer(minLength: valueRowMinTrailing)
-        if row.isPlaceholder {
-          Text(verbatim: skeletonValue)
-            .redacted(reason: .placeholder)
-        } else {
-          Text(row.value)
-            .multilineTextAlignment(.trailing)
-            .textSelection(.enabled)
-        }
-      }
-      .font(.subheadline)
     }
 
     // The connection sections lead, then the lifetime data and the live speed, so the
