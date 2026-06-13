@@ -131,6 +131,28 @@ final class AgentRelayBridge: @unchecked Sendable {
     }
   }
 
+  /// Clears the admit session and drops every phone link, so the data plane goes idle
+  /// when no iPhone is selected for egress. Called when the selected control
+  /// connection ends, so a deselected iPhone's relay primes are rejected as
+  /// foreign-session until the Mac selects an iPhone again.
+  func clearSession() {
+    queue.async { [weak self] in
+      self?.clearSessionOnQueue()
+    }
+  }
+
+  private func clearSessionOnQueue() {
+    currentSessionID = nil
+    let connections = phoneLinks.values.map(\.connection)
+    for connection in connections {
+      connection.cancel()
+      removePhoneLink(for: connection, reason: "selection-cleared")
+    }
+    logger.notice(
+      "agent relay bridge session cleared dropped=\(connections.count, privacy: .public)"
+    )
+  }
+
   private func applySessionID(_ sessionID: UInt64) {
     guard currentSessionID != sessionID else {
       return

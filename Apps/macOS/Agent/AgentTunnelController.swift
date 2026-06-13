@@ -52,6 +52,10 @@ actor AgentTunnelController {
   /// the actor and read into the served snapshot as `connectedPeerName`. Cleared
   /// when the phone link drops.
   nonisolated let peerName = Mutex<String?>(nil)
+  /// The roster of iPhones currently holding a control connection, written from the
+  /// listener's roster callback off the actor and read into the served snapshot's
+  /// `connectedPeers`, the set the Mac selector lists. Cleared when the listener stops.
+  nonisolated let connectedPeers = Mutex<[ConnectedPeer]>([])
   /// The Mac's latest egress reading, written from the egress monitor off the actor
   /// and mapped into the served snapshot's `cellularPath`, so the Mac `Device`
   /// section reports the Mac's own egress.
@@ -123,8 +127,17 @@ actor AgentTunnelController {
       return snapshotResponse()
     case .selectRelayService(let serviceID):
       return selectRelay(serviceID: serviceID)
+    case .selectEgressPeer(let peerID):
+      return await handleSelectEgressPeer(peerID: peerID)
     case .setRoutingEnabled(let enabled): return await handleSetRoutingEnabled(enabled)
     }
+  }
+
+  /// Selects which connected iPhone the agent routes egress through, then returns the
+  /// refreshed status so the Mac sees the new selection reflected in the roster.
+  private func handleSelectEgressPeer(peerID: String) async -> AgentControlResponse {
+    await controlListener?.selectPeer(peerID: peerID)
+    return await handleStatus()
   }
 
   private func handleSetRoutingEnabled(_ enabled: Bool) async -> AgentControlResponse {

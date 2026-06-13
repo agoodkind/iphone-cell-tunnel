@@ -15,10 +15,10 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 // MARK: - Message routing
 
 extension AgentControlListener {
-  /// Decodes one framed message from the status receive loop and routes it: a status
-  /// push surfaces its fields, a routing change drives the handler, a public address
-  /// updates the exchange, and the rest are logged.
-  func handleStreamPayload(_ data: Data) {
+  /// Decodes one framed message from a peer's status receive loop and routes it: a
+  /// status push surfaces its fields against the sending peer, a routing change drives
+  /// the handler, a public address updates the exchange, and the rest are logged.
+  func handleStreamPayload(_ data: Data, fromPeerID peerID: UInt64) {
     let message: RelayControlMessage
     do {
       message = try RelayControlMessageCodec.decode(data)
@@ -36,7 +36,7 @@ extension AgentControlListener {
         interface=\(snapshot.cellularInterface ?? "none", privacy: .public)
         """
       )
-      surface(status: snapshot)
+      surface(status: snapshot, fromPeerID: peerID)
     case .error(let failure):
       logger.error(
         """

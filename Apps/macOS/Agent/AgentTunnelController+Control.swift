@@ -88,13 +88,22 @@ extension AgentTunnelController {
     await listener.setPeerAvailableLinksHandler { [weak self] links in
       self?.peerLinks.withLock { $0 = links }
     }
+    // The selected control connection ending clears the connected peer name and the
+    // bridge admit session, so the data plane goes idle until the Mac selects an
+    // iPhone again. A non-selected peer ending does not fire this.
     await listener.setConnectionDroppedHandler { [weak self] in
       self?.peerName.withLock { $0 = nil }
       self?.peerLinks.withLock { $0 = nil }
+      self?.relayBridge.clearSession()
     }
-    // Each promotion mints a relay-session id; install it into the bridge so it
-    // admits relay links only from the peer just promoted and drops links
-    // stamped with a prior session's id.
+    // The roster of connected iPhones, surfaced into the snapshot so the Mac selector
+    // lists them and flags the selected one.
+    await listener.setRosterChangedHandler { [weak self] roster in
+      self?.connectedPeers.withLock { $0 = roster }
+    }
+    // Selecting an iPhone installs its id as the bridge admit token, so the bridge
+    // admits relay links only from the selected peer and drops links stamped with a
+    // prior selection's id.
     await listener.setSessionEstablishedHandler { [weak self] sessionID in
       self?.relayBridge.updateSessionID(sessionID)
     }
@@ -155,6 +164,7 @@ extension AgentTunnelController {
     peerLinks.withLock { $0 = nil }
     agentLinks.withLock { $0 = [] }
     peerName.withLock { $0 = nil }
+    connectedPeers.withLock { $0 = [] }
     egressPath.withLock { $0 = EgressPath() }
     relayBridge.onEgressInterfaceChange = nil
     relayBridge.onAvailableLinksChange = nil
@@ -235,6 +245,7 @@ extension AgentTunnelController {
     merged.cellularPath = CellularPathSnapshot(egress: egressPath.withLock { $0 })
     merged.routingIntentEnabled = TunnelRoutingIntent(enabled: routingEnabled)
     merged.agentLinks = agentLinks.withLock { $0 }
+    merged.connectedPeers = connectedPeers.withLock { $0 }
     return merged
   }
 
