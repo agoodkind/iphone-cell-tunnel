@@ -44,9 +44,6 @@ struct RelayStatusScreen: View {
   private var detailList: some View {
     List {
       statusSection
-      if model.showsPeers {
-        peersSection
-      }
       sections
     }
     .listStyle(.insetGrouped)
@@ -81,20 +78,6 @@ struct RelayStatusScreen: View {
         }
       }
     }
-  }
-
-  // The discovered peers, shown while discovery searches and while a peer is
-  // unselected, so the user can pick the Mac to relay through.
-  @ViewBuilder private var peersSection: some View {
-    Section(RelayPeersView.title) {
-      RelayPeersView(
-        peers: model.discoveredPeers,
-        selectedID: model.selectedPeerID
-      ) { id in
-        model.selectPeer(id: id)
-      }
-    }
-    .textCase(nil)
   }
 
   // Every data-driven section in order, each a stock `Section` of value rows. The

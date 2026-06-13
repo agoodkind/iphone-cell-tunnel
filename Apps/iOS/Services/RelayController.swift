@@ -48,6 +48,9 @@ struct RelayStatusSample: Sendable {
   var discoveredPeers: [TunnelRelayService]
   var selectedPeerID: String?
   var discoveryPhase: TunnelDiscoveryPhase
+  /// The iPhones currently dialed into the Mac agent, the roster the Mac selector
+  /// lists and chooses egress through. Empty on the iPhone, which hosts no roster.
+  var connectedPeers: [ConnectedPeer]
   /// The relay tunnel protocol name shown on the status `Protocol` row, set by the
   /// WireGuard producers, or `nil` before a snapshot names it.
   var relayProtocol: String?
@@ -93,6 +96,7 @@ struct RelayStatusSample: Sendable {
     discoveredPeers = snapshot.discovery.services
     selectedPeerID = snapshot.discovery.selectedServiceID
     discoveryPhase = snapshot.discovery.phase
+    connectedPeers = snapshot.connectedPeers ?? []
     relayProtocol = snapshot.relayProtocol
     localLinkInterfaceName = snapshot.localLinkInterfaceName
     localLinkClass = snapshot.localLinkClass
@@ -138,6 +142,16 @@ protocol RelayControlBackend {
   /// agent; the iPhone records it and dials that peer over the control link.
   func selectPeer(id: String) async
 
+  /// Selects which dialed-in iPhone the Mac routes egress through, by the roster id.
+  /// Only the Mac backend acts on it; the iPhone hosts no roster, so its default is a
+  /// no-op.
+  func selectEgressPeer(id: String) async
+
+  /// Whether this backend auto-dials the first discovered peer when none is selected,
+  /// so the iPhone connects to its Mac with no picker. The Mac, which selects egress
+  /// from its own roster instead, leaves this false.
+  var autoSelectsDiscoveredPeer: Bool { get }
+
   /// Installs the tunnel profile from an imported configuration. The Mac hands the
   /// config to the agent's start path; the iPhone saves its own tunnel manager.
   func installTunnel(configURL: URL) async
@@ -162,6 +176,20 @@ protocol RelayControlBackend {
 
   /// Deletes a stored configuration from this backend's config library.
   func deleteConfig(id: String) async
+}
+
+// MARK: - RelayControlBackend defaults
+
+/// Defaults so only the Mac backend implements egress selection and only the iPhone
+/// backends auto-dial; every other backend inherits the no-op and the off flag.
+extension RelayControlBackend {
+  func selectEgressPeer(id _: String) async {
+    await Task.yield()
+  }
+
+  var autoSelectsDiscoveredPeer: Bool {
+    false
+  }
 }
 
 // MARK: - RelayController
@@ -226,6 +254,12 @@ final class RelayController {
   var discoveredPeers: [TunnelRelayService] = []
   var selectedPeerID: String?
   var discoveryPhase: TunnelDiscoveryPhase = .stopped
+  /// The iPhones currently dialed into the Mac agent, the roster the Mac selector
+  /// lists. Empty on the iPhone, which hosts no roster.
+  var connectedPeers: [ConnectedPeer] = []
+  // Guards the iPhone auto-dial so the first discovered Mac is selected once rather
+  // than re-requested every poll while the selection lands.
+  private var autoSelectInFlight = false
   /// The relay tunnel protocol name shown on the status `Protocol` row, read from
   /// the snapshot's producer rather than a hardcoded literal.
   var relayProtocol: String?
@@ -407,6 +441,8 @@ final class RelayController {
     assign(\.discoveredPeers, sample.discoveredPeers)
     assign(\.selectedPeerID, sample.selectedPeerID)
     assign(\.discoveryPhase, sample.discoveryPhase)
+    assign(\.connectedPeers, sample.connectedPeers)
+    maybeAutoSelectPeer()
     assign(\.relayProtocol, sample.relayProtocol)
     assign(\.localLinkInterfaceName, sample.localLinkInterfaceName)
     assign(\.localLinkClass, sample.localLinkClass)
@@ -495,15 +531,6 @@ final class RelayController {
     }
   }
 
-  // MARK: - Peer selection
-
-  /// Selects the discovered peer to connect to. The next status snapshot reflects
-  /// the selection and, once the link is up, moves the screen to passthrough.
-  func selectPeer(id: String) async {
-    logger.notice("relay controller select peer id=\(id, privacy: .public)")
-    await backend.selectPeer(id: id)
-  }
-
   // MARK: - Setup actions
 
   /// Registers the background agent, the install-agent setup action. Mac only; the
@@ -579,4 +606,33 @@ final class RelayController {
     }
   }
 
+}
+
+// MARK: - Peer selection
+
+extension RelayController {
+  /// Selects which dialed-in iPhone the Mac routes egress through. The next status
+  /// snapshot reflects the new selection in the roster.
+  func selectEgressPeer(id: String) async {
+    logger.notice("relay controller select egress peer id=\(id, privacy: .public)")
+    await backend.selectEgressPeer(id: id)
+  }
+
+  // Auto-dials the first discovered peer when the backend opts in (the iPhone) and
+  // none is selected, so the iPhone connects to its Mac with no picker. The guard
+  // clears once the request returns, and the next snapshot's selected id stops it
+  // from firing again.
+  func maybeAutoSelectPeer() {
+    guard backend.autoSelectsDiscoveredPeer, !autoSelectInFlight, selectedPeerID == nil,
+      let first = discoveredPeers.first
+    else {
+      return
+    }
+    autoSelectInFlight = true
+    logger.notice("relay controller auto-dialing discovered peer")
+    Task { @MainActor [weak self] in
+      await self?.backend.selectPeer(id: first.id)
+      self?.autoSelectInFlight = false
+    }
+  }
 }

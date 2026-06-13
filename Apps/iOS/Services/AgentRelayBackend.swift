@@ -91,6 +91,23 @@
       }
     }
 
+    // Forwards the egress-iPhone choice to the agent, which installs that iPhone's
+    // relay session so the bridge routes egress through it.
+    func selectEgressPeer(id: String) async {
+      do {
+        _ = try await client.selectEgressPeer(peerID: id)
+        logger.notice(
+          "agent relay backend egress selection sent id=\(id, privacy: .public)")
+      } catch {
+        logger.error(
+          """
+          agent relay backend egress selection failed \
+          details=\(String(describing: error), privacy: .public) recovery=keep-state
+          """
+        )
+      }
+    }
+
     // MARK: - Tunnel install
 
     // Copies the imported config into the shared app-group container, where the

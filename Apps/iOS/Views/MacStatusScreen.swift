@@ -53,9 +53,7 @@
         ScrollView {
           VStack(alignment: .leading, spacing: contentPadding) {
             header
-            if model.showsPeers {
-              peersTile
-            }
+            rosterTile
             masonry(
               availableWidth: proxy.size.width - contentPadding * contentInsetColumns)
             ConfigLibraryView()
@@ -147,20 +145,21 @@
       return columns
     }
 
-    // MARK: - Peers
+    // MARK: - Roster
 
-    // The discovered peers as a rounded tile, shown while discovery searches and
-    // while a peer is unselected, so the user can pick the Mac to relay through.
-    private var peersTile: some View {
+    // The dialed-in iPhones as an always-present rounded tile, the Mac egress
+    // selector. It lists zero, one, or several iPhones with the selected one checked,
+    // and shows the roster subtitle when none is selected.
+    private var rosterTile: some View {
       VStack(alignment: .leading, spacing: tileContentSpacing) {
-        Text(RelayPeersView.title)
+        Text(RelayRosterView.title)
           .font(.headline)
         VStack(spacing: tileRowSpacing) {
-          RelayPeersView(
-            peers: model.discoveredPeers,
-            selectedID: model.selectedPeerID
+          RelayRosterView(
+            peers: model.connectedPeers,
+            subtitle: model.rosterSubtitle
           ) { id in
-            model.selectPeer(id: id)
+            model.selectEgressPeer(id: id)
           }
         }
       }
