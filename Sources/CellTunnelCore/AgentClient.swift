@@ -140,6 +140,19 @@ import Foundation
       return try requireDiscovery(from: response, operationName: "selectRelayService")
     }
 
+    /// Selects which connected iPhone the agent routes egress through, by the
+    /// per-connection id the roster carries, and returns the refreshed status.
+    public func selectEgressPeer(peerID: String) async throws -> TunnelDaemonStatusSnapshot {
+      logger.notice(
+        "agent client invoked rpc=select-egress-peer peerID=\(peerID, privacy: .public)"
+      )
+      let response = try await send(
+        request: .selectEgressPeer(peerID: peerID),
+        operationName: "selectEgressPeer"
+      )
+      return try requireStatus(from: response, operationName: "selectEgressPeer")
+    }
+
     public func setRoutingEnabled(_ enabled: Bool) async throws -> TunnelDaemonStatusSnapshot {
       logger.notice(
         "agent client invoked rpc=set-routing-enabled enabled=\(enabled, privacy: .public)")

@@ -336,6 +336,10 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
   /// one status call shows the whole link set. `nil` from a producer that
   /// predates the field.
   public var agentLinks: [AgentLinkStatus]?
+  /// Every iPhone currently holding a control connection to the agent, the roster
+  /// the Mac lists and selects egress through, with the selected one flagged. `nil`
+  /// from a producer that predates the field; only the Mac agent populates it.
+  public var connectedPeers: [ConnectedPeer]?
 
   public init(
     running: Bool = false,
@@ -364,7 +368,8 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     relayServerIPv6Address: String? = nil,
     relayProtocol: String? = nil,
     routingIntentEnabled: TunnelRoutingIntent? = nil,
-    agentLinks: [AgentLinkStatus]? = nil
+    agentLinks: [AgentLinkStatus]? = nil,
+    connectedPeers: [ConnectedPeer]? = nil
   ) {
     self.running = running
     self.routeState = routeState
@@ -393,6 +398,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     self.relayProtocol = relayProtocol
     self.routingIntentEnabled = routingIntentEnabled
     self.agentLinks = agentLinks
+    self.connectedPeers = connectedPeers
   }
 
   public var renderedOutput: String {
@@ -412,6 +418,14 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         lines.append(
           "link.\(link.interfaceName)=\(link.linkClass.rawValue)"
             + (link.isCarrying ? " carrying" : " warm")
+        )
+      }
+    }
+    if let connectedPeers {
+      lines.append("peers=\(connectedPeers.count)")
+      for peer in connectedPeers {
+        lines.append(
+          "peer.\(peer.id)=\(peer.name)" + (peer.isSelected ? " selected" : "")
         )
       }
     }

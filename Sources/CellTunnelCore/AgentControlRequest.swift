@@ -31,6 +31,9 @@ public enum AgentControlRequest: Codable, Sendable {
   case listRelayServices
   case reloadTunnel(TunnelStartSettings)
   case reset
+  /// Selects which connected iPhone the agent routes egress through, by the
+  /// per-connection id the roster carries.
+  case selectEgressPeer(peerID: String)
   case selectRelayService(serviceID: String)
   case setRoutingEnabled(enabled: Bool)
   case startRelayDiscovery
@@ -44,6 +47,7 @@ public enum AgentControlRequest: Codable, Sendable {
   private enum CodingKeys: String, CodingKey {
     case configText
     case kind
+    case peerID
     case reloadSettings
     case routingEnabled
     case serviceID
@@ -55,6 +59,7 @@ public enum AgentControlRequest: Codable, Sendable {
     case listRelayServices
     case reloadTunnel
     case reset
+    case selectEgressPeer
     case selectRelayService
     case setRoutingEnabled
     case startRelayDiscovery
@@ -81,6 +86,9 @@ public enum AgentControlRequest: Codable, Sendable {
     case .selectRelayService:
       let serviceID = try container.decode(String.self, forKey: .serviceID)
       self = .selectRelayService(serviceID: serviceID)
+    case .selectEgressPeer:
+      let peerID = try container.decode(String.self, forKey: .peerID)
+      self = .selectEgressPeer(peerID: peerID)
     case .setRoutingEnabled:
       let enabled = try container.decode(Bool.self, forKey: .routingEnabled)
       self = .setRoutingEnabled(enabled: enabled)
@@ -116,6 +124,9 @@ public enum AgentControlRequest: Codable, Sendable {
     case .selectRelayService(let serviceID):
       try container.encode(Kind.selectRelayService, forKey: .kind)
       try container.encode(serviceID, forKey: .serviceID)
+    case .selectEgressPeer(let peerID):
+      try container.encode(Kind.selectEgressPeer, forKey: .kind)
+      try container.encode(peerID, forKey: .peerID)
     case .setRoutingEnabled(let enabled):
       try container.encode(Kind.setRoutingEnabled, forKey: .kind)
       try container.encode(enabled, forKey: .routingEnabled)
