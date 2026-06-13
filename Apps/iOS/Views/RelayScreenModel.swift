@@ -503,14 +503,14 @@ struct RelayScreenModel {
       )
     )
     var rows = [egress]
-    rows.append(contentsOf: interfaceAddressRows())
+    rows.append(interfaceAddressRow())
     rows.append(
       ConnectionRow(
         label: "Link IP",
         value: nonEmptyOrPlaceholder(controller.localLinkAddresses.preferredAddress)
       )
     )
-    rows.append(contentsOf: addressRows(prefix: "Public", controller.devicePublicAddresses))
+    rows.append(addressRow(prefix: "Public", controller.devicePublicAddresses))
     return ConnectionSection(title: "This Device", rows: rows)
   }
 
@@ -526,7 +526,7 @@ struct RelayScreenModel {
         value: nonEmptyOrPlaceholder(controller.peerLinkAddresses.preferredAddress)
       ),
     ]
-    rows.append(contentsOf: addressRows(prefix: "Public", controller.peerPublicAddresses))
+    rows.append(addressRow(prefix: "Public", controller.peerPublicAddresses))
     return ConnectionSection(title: "Peer", rows: rows)
   }
 
@@ -549,26 +549,23 @@ struct RelayScreenModel {
       ),
       ConnectionRow(label: "Host", value: nonEmptyOrPlaceholder(controller.relayHost)),
     ]
-    rows.append(contentsOf: addressRows(prefix: "", relayServerAddresses))
+    rows.append(addressRow(prefix: "", relayServerAddresses))
     return ConnectionSection(title: "Relay", rows: rows)
   }
 
-  // The egress interface's full address list: one row per family with every
-  // non-link-local address on its own line. The controller recomputes this once
-  // per poll off the render path, so the rows read the cached value rather than
-  // calling getifaddrs on every SwiftUI body evaluation.
-  private func interfaceAddressRows() -> [ConnectionRow] {
+  // The egress interface's addresses as one row, every IPv6 then every IPv4 address
+  // on its own line. The controller recomputes the list once per poll off the render
+  // path, so the row reads the cached value rather than calling getifaddrs on every
+  // SwiftUI body evaluation.
+  private func interfaceAddressRow() -> ConnectionRow {
     let all = controller.interfaceAddresses
-    return [
-      multilineRow(label: "Interface IPv6", values: all.ipv6),
-      multilineRow(label: "Interface IPv4", values: all.ipv4),
-    ]
+    return addressRow(prefix: "Interface", values: all.ipv6 + all.ipv4)
   }
 
   // The one builder for every list-valued row: one value per line in a single row,
   // or the placeholder when the list is empty, so the iPhone hides the empty state
-  // and the Mac skeletonizes it. The Interface IPv6/IPv4 and Available Interfaces
-  // rows all build here, so a list row cannot drift to its own layout.
+  // and the Mac skeletonizes it. The address rows and the Available Interfaces row
+  // all build here, so a list row cannot drift to its own layout.
   private func multilineRow(label: String, values: [String]) -> ConnectionRow {
     ConnectionRow(
       label: label,
@@ -583,17 +580,30 @@ struct RelayScreenModel {
     )
   }
 
-  // An IPv6 then IPv4 pair, IPv6 first per the design, each falling back to a
-  // labeled placeholder so no row is blank. The prefix names the pair's origin
-  // (`Interface`, `Public`, `Local link`, `Peer link`); an empty prefix labels the
-  // bare `IPv6`/`IPv4` of the relay server.
-  private func addressRows(prefix: String, _ pair: AddressPair) -> [ConnectionRow] {
-    let ipv6Label = prefix.isEmpty ? "IPv6" : "\(prefix) IPv6"
-    let ipv4Label = prefix.isEmpty ? "IPv4" : "\(prefix) IPv4"
-    return [
-      ConnectionRow(label: ipv6Label, value: nonEmptyOrPlaceholder(pair.ipv6)),
-      ConnectionRow(label: ipv4Label, value: nonEmptyOrPlaceholder(pair.ipv4)),
-    ]
+  // The one address-row builder for every origin: the IPv6 before the IPv4, each on
+  // its own line so a copy takes the whole block, through `multilineRow` so an empty
+  // origin collapses like any other list row. The label names the origin
+  // (`Interface`, `Public`) and pluralizes by count; an empty prefix is the bare
+  // relay-server `Address(es)`.
+  private func addressRow(prefix: String, _ pair: AddressPair) -> ConnectionRow {
+    let values = [pair.ipv6, pair.ipv4].compactMap { candidate -> String? in
+      guard let candidate, !candidate.isEmpty else {
+        return nil
+      }
+      return candidate
+    }
+    return addressRow(prefix: prefix, values: values)
+  }
+
+  private func addressRow(prefix: String, values: [String]) -> ConnectionRow {
+    multilineRow(label: addressLabel(prefix: prefix, count: values.count), values: values)
+  }
+
+  // `Address` for a single address, `Addresses` otherwise, with the origin prefix
+  // when one is given.
+  private func addressLabel(prefix: String, count: Int) -> String {
+    let noun = count == 1 ? "Address" : "Addresses"
+    return prefix.isEmpty ? noun : "\(prefix) \(noun)"
   }
 
   private var connectedToValue: String {
