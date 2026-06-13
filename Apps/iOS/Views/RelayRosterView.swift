@@ -13,7 +13,6 @@ import SwiftUI
 
 private let rosterSectionTitle = "Peers"
 private let selectedPeerSymbol = "checkmark"
-private let unnamedPeerText = "iPhone"
 private let peerRowMinSpacing: CGFloat = 12
 
 // MARK: - RelayRosterView
@@ -46,7 +45,7 @@ struct RelayRosterView: View {
 
   private func peerLabel(_ peer: ConnectedPeer) -> some View {
     HStack {
-      Text(peer.name.isEmpty ? unnamedPeerText : peer.name)
+      Text(peer.name.isEmpty ? peer.id : peer.name)
       Spacer(minLength: peerRowMinSpacing)
       if peer.isSelected {
         Image(systemName: selectedPeerSymbol)
