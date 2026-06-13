@@ -152,6 +152,11 @@ protocol RelayControlBackend {
   /// from its own roster instead, leaves this false.
   var autoSelectsDiscoveredPeer: Bool { get }
 
+  /// Whether this backend's available peers come from the dialed-in roster rather than
+  /// Bonjour discovery, so the status word reflects connected iPhones on the Mac. True
+  /// only on the Mac; the iPhone, which browses for a Mac to dial, leaves this false.
+  var usesEgressRoster: Bool { get }
+
   /// Installs the tunnel profile from an imported configuration. The Mac hands the
   /// config to the agent's start path; the iPhone saves its own tunnel manager.
   func installTunnel(configURL: URL) async
@@ -188,6 +193,10 @@ extension RelayControlBackend {
   }
 
   var autoSelectsDiscoveredPeer: Bool {
+    false
+  }
+
+  var usesEgressRoster: Bool {
     false
   }
 }
@@ -611,6 +620,12 @@ final class RelayController {
 // MARK: - Peer selection
 
 extension RelayController {
+  /// Whether available peers come from the dialed-in roster, true on the Mac, so the
+  /// status word reflects connected iPhones rather than Bonjour discovery.
+  var usesEgressRoster: Bool {
+    backend.usesEgressRoster
+  }
+
   /// Selects which dialed-in iPhone the Mac routes egress through. The next status
   /// snapshot reflects the new selection in the roster.
   func selectEgressPeer(id: String) async {

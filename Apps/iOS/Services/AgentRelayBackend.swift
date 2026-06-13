@@ -91,6 +91,12 @@
       }
     }
 
+    // The Mac's available peers are the dialed-in roster, so the status word reflects
+    // connected iPhones rather than Bonjour discovery.
+    var usesEgressRoster: Bool {
+      true
+    }
+
     // Forwards the egress-iPhone choice to the agent, which installs that iPhone's
     // relay session so the bridge routes egress through it.
     func selectEgressPeer(id: String) async {

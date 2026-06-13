@@ -250,10 +250,20 @@ struct RelayScreenModel {
       errorMessage: controller.lastError,
       isAgentInstalled: controller.isAgentInstalled,
       isTunnelInstalled: controller.isTunnelInstalled,
-      peersFound: !controller.discoveredPeers.isEmpty,
+      peersFound: peersAvailable,
       isPeerConnected: controller.connectedPeerName != nil,
       isRouting: controller.routeState == .installed
     )
+  }
+
+  /// Whether a peer is available to connect to, the `peersFound` input. The Mac reads
+  /// its dialed-in roster, so the status word agrees with the roster tile; the iPhone
+  /// reads Bonjour discovery, the Macs it can dial.
+  private var peersAvailable: Bool {
+    if controller.usesEgressRoster {
+      return !controller.connectedPeers.isEmpty
+    }
+    return !controller.discoveredPeers.isEmpty
   }
 
   /// Whether a usable tunnel configuration exists. The iPhone root view gates its
