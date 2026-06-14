@@ -22,6 +22,13 @@ jobs:
     with:
       runner: macos-26
       fetch-depth: "0"
+      # The vendored wireguard-apple WireGuardKitGo target builds a Go c-archive
+      # (libwg-go.a) through its own Makefile, whose goroot prepare step fails
+      # unless `go env GOROOT` resolves. The macos-26 runner does not put Go on the
+      # build PATH, so install it through brew; the WireGuardKitGo Makefile already
+      # adds /opt/homebrew/bin to PATH, which is where brew installs go. Both the
+      # gate (dead-code coverage build) and the build target link WireGuardKitGo.
+      brew-packages: go
       # gate (lint/audit/deadcode) runs in the reusable workflow's mandatory gate
       # job; its dead-code coverage build compiles mac, mac-catalyst, and the iOS
       # simulator unsigned. The build matrix target produces the signed product.
