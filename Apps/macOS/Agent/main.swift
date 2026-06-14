@@ -206,6 +206,10 @@ private func runAgent() -> Never {
 
   agentRuntime.start()
 
+  // Assert, without mutating the library, that the running tunnel's stamped config id
+  // agrees with the library's active selection, surfacing any drift loudly on status.
+  Task { await controller.assertRunningConfigMatchesLibrary() }
+
   dispatchMain()
 }
 

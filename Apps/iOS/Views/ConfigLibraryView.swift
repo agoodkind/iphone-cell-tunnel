@@ -43,8 +43,8 @@ private let configLibraryContentTypes: [UTType] = [
 struct ConfigLibraryView: View {
   @Environment(RelayController.self) private var controller
   @State private var isImportingConfig = false
-  @State private var editingConfig: StoredTunnelConfig?
-  @State private var renamingConfig: StoredTunnelConfig?
+  @State private var editingConfig: TunnelConfigSummary?
+  @State private var renamingConfig: TunnelConfigSummary?
   @State private var isRenameAlertPresented = false
   @State private var renameText = ""
 
@@ -89,7 +89,7 @@ struct ConfigLibraryView: View {
   // MARK: - Rows
 
   @ViewBuilder private var configRows: some View {
-    let configs = controller.listConfigs()
+    let configs = controller.configLibrary
     if configs.isEmpty {
       Text(configLibraryEmptyTitle)
         .font(.subheadline)
@@ -102,7 +102,7 @@ struct ConfigLibraryView: View {
     }
   }
 
-  private func configRow(_ config: StoredTunnelConfig) -> some View {
+  private func configRow(_ config: TunnelConfigSummary) -> some View {
     HStack(alignment: .center, spacing: configLibraryRowSpacing) {
       activeIndicator(for: config)
       Text(config.name)
@@ -121,7 +121,7 @@ struct ConfigLibraryView: View {
     .frame(maxWidth: .infinity, alignment: .leading)
   }
 
-  @ViewBuilder private func activeIndicator(for config: StoredTunnelConfig) -> some View {
+  @ViewBuilder private func activeIndicator(for config: TunnelConfigSummary) -> some View {
     if config.id == controller.activeConfigID {
       Image(systemName: "checkmark.circle.fill")
         .foregroundStyle(.tint)
@@ -140,7 +140,7 @@ struct ConfigLibraryView: View {
 
   // MARK: - Actions
 
-  private func actionsMenu(for config: StoredTunnelConfig) -> some View {
+  private func actionsMenu(for config: TunnelConfigSummary) -> some View {
     Menu {
       Button {
         controller.activateConfig(id: config.id)
@@ -163,7 +163,7 @@ struct ConfigLibraryView: View {
     }
   }
 
-  private func beginRename(_ config: StoredTunnelConfig) {
+  private func beginRename(_ config: TunnelConfigSummary) {
     renamingConfig = config
     renameText = config.name
     isRenameAlertPresented = true

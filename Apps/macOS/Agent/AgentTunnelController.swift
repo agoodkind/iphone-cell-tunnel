@@ -19,6 +19,7 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 
 private let providerBundleIdentifier = tunnelProviderBundleIdentifier
 private let providerConfigWireGuardKey = "wireguardConfig"
+private let providerConfigConfigIDKey = "configID"
 private let providerConfigRelayServiceKey = "selectedRelayServiceName"
 private let tunnelLocalizedDescription = "Cell Tunnel"
 private let tunnelServerAddressPlaceholder = "iPhone Cellular Relay"
@@ -32,6 +33,14 @@ actor AgentTunnelController {
   var controlListener: AgentControlListener?
   let relayBridge: AgentRelayBridge
   let relayBrowser: RelayDeviceBrowser
+  /// The agent's config library, the single source of truth the Mac app and the
+  /// command-line tool both read over XPC. Every status response carries its
+  /// text-free summaries, and the start path registers whatever config it runs.
+  let configStore: TunnelConfigStore
+  /// The loud message set by the boot assertion when the running tunnel's stamped
+  /// config id disagrees with the library, or `nil` when they agree. Read into every
+  /// status snapshot's `configDrift`. The assertion never mutates the library.
+  var configDriftMessage: String?
 
   /// The carrying link info, written from the bridge's egress callback off-actor and
   /// read into the served snapshot. Nonisolated because the `Mutex` is its own
@@ -76,9 +85,14 @@ actor AgentTunnelController {
   /// is no longer current is ignored when its timer fires.
   var routeWithdrawGeneration = 0
 
-  init(relayBridge: AgentRelayBridge, relayBrowser: RelayDeviceBrowser) {
+  init(
+    relayBridge: AgentRelayBridge,
+    relayBrowser: RelayDeviceBrowser,
+    configStore: TunnelConfigStore = AgentConfigStore()
+  ) {
     self.relayBridge = relayBridge
     self.relayBrowser = relayBrowser
+    self.configStore = configStore
     self.routingEnabled = RoutingIntentStore.load()
   }
 
@@ -130,6 +144,18 @@ actor AgentTunnelController {
     case .selectEgressPeer(let peerID):
       return await handleSelectEgressPeer(peerID: peerID)
     case .setRoutingEnabled(let enabled): return await handleSetRoutingEnabled(enabled)
+    case let .importConfig(name, text):
+      return await handleImportConfig(name: name, text: text)
+    case .activateConfig(let id):
+      return await handleActivateConfig(id: id)
+    case let .saveConfigEdit(id, text):
+      return await handleSaveConfigEdit(id: id, text: text)
+    case let .renameConfig(id, name):
+      return await handleRenameConfig(id: id, name: name)
+    case .deleteConfig(let id):
+      return await handleDeleteConfig(id: id)
+    case .getConfigText(let id):
+      return handleGetConfigText(id: id)
     }
   }
 
@@ -145,11 +171,11 @@ actor AgentTunnelController {
     return await handleStatus()
   }
 
-  private func handleStatus() async -> AgentControlResponse {
+  func handleStatus() async -> AgentControlResponse {
     do {
       let loadedManager = try await loadOrCreateManager()
       guard isSessionActive(on: loadedManager) else {
-        return AgentControlResponse(status: snapshot(from: loadedManager))
+        return AgentControlResponse(status: augmented(snapshot(from: loadedManager)))
       }
       return try await forwardStatus(on: loadedManager)
     } catch {
@@ -214,24 +240,56 @@ actor AgentTunnelController {
     return AgentControlResponse(report: TunnelEnvironmentReport(checks: checks))
   }
 
-  private func handleStartTunnel(settings: TunnelStartSettings) async -> AgentControlResponse {
+  /// Starts a tunnel from a config file path, the CLI and XPC entry point. This is
+  /// the one boundary where external text resolves to a library id: it registers the
+  /// config (deduped by content), marks it active, then starts. A store failure fails
+  /// the start, because a tunnel the library cannot identify must not run.
+  func handleStartTunnel(settings: TunnelStartSettings) async -> AgentControlResponse {
     guard settings.hasWireGuardConfigPath else {
       return failure(
         errorCode: .missingWireGuardConfigPath,
         message: "start requires a WireGuard config path"
       )
     }
+    let saved: StoredTunnelConfig
     do {
       let configText = try readConfigText(at: settings.wireGuardConfigPath)
+      saved = try configStore.addDeduplicated(
+        name: Self.configName(fromPath: settings.wireGuardConfigPath),
+        text: configText
+      )
+      configStore.setActive(id: saved.id)
+    } catch {
+      logger.error(
+        """
+        startTunnel config resolve failed \
+        details=\(String(describing: error), privacy: .public) \
+        recovery=return-failure-response
+        """
+      )
+      return failure(from: error)
+    }
+    return await startTunnel(configText: saved.text, configID: saved.id)
+  }
+
+  /// Starts the tunnel for an already-resolved library entry, stamping the saved
+  /// profile with the library id so the profile is a downstream projection of the
+  /// active entry. Activation and import call this directly with the known id.
+  func startTunnel(configText: String, configID: UUID) async -> AgentControlResponse {
+    do {
       let loadedManager = try await loadOrCreateManager()
-      applyConfiguration(to: loadedManager, wireGuardConfig: configText)
+      applyConfiguration(to: loadedManager, wireGuardConfig: configText, configID: configID)
       try await save(manager: loadedManager)
       try await load(manager: loadedManager)
       try await startControlListener(wireGuardConfig: configText)
       observeStatus(on: loadedManager)
       try startSession(on: loadedManager)
-      logger.notice("agent tunnel start requested")
+      logger.notice(
+        "agent tunnel start requested configID=\(configID.uuidString, privacy: .public)")
       await waitForSessionConnected(on: loadedManager)
+      // The running tunnel now carries the active library id, so any prior boot
+      // drift is resolved.
+      configDriftMessage = nil
       return try await forwardStatus(on: loadedManager)
     } catch {
       logger.error(
@@ -245,13 +303,13 @@ actor AgentTunnelController {
     }
   }
 
-  private func handleStopTunnel() async -> AgentControlResponse {
+  func handleStopTunnel() async -> AgentControlResponse {
     do {
       let loadedManager = try await loadOrCreateManager()
       stopSession(on: loadedManager)
       await stopControlListener()
       logger.notice("agent tunnel stop requested")
-      return AgentControlResponse(status: snapshot(from: loadedManager))
+      return AgentControlResponse(status: augmented(snapshot(from: loadedManager)))
     } catch {
       logger.error(
         """
@@ -279,6 +337,9 @@ actor AgentTunnelController {
       RoutingIntentStore.clear()
       routingEnabled = RoutingIntentStore.load()
       EgressSelectionStore.clear()
+      // Reset restores factory state, so the config library clears alongside the
+      // removed tunnel, leaving nothing the card could show as active.
+      clearConfigLibrary()
       if let statusObserver {
         NotificationCenter.default.removeObserver(statusObserver)
         self.statusObserver = nil
@@ -290,7 +351,9 @@ actor AgentTunnelController {
         status: TunnelDaemonStatusSnapshot(
           running: false,
           routeState: .notInstalled,
-          peerState: .notSelected
+          peerState: .notSelected,
+          configLibrary: configStore.summaries(),
+          activeConfigID: configStore.activeID
         )
       )
     } catch {
@@ -303,54 +366,6 @@ actor AgentTunnelController {
       )
       return failure(from: error)
     }
-  }
-
-  private func startDiscovery() -> AgentControlResponse {
-    relayBrowser.start()
-    logger.notice("agent relay discovery started from browser")
-    return snapshotResponse()
-  }
-
-  private func selectRelay(serviceID: String) -> AgentControlResponse {
-    let devices = relayBrowser.snapshot()
-    guard let device = devices.first(where: { $0.identifier == serviceID }) else {
-      return failure(
-        errorCode: .relaySelectionRequired,
-        message: "no discovered relay with id \(serviceID)"
-      )
-    }
-    RelaySelectionStore.setSelectedRelayServiceName(device.serviceName)
-    logger.notice(
-      "agent selected relay service=\(device.serviceName, privacy: .public)"
-    )
-    return snapshotResponse()
-  }
-
-  private func snapshotResponse() -> AgentControlResponse {
-    let devices = relayBrowser.snapshot()
-    let selectedServiceName = RelaySelectionStore.selectedRelayServiceName()
-    let services = devices.map { device in
-      TunnelRelayService(
-        id: device.identifier,
-        serviceName: device.serviceName,
-        serviceType: device.serviceType,
-        domain: device.domain,
-        interfaceIndex: device.interfaceIndex,
-        hostName: "",
-        endpoints: [],
-        preferredEndpoint: nil,
-        isSelected: device.serviceName == selectedServiceName
-      )
-    }
-    let selectedServiceID = devices.first { device in
-      device.serviceName == selectedServiceName
-    }?.identifier
-    let snapshot = TunnelDiscoverySnapshot(
-      phase: services.isEmpty ? .browsing : .ready,
-      services: services,
-      selectedServiceID: selectedServiceID
-    )
-    return AgentControlResponse(discovery: snapshot)
   }
 
   func forwardStatus(
@@ -378,14 +393,21 @@ extension AgentTunnelController {
     return resolved
   }
 
+  /// Writes the active config into the saved profile and stamps it with the library
+  /// id (as `uuidString`), so the profile is a downstream projection of the active
+  /// library entry that boot can verify by id.
   private func applyConfiguration(
     to manager: NETunnelProviderManager,
-    wireGuardConfig: String
+    wireGuardConfig: String,
+    configID: UUID
   ) {
     let providerProtocol = NETunnelProviderProtocol()
     providerProtocol.providerBundleIdentifier = providerBundleIdentifier
     providerProtocol.serverAddress = tunnelServerAddressPlaceholder
-    var providerConfiguration = [providerConfigWireGuardKey: wireGuardConfig]
+    var providerConfiguration = [
+      providerConfigWireGuardKey: wireGuardConfig,
+      providerConfigConfigIDKey: configID.uuidString,
+    ]
     if let relayName = resolvedRelayServiceName() {
       providerConfiguration[providerConfigRelayServiceKey] = relayName
     }

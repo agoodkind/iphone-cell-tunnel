@@ -8,8 +8,6 @@
 
 import Foundation
 
-private let hostPortComponentCount = 2
-
 public enum TunnelAddressFamily: String, Codable, Equatable, Sendable {
   case ipv4
   case ipv6
@@ -51,113 +49,6 @@ public enum TunnelControlErrorCode: String, Codable, Equatable, Sendable {
   case relayServiceNotFound = "relayServiceNotFound"
   case runtimeStartFailure = "runtimeStartFailure"
   case unspecified = "unspecified"
-}
-
-public let usbmuxdEndpointPrefix = "usbmuxd:"
-public let tunneldEndpointPrefix = "tunneld:"
-
-private let prefixedEndpointSchemes = [usbmuxdEndpointPrefix, tunneldEndpointPrefix]
-
-private func prefixedSchemeForHost(_ host: String) -> String? {
-  for scheme in prefixedEndpointSchemes where host.hasPrefix(scheme) {
-    return scheme
-  }
-  return nil
-}
-
-// MARK: - TunnelRelayEndpoint
-
-public struct TunnelRelayEndpoint: Codable, Equatable, Hashable, Sendable {
-  public var host: String
-  public var port: Int
-  public var addressFamily: TunnelAddressFamily
-
-  public init(host: String, port: Int, addressFamily: TunnelAddressFamily = .unspecified) {
-    self.host = host
-    self.port = port
-    self.addressFamily = addressFamily
-  }
-
-  public var socketAddress: String {
-    if prefixedSchemeForHost(host) != nil {
-      return "\(host):\(port)"
-    }
-    if host.contains(":") {
-      return "[\(host)]:\(port)"
-    }
-    return "\(host):\(port)"
-  }
-
-  public var isConfigured: Bool {
-    !host.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && port > 0
-  }
-
-  public static func parse(argument: String) throws -> Self {
-    let trimmedArgument = argument.trimmingCharacters(in: .whitespacesAndNewlines)
-    if trimmedArgument.isEmpty {
-      throw TunnelDaemonError.usage("relay endpoint is empty")
-    }
-
-    for scheme in prefixedEndpointSchemes where trimmedArgument.hasPrefix(scheme) {
-      let body = String(trimmedArgument.dropFirst(scheme.count))
-      guard let lastColonIndex = body.lastIndex(of: ":") else {
-        throw TunnelDaemonError.controlFailure(
-          TunnelControlFailure(
-            errorCode: .invalidRelayEndpoint,
-            message: "invalid \(scheme.dropLast()) relay endpoint")
-        )
-      }
-      let udid = String(body[..<lastColonIndex])
-      let portString = String(body[body.index(after: lastColonIndex)...])
-      guard !udid.isEmpty, let parsedPort = Int(portString), parsedPort > 0 else {
-        throw TunnelDaemonError.controlFailure(
-          TunnelControlFailure(
-            errorCode: .invalidRelayEndpoint,
-            message: "invalid \(scheme.dropLast()) relay endpoint")
-        )
-      }
-      return Self(host: "\(scheme)\(udid)", port: parsedPort, addressFamily: .unspecified)
-    }
-
-    if trimmedArgument.hasPrefix("[") {
-      guard let closingBracketIndex = trimmedArgument.lastIndex(of: "]"),
-        let separatorIndex = trimmedArgument[closingBracketIndex...].firstIndex(of: ":")
-      else {
-        throw TunnelDaemonError.controlFailure(
-          TunnelControlFailure(
-            errorCode: .invalidRelayEndpoint, message: "invalid relay endpoint")
-        )
-      }
-      let parsedHost = String(
-        trimmedArgument[
-          trimmedArgument.index(after: trimmedArgument.startIndex)..<closingBracketIndex]
-      )
-      let portString = String(
-        trimmedArgument[trimmedArgument.index(after: separatorIndex)...])
-      guard let parsedPort = Int(portString), parsedPort > 0 else {
-        throw TunnelDaemonError.controlFailure(
-          TunnelControlFailure(
-            errorCode: .invalidRelayEndpoint, message: "invalid relay endpoint")
-        )
-      }
-      return Self(host: parsedHost, port: parsedPort, addressFamily: .ipv6)
-    }
-
-    let components = trimmedArgument.split(
-      separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-    guard components.count == hostPortComponentCount, let parsedPort = Int(components[1]),
-      parsedPort > 0
-    else {
-      throw TunnelDaemonError.controlFailure(
-        TunnelControlFailure(
-          errorCode: .invalidRelayEndpoint, message: "invalid relay endpoint")
-      )
-    }
-
-    let parsedHost = String(components[0])
-    let parsedFamily: TunnelAddressFamily = parsedHost.contains(":") ? .ipv6 : .ipv4
-    return Self(host: parsedHost, port: parsedPort, addressFamily: parsedFamily)
-  }
 }
 
 // MARK: - TunnelRelayService
@@ -340,6 +231,17 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
   /// the Mac lists and selects egress through, with the selected one flagged. `nil`
   /// from a producer that predates the field; only the Mac agent populates it.
   public var connectedPeers: [ConnectedPeer]?
+  /// The agent's whole config library as text-free summaries, so the Mac Configs
+  /// card reads the same poll as the Relay tile and the two never diverge. `nil`
+  /// from a producer that has no library (iPhone, simulator, preview).
+  public var configLibrary: [TunnelConfigSummary]?
+  /// The id of the active config in `configLibrary`, the one the running tunnel
+  /// uses. `nil` when no config is active or the producer has no library.
+  public var activeConfigID: UUID?
+  /// A loud message when the running tunnel's stamped config id disagrees with the
+  /// library's active selection, or `nil` when they agree. Set only by the Mac
+  /// agent's boot assertion; never indicates a mutation, only a surfaced drift.
+  public var configDrift: String?
 
   public init(
     running: Bool = false,
@@ -369,7 +271,10 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     relayProtocol: String? = nil,
     routingIntentEnabled: TunnelRoutingIntent? = nil,
     agentLinks: [AgentLinkStatus]? = nil,
-    connectedPeers: [ConnectedPeer]? = nil
+    connectedPeers: [ConnectedPeer]? = nil,
+    configLibrary: [TunnelConfigSummary]? = nil,
+    activeConfigID: UUID? = nil,
+    configDrift: String? = nil
   ) {
     self.running = running
     self.routeState = routeState
@@ -399,6 +304,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     self.routingIntentEnabled = routingIntentEnabled
     self.agentLinks = agentLinks
     self.connectedPeers = connectedPeers
+    self.configLibrary = configLibrary
+    self.activeConfigID = activeConfigID
+    self.configDrift = configDrift
   }
 
   public var renderedOutput: String {
@@ -428,6 +336,16 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
           "peer.\(peer.id)=\(peer.name)" + (peer.isSelected ? " selected" : "")
         )
       }
+    }
+    if let configLibrary {
+      lines.append("configs=\(configLibrary.count)")
+      for config in configLibrary {
+        let activeMark = config.id == activeConfigID ? " active" : ""
+        lines.append("config.\(config.id)=\(config.name)\(activeMark)")
+      }
+    }
+    if let configDrift, !configDrift.isEmpty {
+      lines.append("config_drift=\(configDrift)")
     }
     if let activeRelayEndpoint {
       lines.append("relay=\(activeRelayEndpoint.socketAddress)")

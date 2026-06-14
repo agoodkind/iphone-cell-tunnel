@@ -77,6 +77,11 @@ struct RelayStatusSample: Sendable {
   var relayServerIPv4Address: String?
   /// The WireGuard server's IPv6 address, the endpoint hostname resolved to AAAA.
   var relayServerIPv6Address: String?
+  /// The agent's config library as text-free summaries, shown in the Configs card.
+  /// Empty from a producer with no library (iPhone, simulator, preview).
+  var configLibrary: [TunnelConfigSummary]
+  /// The id of the active config in `configLibrary`, the one the running tunnel uses.
+  var activeConfigID: UUID?
 
   /// Maps a daemon status snapshot to one sample. Every backend builds its sample
   /// here, so the snapshot-to-sample mapping lives in one place; a backend applies
@@ -109,6 +114,8 @@ struct RelayStatusSample: Sendable {
     relayHost = snapshot.relayHost
     relayServerIPv4Address = snapshot.relayServerIPv4Address
     relayServerIPv6Address = snapshot.relayServerIPv6Address
+    configLibrary = snapshot.configLibrary ?? []
+    activeConfigID = snapshot.activeConfigID
   }
 }
 
@@ -161,26 +168,24 @@ protocol RelayControlBackend {
   /// config to the agent's start path; the iPhone saves its own tunnel manager.
   func installTunnel(configURL: URL) async
 
-  /// Lists the stored WireGuard configurations available to this backend.
-  func listConfigs() -> [StoredTunnelConfig]
-
-  /// The identifier of the active stored configuration, or `nil` when none exists.
-  var activeConfigID: String? { get }
+  /// Loads a stored config's secret text on demand, for the editor. The Mac fetches
+  /// it from the agent; backends with no library answer `nil`.
+  func loadConfigText(id: UUID) async -> String?
 
   /// Imports a WireGuard configuration file into this backend's config library.
   func importConfig(url: URL, name: String) async
 
   /// Makes a stored configuration the active relay configuration.
-  func activateConfig(id: String) async
+  func activateConfig(id: UUID) async
 
   /// Saves edited WireGuard configuration text for a stored configuration.
-  func saveConfigEdit(id: String, text: String) async
+  func saveConfigEdit(id: UUID, text: String) async
 
   /// Renames a stored configuration in this backend's config library.
-  func renameConfig(id: String, name: String) async
+  func renameConfig(id: UUID, name: String) async
 
   /// Deletes a stored configuration from this backend's config library.
-  func deleteConfig(id: String) async
+  func deleteConfig(id: UUID) async
 }
 
 // MARK: - RelayControlBackend defaults
@@ -291,6 +296,13 @@ final class RelayController {
   var relayHost: String?
   var relayServerIPv4Address: String?
   var relayServerIPv6Address: String?
+  /// The agent's config library mirrored from the status poll, the rows the Configs
+  /// card lists, so the card reads the same source as the Relay tile and the two
+  /// never diverge. Empty on the iPhone, which hosts no library.
+  var configLibrary: [TunnelConfigSummary] = []
+  /// The active config's id, mirrored from the same poll, the entry the card marks
+  /// active and the running tunnel uses.
+  var activeConfigID: UUID?
 
   init(
     backend: any RelayControlBackend,
@@ -464,6 +476,8 @@ final class RelayController {
     assign(\.relayHost, sample.relayHost)
     assign(\.relayServerIPv4Address, sample.relayServerIPv4Address)
     assign(\.relayServerIPv6Address, sample.relayServerIPv6Address)
+    assign(\.configLibrary, sample.configLibrary)
+    assign(\.activeConfigID, sample.activeConfigID)
     recomputeDeviceValues()
     let rate = throughput.update(with: sample.counters)
     assign(\.uploadMbps, rate.upload)
@@ -564,14 +578,15 @@ final class RelayController {
 
   // MARK: - Config library
 
-  /// The stored configurations the views list, read from the backend on demand.
-  func listConfigs() -> [StoredTunnelConfig] {
-    backend.listConfigs()
-  }
+  // The library list and active id are published properties mirrored from the
+  // status poll (`configLibrary`, `activeConfigID`), so the card reads the same
+  // source as the Relay tile. Mutations go to the backend and the next poll
+  // reflects them.
 
-  /// The active stored configuration's identifier, or `nil` when none is active.
-  var activeConfigID: String? {
-    backend.activeConfigID
+  /// Loads a stored config's secret text on demand, for the editor only.
+  func loadConfigText(id: UUID) async -> String? {
+    logger.notice("relay controller load config text requested")
+    return await backend.loadConfigText(id: id)
   }
 
   /// Imports a picked configuration file, then validates, stores, and applies it.
@@ -581,25 +596,25 @@ final class RelayController {
   }
 
   /// Makes a stored configuration active and applies it.
-  func activateConfig(id: String) {
+  func activateConfig(id: UUID) {
     logger.notice("relay controller activate config requested")
     Task { await backend.activateConfig(id: id) }
   }
 
   /// Saves edited configuration text and reloads it when it is the active config.
-  func saveConfigEdit(id: String, text: String) {
+  func saveConfigEdit(id: UUID, text: String) {
     logger.notice("relay controller save config edit requested")
     Task { await backend.saveConfigEdit(id: id, text: text) }
   }
 
   /// Renames a stored configuration.
-  func renameConfig(id: String, name: String) {
+  func renameConfig(id: UUID, name: String) {
     logger.notice("relay controller rename config requested")
     Task { await backend.renameConfig(id: id, name: name) }
   }
 
   /// Deletes a stored configuration.
-  func deleteConfig(id: String) {
+  func deleteConfig(id: UUID) {
     logger.notice("relay controller delete config requested")
     Task { await backend.deleteConfig(id: id) }
   }

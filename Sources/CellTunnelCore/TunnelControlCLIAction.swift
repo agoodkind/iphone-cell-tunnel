@@ -13,9 +13,13 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 private let peerListingIndexBase = 1
 private let optionArgumentStride = 2
 private let noRelayPeersMessage = "no peers found"
+private let noConfigsMessage = "no configs"
+private let singleArgumentCount = 1
+private let renameArgumentCount = 2
 
 public enum TunnelControlCLIAction: Equatable, Sendable {
   case check
+  case configs(ConfigsCommand)
   case peers
   case reset
   case select(reference: String)
@@ -39,6 +43,8 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
       return .check
     case "peers":
       return .peers
+    case "configs":
+      return .configs(try ConfigsCommand.parse(arguments: Array(arguments.dropFirst())))
     case "start-discovery":
       return .startDiscovery
     case "stop-discovery":
@@ -102,6 +108,58 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
   }
 }
 
+// MARK: - ConfigsCommand
+
+/// The `configs` subcommands the command-line tool drives against the agent's
+/// config library, the same library the Mac app shows. Naming and ids match the
+/// Configs card, so the two surfaces stay one pipeline.
+public enum ConfigsCommand: Equatable, Sendable {
+  case activate(reference: String)
+  case delete(id: UUID)
+  case importFile(path: String)
+  case list
+  case rename(id: UUID, name: String)
+
+  public static func parse(arguments: [String]) throws -> Self {
+    guard let subcommand = arguments.first else {
+      throw TunnelDaemonError.usage("configs requires a subcommand")
+    }
+    let rest = Array(arguments.dropFirst())
+    switch subcommand {
+    case "list":
+      return .list
+    case "activate":
+      guard let reference = rest.first, rest.count == singleArgumentCount else {
+        throw TunnelDaemonError.usage("configs activate requires <name|id>")
+      }
+      return .activate(reference: reference)
+    case "rename":
+      guard rest.count == renameArgumentCount else {
+        throw TunnelDaemonError.usage("configs rename requires <id> <name>")
+      }
+      guard let id = UUID(uuidString: rest[0]) else {
+        throw TunnelDaemonError.usage("configs rename <id> must be a config id")
+      }
+      return .rename(id: id, name: rest[1])
+    case "delete":
+      guard let reference = rest.first, rest.count == singleArgumentCount else {
+        throw TunnelDaemonError.usage("configs delete requires <id>")
+      }
+      guard let id = UUID(uuidString: reference) else {
+        throw TunnelDaemonError.usage("configs delete <id> must be a config id")
+      }
+      return .delete(id: id)
+    case "import":
+      guard let path = rest.first, rest.count == singleArgumentCount else {
+        throw TunnelDaemonError.usage("configs import requires <path>")
+      }
+      return .importFile(path: path)
+    default:
+      throw TunnelDaemonError.usage("unknown configs subcommand: \(subcommand)")
+    }
+  }
+}
+
 // MARK: - TunnelControlCLIExecutor
 
 public struct TunnelControlCLIExecutor: Sendable {
@@ -122,6 +180,8 @@ public struct TunnelControlCLIExecutor: Sendable {
       return report.renderedOutput
     case .peers:
       return try await listPeers()
+    case .configs(let command):
+      return try await runConfigs(command)
     case .startDiscovery:
       let snapshot = try await client.startRelayDiscovery()
       return snapshot.renderedOutput
@@ -145,6 +205,77 @@ public struct TunnelControlCLIExecutor: Sendable {
   private func listPeers() async throws -> String {
     let snapshot = try await client.status()
     return renderPeerListing(peers: snapshot.connectedPeers ?? [])
+  }
+
+  // MARK: - Config library
+
+  private func runConfigs(_ command: ConfigsCommand) async throws -> String {
+    switch command {
+    case .list:
+      let snapshot = try await client.status()
+      return renderConfigListing(
+        configs: snapshot.configLibrary ?? [], activeID: snapshot.activeConfigID)
+    case .activate(let reference):
+      let id = try await resolveConfigID(reference: reference)
+      let snapshot = try await client.activateConfig(id: id)
+      return renderConfigListing(
+        configs: snapshot.configLibrary ?? [], activeID: snapshot.activeConfigID)
+    case let .rename(id, name):
+      let snapshot = try await client.renameConfig(id: id, name: name)
+      return renderConfigListing(
+        configs: snapshot.configLibrary ?? [], activeID: snapshot.activeConfigID)
+    case .delete(let id):
+      let snapshot = try await client.deleteConfig(id: id)
+      return renderConfigListing(
+        configs: snapshot.configLibrary ?? [], activeID: snapshot.activeConfigID)
+    case .importFile(let path):
+      let expanded = (path as NSString).expandingTildeInPath
+      let url = URL(fileURLWithPath: expanded)
+      let text = try String(contentsOf: url, encoding: .utf8)
+      let name = url.deletingPathExtension().lastPathComponent
+      let snapshot = try await client.importConfig(name: name, text: text)
+      return renderConfigListing(
+        configs: snapshot.configLibrary ?? [], activeID: snapshot.activeConfigID)
+    }
+  }
+
+  // Resolves a name or id reference to a config id, preferring an exact id match,
+  // then an exact case-insensitive name match. An unmatched reference is a usage
+  // error rather than a silent no-op.
+  private func resolveConfigID(reference: String) async throws -> UUID {
+    let snapshot = try await client.status()
+    let configs = snapshot.configLibrary ?? []
+    if let id = UUID(uuidString: reference),
+      let byID = configs.first(where: { $0.id == id })
+    {
+      return byID.id
+    }
+    let byName = configs.first { config in
+      config.name.localizedCaseInsensitiveCompare(reference) == .orderedSame
+    }
+    guard let byName else {
+      throw TunnelDaemonError.usage("no config matching \(reference)")
+    }
+    return byName.id
+  }
+
+  // One row per stored config: its name and id, with the active one flagged, or a
+  // single line when the library is empty.
+  private func renderConfigListing(
+    configs: [TunnelConfigSummary], activeID: UUID?
+  ) -> String {
+    guard !configs.isEmpty else {
+      return noConfigsMessage
+    }
+    var lines: [String] = []
+    for config in configs {
+      var line = "\(config.name)  \(config.id.uuidString)"
+      if config.id == activeID {
+        line += " (active)"
+      }
+      lines.append(line)
+    }
+    return lines.joined(separator: "\n")
   }
 
   private func selectPeer(reference: String) async throws -> String {

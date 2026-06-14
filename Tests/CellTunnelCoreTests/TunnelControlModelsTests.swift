@@ -14,6 +14,9 @@ import Testing
 private let logger = CellTunnelLog.logger(category: .daemon)
 private let relayPort = 51_820
 private let discoverySelectionPort = 5_354
+private let fixedConfigEpoch: TimeInterval = 1_717_200_000
+private let configIDOne = UUID()
+private let configIDTwo = UUID()
 
 struct TunnelControlModelsTests {
   @Test func startSettingsUsesDaemonSelectedRelayByDefault() {
@@ -176,6 +179,109 @@ struct TunnelControlModelsTests {
     #expect(snapshot.discovery.selectedServiceID == "relay-1")
     #expect(snapshot.activeRelayEndpoint?.socketAddress == "[fd00::1]:5354")
   }
+
+  @Test func configSummaryRoundTripsThroughCoding() throws {
+    let date = Date(timeIntervalSince1970: fixedConfigEpoch)
+    let summary = TunnelConfigSummary(id: configIDOne, name: "Home", createdAt: date)
+
+    let encoded = try JSONEncoder().encode(summary)
+    let decoded = try JSONDecoder().decode(TunnelConfigSummary.self, from: encoded)
+
+    #expect(decoded == summary)
+  }
+
+  @Test func snapshotRoundTripsConfigLibraryAndActiveID() throws {
+    let date = Date(timeIntervalSince1970: fixedConfigEpoch)
+    let snapshot = TunnelDaemonStatusSnapshot(
+      configLibrary: [
+        TunnelConfigSummary(id: configIDOne, name: "Home", createdAt: date),
+        TunnelConfigSummary(id: configIDTwo, name: "Work", createdAt: date),
+      ],
+      activeConfigID: configIDTwo
+    )
+
+    let encoded = try JSONEncoder().encode(snapshot)
+    let decoded = try JSONDecoder().decode(TunnelDaemonStatusSnapshot.self, from: encoded)
+
+    #expect(decoded.configLibrary?.count == 2)
+    #expect(decoded.activeConfigID == configIDTwo)
+    #expect(decoded.configLibrary?.first?.name == "Home")
+  }
+
+  @Test func snapshotRenderedOutputListsConfigLibrary() {
+    let date = Date(timeIntervalSince1970: fixedConfigEpoch)
+    let snapshot = TunnelDaemonStatusSnapshot(
+      configLibrary: [TunnelConfigSummary(id: configIDOne, name: "Home", createdAt: date)],
+      activeConfigID: configIDOne
+    )
+
+    let output = snapshot.renderedOutput
+
+    #expect(output.contains("configs=1"))
+    #expect(output.contains("config.\(configIDOne.uuidString)=Home active"))
+  }
+
+  @Test func cliParseConfigsList() throws {
+    let action = try TunnelControlCLIAction.parse(arguments: ["configs", "list"])
+
+    #expect(action == .configs(.list))
+  }
+
+  @Test func cliParseConfigsActivateRequiresReference() {
+    #expect(throws: (any Error).self) {
+      try TunnelControlCLIAction.parse(arguments: ["configs", "activate"])
+    }
+  }
+
+  @Test func cliParseConfigsRenameTakesIDAndName() throws {
+    let action = try TunnelControlCLIAction.parse(
+      arguments: ["configs", "rename", configIDOne.uuidString, "Home"])
+
+    #expect(action == .configs(.rename(id: configIDOne, name: "Home")))
+  }
+
+  @Test func cliParseConfigsRenameRejectsNonUUID() {
+    #expect(throws: (any Error).self) {
+      try TunnelControlCLIAction.parse(arguments: ["configs", "rename", "not-a-uuid", "Home"])
+    }
+  }
+
+  @Test func cliExecutorConfigsListReportsEmptyLibrary() async throws {
+    let client = FakeTunnelControlClient()
+
+    let output = try await runCLI(.configs(.list), on: client)
+
+    #expect(output == "no configs")
+  }
+
+  @Test func cliExecutorConfigsActivateResolvesByNameThenActivates() async throws {
+    let client = FakeTunnelControlClient()
+    let directory = FileManager.default.temporaryDirectory
+    let url = directory.appendingPathComponent("home-\(UUID().uuidString).conf")
+    try Data("[Interface]\n".utf8).write(to: url, options: .atomic)
+    defer {
+      do {
+        try FileManager.default.removeItem(at: url)
+      } catch {
+        logger.error(
+          """
+          temp config cleanup failed \
+          details=\(String(describing: error), privacy: .public) recovery=ignore
+          """
+        )
+      }
+    }
+
+    _ = try await runCLI(.configs(.importFile(path: url.path)), on: client)
+    let importedName = url.deletingPathExtension().lastPathComponent
+    client.events.removeAll()
+
+    let output = try await runCLI(.configs(.activate(reference: importedName)), on: client)
+
+    #expect(client.events.contains("activateConfig"))
+    #expect(output.contains(importedName))
+    #expect(output.contains("(active)"))
+  }
 }
 
 // Single boundary the suite uses to drive the async CLI executor; logs the
@@ -266,11 +372,23 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
       ConnectedPeer(id: "13452847362910", name: "Alex iPhone", isSelected: true)
     ]
   )
+  // The config library the configs subcommands list, resolve, and mutate against.
+  var configs: [TunnelConfigSummary] = []
+  var activeConfigID: UUID?
+  private let fixedConfigDate = Date(timeIntervalSince1970: fixedConfigEpoch)
+
+  private func libraryStatus() -> TunnelDaemonStatusSnapshot {
+    TunnelDaemonStatusSnapshot(
+      connectedPeers: connectedPeersOverride ?? connectedRoster,
+      configLibrary: configs,
+      activeConfigID: activeConfigID
+    )
+  }
 
   func status() async -> TunnelDaemonStatusSnapshot {
     await Task.yield()
     events.append("status")
-    return TunnelDaemonStatusSnapshot(connectedPeers: connectedPeersOverride ?? connectedRoster)
+    return libraryStatus()
   }
 
   func check() async -> TunnelEnvironmentReport {
@@ -334,5 +452,55 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
     events.append("selectEgressPeer")
     #expect(peerID == "13452847362910")
     return selectedStatusSnapshot
+  }
+
+  func importConfig(name: String, text: String) async -> TunnelDaemonStatusSnapshot {
+    await Task.yield()
+    events.append("importConfig")
+    _ = text
+    let summary = TunnelConfigSummary(id: UUID(), name: name, createdAt: fixedConfigDate)
+    configs.append(summary)
+    activeConfigID = summary.id
+    return libraryStatus()
+  }
+
+  func activateConfig(id: UUID) async -> TunnelDaemonStatusSnapshot {
+    await Task.yield()
+    events.append("activateConfig")
+    activeConfigID = id
+    return libraryStatus()
+  }
+
+  func saveConfigEdit(id: UUID, text: String) async -> TunnelDaemonStatusSnapshot {
+    await Task.yield()
+    events.append("saveConfigEdit")
+    _ = (id, text)
+    return libraryStatus()
+  }
+
+  func renameConfig(id: UUID, name: String) async -> TunnelDaemonStatusSnapshot {
+    await Task.yield()
+    events.append("renameConfig")
+    if let index = configs.firstIndex(where: { $0.id == id }) {
+      configs[index].name = name
+    }
+    return libraryStatus()
+  }
+
+  func deleteConfig(id: UUID) async -> TunnelDaemonStatusSnapshot {
+    await Task.yield()
+    events.append("deleteConfig")
+    configs.removeAll { $0.id == id }
+    if activeConfigID == id {
+      activeConfigID = nil
+    }
+    return libraryStatus()
+  }
+
+  func getConfigText(id: UUID) async -> String {
+    await Task.yield()
+    events.append("getConfigText")
+    _ = id
+    return "[Interface]\n"
   }
 }

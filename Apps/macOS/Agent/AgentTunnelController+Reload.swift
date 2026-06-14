@@ -60,7 +60,7 @@ extension AgentTunnelController {
       )
       logger.notice("agent tunnel reload requested")
       if let status = response.status {
-        return AgentControlResponse(status: status)
+        return AgentControlResponse(status: augmented(status))
       }
       return try await forwardStatus(on: manager)
     } catch {
