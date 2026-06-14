@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches-ignore:
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# The caller must grant every permission the called workflow's jobs request.
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: agoodkind/swift-makefile/.github/workflows/_ci.yml@main
+    with:
+      runner: macos-26
+      fetch-depth: "0"
+      # gate (lint/audit/deadcode) runs in the reusable workflow's mandatory gate
+      # job; its dead-code coverage build compiles mac, mac-catalyst, and the iOS
+      # simulator unsigned. The build matrix target produces the signed product.
+      targets: '["build","test"]'
+      # Unlike the macOS consumers, iphone signs every target (iOS app + extension,
+      # macOS agent + provider, Catalyst) with Apple Development via App Store
+      # Connect automatic signing, not a Developer ID P12. The dev tool already
+      # passes `xcodebuild -allowProvisioningUpdates` plus the ASC key it reads from
+      # APPLE_NOTARY_KEY_* (forwarded by _ci.yml via secrets: inherit). CI supplies
+      # the signing style and team that the gitignored Config/local.xcconfig holds
+      # locally. TARGET=all builds the macOS and iOS device products.
+      make-args: 'TARGET=all CODE_SIGN_STYLE=Automatic CODE_SIGN_IDENTITY="Apple Development"'
+      apple-team-id: H3BMXM4W7H
+    secrets: inherit
