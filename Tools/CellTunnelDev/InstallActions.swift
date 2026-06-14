@@ -175,14 +175,15 @@ private func bothPresent<A, B>(_ first: A?, _ second: B?) -> (A, B)? {
 // MARK: - Agent launch verification
 
 /// Confirm the freshly installed agent came up and is the binary just built. The
-/// agent is an on-demand XPC service, so a successful `check()` both launches it and
-/// proves it is reachable; comparing the reported Mach-O UUID and SHA-256 to the
-/// installed binary catches a stale agent registered from another bundle path that
-/// answers for an old build. A mismatch self-recovers once: a long-running stale
-/// agent process can survive the stop step and keep the mach service, so the
-/// verification kickstarts the launchd service, which kills that process and
-/// relaunches from the registered bundle path (now holding the fresh binary), then
-/// re-verifies before failing.
+/// agent is an on-demand XPC service, and `install-mac` replaces the bundle in
+/// place without stopping the old process, so a stale long-lived agent can survive
+/// the copy and keep owning the mach service while answering for an old build. The
+/// UUID/SHA mismatch check alone is not enough to catch that, because it treats an
+/// unreadable installed-binary UUID or SHA as "no mismatch" and passes. So the
+/// verification first proves the service is registered and reachable with one
+/// `check()`, then unconditionally kickstarts the launchd service, which kills any
+/// running instance and relaunches from the registered bundle path (now holding the
+/// fresh binary), and only then compares identities and fails on a real mismatch.
 private func verifyInstalledAgentRunning(installedAppURL: URL) throws {
   installLogger.notice(
     "install-mac verifying agent path=\(installedAppURL.path, privacy: .public)"
@@ -191,24 +192,19 @@ private func verifyInstalledAgentRunning(installedAppURL: URL) throws {
     installedAppURL
     .appendingPathComponent(agentExecutableSubpath)
     .appendingPathComponent(agentBinaryName)
+  // Reach the service once so first-run SMAppService registration has settled and
+  // the launchd kickstart below targets a loaded service.
+  _ = try awaitAgentCheck()
+  // Always restart so the running process is the freshly installed binary, never a
+  // stale agent that survived the in-place bundle replacement.
+  kickstartAgentService()
   if let mismatch = try runningAgentMismatch(installedBinary: installedBinary) {
-    printToolOutput(
-      "stale agent answered the check (\(mismatch)); restarting the launchd service")
-    installLogger.notice(
+    throw ToolError.failure(
       """
-      install-mac stale agent answered \(mismatch, privacy: .public) \
-      recovery=kickstart-and-reverify
+      installed agent does not match the freshly built binary (\(mismatch)) \
+      after a launchd kickstart; a stale agent may be registered
       """
     )
-    kickstartAgentService()
-    if let persistent = try runningAgentMismatch(installedBinary: installedBinary) {
-      throw ToolError.failure(
-        """
-        installed agent does not match the freshly built binary (\(persistent)) \
-        after a launchd kickstart; a stale agent may be registered
-        """
-      )
-    }
   }
   printToolOutput("agent verified up and matches the freshly built binary")
 }

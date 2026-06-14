@@ -125,6 +125,12 @@ final class AgentConfigStore: TunnelConfigStore {
   // MARK: - Keychain helpers
 
   /// Writes one generic-password item, updating it first and adding it if missing.
+  /// New items are added with `kSecAttrAccessibleAfterFirstUnlock` so the
+  /// background agent can read its library after the user's first unlock even while
+  /// the screen is later locked: reconcile-on-launch can run from an on-demand
+  /// kickstart while locked, and the default `WhenUnlocked` would make the library
+  /// unreadable then. The accessibility is set only on the add, never on the update
+  /// search query, so it never over-constrains a match.
   private func writeItem(account: String, data: Data) throws {
     let query = itemQuery(account: account)
     let attributes = NSMutableDictionary()
@@ -138,6 +144,8 @@ final class AgentConfigStore: TunnelConfigStore {
     }
 
     query.setObject(data, forKey: kSecValueData as NSString)
+    query.setObject(
+      kSecAttrAccessibleAfterFirstUnlock, forKey: kSecAttrAccessible as NSString)
     let addStatus = SecItemAdd(query as CFDictionary, nil)
     guard addStatus == errSecSuccess else {
       throw TunnelConfigStoreError.keychainFailure(addStatus)
@@ -201,15 +209,27 @@ final class AgentConfigStore: TunnelConfigStore {
     }
   }
 
-  /// Builds a service-scoped keychain query. It opts into the data-protection
-  /// keychain so the agent reads its own items without the login-keychain ACL
-  /// prompts that block a background agent from reading item data; the agent's
-  /// `application-identifier` entitlement gives every item a default access group.
+  /// Builds a service-scoped keychain query.
+  ///
+  /// It opts into the data-protection keychain (`kSecUseDataProtectionKeychain`),
+  /// which is the correct keychain for a headless signed agent rather than an
+  /// incidental fix. The file-based login keychain returns `-50` (errSecParam) on a
+  /// multi-item attribute-and-data read (`kSecMatchLimitAll` + `kSecReturnData`),
+  /// so `list()` came back empty even though writes succeeded, and its items are
+  /// ACL-bound to the creating process in ways that break a relaunched agent. The
+  /// data-protection keychain is scoped by the agent's `application-identifier`
+  /// entitlement, reads without prompts, and works headless. The Catalyst app never
+  /// hit the `-50` because Catalyst uses this keychain by default.
+  ///
+  /// It also pins `kSecAttrSynchronizable = false` so the WireGuard `PrivateKey`
+  /// material never syncs to iCloud Keychain, and scopes every read and write to
+  /// non-synchronizable items.
   private func serviceQuery() -> NSMutableDictionary {
     let query = NSMutableDictionary()
     query.setObject(kSecClassGenericPassword, forKey: kSecClass as NSString)
     query.setObject(agentConfigStoreService, forKey: kSecAttrService as NSString)
     query.setObject(true, forKey: kSecUseDataProtectionKeychain as NSString)
+    query.setObject(false, forKey: kSecAttrSynchronizable as NSString)
     return query
   }
 
