@@ -108,6 +108,9 @@ func runRelayStatus(_ arguments: [String]) throws {
     printToolOutput(status.renderedOutput)
     let dump = RelayStateDump.render(snapshot: status)
     printToolOutput(dump.text)
+    if let configDrift = status.configDrift, !configDrift.isEmpty {
+      throw ToolError.usage("relay-status found config-library drift: \(configDrift)")
+    }
     if dump.hasDrift {
       throw ToolError.usage("relay-status found drift between routing layers")
     }

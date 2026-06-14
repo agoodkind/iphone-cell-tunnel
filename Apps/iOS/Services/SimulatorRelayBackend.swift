@@ -97,7 +97,7 @@
     // MARK: - Config library
 
     // The in-process simulator relay hosts no config library.
-    func loadConfigText(id _: String) async -> String? {
+    func loadConfigText(id _: UUID) async -> String? {
       await Task.yield()
       return nil
     }
@@ -106,19 +106,19 @@
       await Task.yield()
     }
 
-    func activateConfig(id _: String) async {
+    func activateConfig(id _: UUID) async {
       await Task.yield()
     }
 
-    func saveConfigEdit(id _: String, text _: String) async {
+    func saveConfigEdit(id _: UUID, text _: String) async {
       await Task.yield()
     }
 
-    func renameConfig(id _: String, name _: String) async {
+    func renameConfig(id _: UUID, name _: String) async {
       await Task.yield()
     }
 
-    func deleteConfig(id _: String) async {
+    func deleteConfig(id _: UUID) async {
       await Task.yield()
     }
   }

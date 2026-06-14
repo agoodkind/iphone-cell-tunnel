@@ -248,6 +248,7 @@ extension AgentTunnelController {
     merged.connectedPeers = connectedPeers.withLock { $0 }
     merged.configLibrary = configStore.summaries()
     merged.activeConfigID = configStore.activeID
+    merged.configDrift = configDriftMessage
     return merged
   }
 

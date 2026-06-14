@@ -61,12 +61,13 @@ final class AgentConfigStore: TunnelConfigStore {
     }
   }
 
-  /// The active config id, if the active-id keychain item is present.
-  var activeID: String? {
+  /// The active config id, if the active-id keychain item is present. The id is
+  /// stored as its `uuidString`, so a malformed value reads as no active selection.
+  var activeID: UUID? {
     guard let data = readData(account: agentConfigStoreActiveAccount) else {
       return nil
     }
-    guard let id = String(data: data, encoding: .utf8), !id.isEmpty else {
+    guard let raw = String(data: data, encoding: .utf8), let id = UUID(uuidString: raw) else {
       return nil
     }
     return id
@@ -74,44 +75,45 @@ final class AgentConfigStore: TunnelConfigStore {
 
   // MARK: - Mutations
 
-  /// Adds a named config and returns the stored record with its generated id.
+  /// Adds a named config and returns the stored record with its generated id. The
+  /// keychain account is the id's `uuidString`.
   @discardableResult
   func add(name: String, text: String) throws -> StoredTunnelConfig {
-    let id = UUID().uuidString
+    let id = UUID()
     let createdAt = Date()
     let payload = Payload(name: name, text: text, createdAt: createdAt)
     let data = try encoder.encode(payload)
-    try writeItem(account: id, data: data)
+    try writeItem(account: id.uuidString, data: data)
     return StoredTunnelConfig(id: id, name: name, text: text, createdAt: createdAt)
   }
 
   /// Updates the raw config text for an existing stored config.
-  func update(id: String, text: String) throws {
-    var payload = try readPayload(account: id)
+  func update(id: UUID, text: String) throws {
+    var payload = try readPayload(account: id.uuidString)
     payload.text = text
     let data = try encoder.encode(payload)
-    try writeItem(account: id, data: data)
+    try writeItem(account: id.uuidString, data: data)
   }
 
   /// Renames an existing stored config while preserving its text and creation date.
-  func rename(id: String, name: String) throws {
-    var payload = try readPayload(account: id)
+  func rename(id: UUID, name: String) throws {
+    var payload = try readPayload(account: id.uuidString)
     payload.name = name
     let data = try encoder.encode(payload)
-    try writeItem(account: id, data: data)
+    try writeItem(account: id.uuidString, data: data)
   }
 
   /// Deletes a stored config and clears the active selection when it points there.
-  func delete(id: String) throws {
-    try deleteItem(account: id)
+  func delete(id: UUID) throws {
+    try deleteItem(account: id.uuidString)
     if activeID == id {
       try deleteItem(account: agentConfigStoreActiveAccount)
     }
   }
 
-  /// Records which config id is active.
-  func setActive(id: String) {
-    let data = Data(id.utf8)
+  /// Records which config id is active, stored as its `uuidString`.
+  func setActive(id: UUID) {
+    let data = Data(id.uuidString.utf8)
     do {
       try writeItem(account: agentConfigStoreActiveAccount, data: data)
     } catch {
@@ -182,12 +184,16 @@ final class AgentConfigStore: TunnelConfigStore {
     return try decoder.decode(Payload.self, from: data)
   }
 
-  /// Converts one keychain result dictionary into a stored config.
+  /// Converts one keychain result dictionary into a stored config. The account is
+  /// the id's `uuidString`; the active-id marker and any non-UUID account are skipped.
   private func storedConfig(from item: NSDictionary) -> StoredTunnelConfig? {
     guard let account = item.object(forKey: kSecAttrAccount) as? String else {
       return nil
     }
     guard account != agentConfigStoreActiveAccount else {
+      return nil
+    }
+    guard let id = UUID(uuidString: account) else {
       return nil
     }
     guard let data = item.object(forKey: kSecValueData) as? Data else {
@@ -196,7 +202,7 @@ final class AgentConfigStore: TunnelConfigStore {
     do {
       let payload = try decoder.decode(Payload.self, from: data)
       return StoredTunnelConfig(
-        id: account,
+        id: id,
         name: payload.name,
         text: payload.text,
         createdAt: payload.createdAt

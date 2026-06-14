@@ -237,7 +237,11 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
   public var configLibrary: [TunnelConfigSummary]?
   /// The id of the active config in `configLibrary`, the one the running tunnel
   /// uses. `nil` when no config is active or the producer has no library.
-  public var activeConfigID: String?
+  public var activeConfigID: UUID?
+  /// A loud message when the running tunnel's stamped config id disagrees with the
+  /// library's active selection, or `nil` when they agree. Set only by the Mac
+  /// agent's boot assertion; never indicates a mutation, only a surfaced drift.
+  public var configDrift: String?
 
   public init(
     running: Bool = false,
@@ -269,7 +273,8 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     agentLinks: [AgentLinkStatus]? = nil,
     connectedPeers: [ConnectedPeer]? = nil,
     configLibrary: [TunnelConfigSummary]? = nil,
-    activeConfigID: String? = nil
+    activeConfigID: UUID? = nil,
+    configDrift: String? = nil
   ) {
     self.running = running
     self.routeState = routeState
@@ -301,6 +306,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     self.connectedPeers = connectedPeers
     self.configLibrary = configLibrary
     self.activeConfigID = activeConfigID
+    self.configDrift = configDrift
   }
 
   public var renderedOutput: String {
@@ -337,6 +343,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         let activeMark = config.id == activeConfigID ? " active" : ""
         lines.append("config.\(config.id)=\(config.name)\(activeMark)")
       }
+    }
+    if let configDrift, !configDrift.isEmpty {
+      lines.append("config_drift=\(configDrift)")
     }
     if let activeRelayEndpoint {
       lines.append("relay=\(activeRelayEndpoint.socketAddress)")

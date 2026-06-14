@@ -14,14 +14,16 @@ import Foundation
 // MARK: - Constants
 
 private let logger = CellTunnelLog.logger(category: .daemon)
-private let providerConfigWireGuardKey = "wireguardConfig"
-private let reconciledConfigFallbackName = "Imported config"
+private let providerConfigConfigIDKey = "configID"
+private let importedConfigFallbackName = "Imported config"
 
 // MARK: - Config library handling
 
 extension AgentTunnelController {
   /// Validates, stores, activates, and starts a config from its text, then returns
-  /// the refreshed status carrying the updated library.
+  /// the refreshed status carrying the updated library. Import is the boundary where
+  /// external text resolves to a library id (deduped by content); the start stamps
+  /// the profile with that id.
   func handleImportConfig(name: String, text: String) async -> AgentControlResponse {
     do {
       _ = try WireGuardConfigParser.parse(text)
@@ -37,20 +39,22 @@ extension AgentTunnelController {
       logger.error("agent import config store failed recovery=return-failure")
       return failure(errorCode: .internal, message: "store config failed")
     }
-    return await startStoredConfig(text: saved.text)
+    return await startTunnel(configText: saved.text, configID: saved.id)
   }
 
-  /// Makes a stored config active and starts the tunnel with it.
-  func handleActivateConfig(id: String) async -> AgentControlResponse {
+  /// Makes a stored config active and starts the tunnel with it. The id is known, so
+  /// the start stamps the profile with it directly, with no content match.
+  func handleActivateConfig(id: UUID) async -> AgentControlResponse {
     guard let text = configStore.text(forID: id) else {
-      return failure(errorCode: .internal, message: "no config with id \(id)")
+      return failure(errorCode: .internal, message: "no config with id \(id.uuidString)")
     }
     configStore.setActive(id: id)
-    return await startStoredConfig(text: text)
+    return await startTunnel(configText: text, configID: id)
   }
 
-  /// Saves edited config text and reloads the tunnel when that config is active.
-  func handleSaveConfigEdit(id: String, text: String) async -> AgentControlResponse {
+  /// Saves edited config text and reloads the tunnel in place when that config is
+  /// active. The reload keeps the same id, so the profile's stamp stays valid.
+  func handleSaveConfigEdit(id: UUID, text: String) async -> AgentControlResponse {
     do {
       _ = try WireGuardConfigParser.parse(text)
     } catch {
@@ -78,7 +82,7 @@ extension AgentTunnelController {
   }
 
   /// Renames a stored config without touching tunnel state.
-  func handleRenameConfig(id: String, name: String) async -> AgentControlResponse {
+  func handleRenameConfig(id: UUID, name: String) async -> AgentControlResponse {
     do {
       try configStore.rename(id: id, name: name)
     } catch {
@@ -90,9 +94,11 @@ extension AgentTunnelController {
 
   /// Deletes a stored config, stopping the tunnel first when it is the active one so
   /// nothing keeps running outside the library.
-  func handleDeleteConfig(id: String) async -> AgentControlResponse {
+  func handleDeleteConfig(id: UUID) async -> AgentControlResponse {
     if configStore.activeID == id {
       _ = await handleStopTunnel()
+      // The tunnel is stopped and the config is gone, so any prior drift is moot.
+      configDriftMessage = nil
     }
     do {
       try configStore.delete(id: id)
@@ -105,46 +111,69 @@ extension AgentTunnelController {
 
   /// Returns the secret text of a stored config, fetched only for editing and never
   /// logged.
-  func handleGetConfigText(id: String) -> AgentControlResponse {
+  func handleGetConfigText(id: UUID) -> AgentControlResponse {
     guard let text = configStore.text(forID: id) else {
-      return failure(errorCode: .internal, message: "no config with id \(id)")
+      return failure(errorCode: .internal, message: "no config with id \(id.uuidString)")
     }
     return AgentControlResponse(configText: text)
   }
 
-  // MARK: - Auto-register and reconcile
+  // MARK: - Boot assertion
 
-  /// Records the config the tunnel is starting from into the library, deduped by
-  /// content, and marks it active, so a config started over the command line still
-  /// appears in the card.
-  func registerActiveConfig(text: String, defaultName: String) {
-    do {
-      let saved = try configStore.addDeduplicated(name: defaultName, text: text)
-      configStore.setActive(id: saved.id)
-    } catch {
-      logger.error("agent config auto-register failed recovery=continue-without-entry")
-    }
-  }
-
-  /// Registers the currently-running config into an empty library on launch, named
-  /// from the parsed endpoint host, so a relay started before this build still shows
-  /// in the card on the first poll.
-  func reconcileRunningConfig() async {
+  /// Asserts on launch that the running tunnel's stamped config id agrees with the
+  /// library's active selection. This never creates or changes a library row, so it
+  /// cannot split-brain the way a row-creating reconcile could: a genuine mismatch is
+  /// surfaced loudly, an unstamped tunnel trusts the library, and the verdict is
+  /// published on every status snapshot's `configDrift`.
+  func assertRunningConfigMatchesLibrary() async {
     do {
       let manager = try await loadOrCreateManager()
-      guard
-        let providerProtocol = manager.protocolConfiguration as? NETunnelProviderProtocol,
-        let providerConfiguration = providerProtocol.providerConfiguration,
-        let text = providerConfiguration[providerConfigWireGuardKey] as? String,
-        !text.isEmpty
-      else {
+      guard isSessionActive(on: manager) else {
+        configDriftMessage = nil
         return
       }
-      let host = Self.serverEndpoint(fromConfig: text)?.host ?? reconciledConfigFallbackName
-      _ = try configStore.reconcileRunning(text: text, nameIfNew: host)
-      logger.notice("agent reconciled running config into library")
+      guard
+        let providerProtocol = manager.protocolConfiguration as? NETunnelProviderProtocol,
+        let providerConfiguration = providerProtocol.providerConfiguration
+      else {
+        configDriftMessage = nil
+        return
+      }
+      let runningRaw = providerConfiguration[providerConfigConfigIDKey] as? String
+      let runningID = runningRaw.flatMap(UUID.init(uuidString:))
+      if let runningRaw, !runningRaw.isEmpty, runningID == nil {
+        let message = "running tunnel carries an unparseable config id"
+        configDriftMessage = message
+        logger.error(
+          "agent config assertion mismatch \(message, privacy: .public) recovery=surface-no-mutation"
+        )
+        return
+      }
+      let libraryIDs = Set(configStore.list().map(\.id))
+      switch evaluateConfigLibraryDrift(
+        runningConfigID: runningID, activeID: configStore.activeID, libraryIDs: libraryIDs)
+      {
+      case .ok:
+        configDriftMessage = nil
+      case .unstamped:
+        configDriftMessage = "running tunnel has no config id; trusting library active selection"
+        logger.notice("agent config assertion unstamped recovery=trust-library")
+      case .mismatch:
+        let message =
+          "running config id \(runningID?.uuidString ?? "nil") "
+          + "is not the library active id \(configStore.activeID?.uuidString ?? "nil")"
+        configDriftMessage = message
+        logger.error(
+          "agent config assertion mismatch \(message, privacy: .public) recovery=surface-no-mutation"
+        )
+      }
     } catch {
-      logger.error("agent reconcile running config failed recovery=skip")
+      logger.error(
+        """
+        agent config assertion failed \
+        details=\(String(describing: error), privacy: .public) recovery=skip
+        """
+      )
     }
   }
 
@@ -166,36 +195,22 @@ extension AgentTunnelController {
   static func configName(fromPath path: String) -> String {
     let expanded = (path as NSString).expandingTildeInPath
     let base = URL(fileURLWithPath: expanded).deletingPathExtension().lastPathComponent
-    return base.isEmpty ? reconciledConfigFallbackName : base
+    return base.isEmpty ? importedConfigFallbackName : base
   }
 
-  /// Starts the tunnel from stored text by writing it to a short-lived temp file
-  /// the start path reads, then removing the file once the start returns.
-  private func startStoredConfig(text: String) async -> AgentControlResponse {
-    do {
-      let path = try writeTempConfig(text)
-      defer { removeTempConfig(at: path) }
-      return await handleStartTunnel(
-        settings: TunnelStartSettings(wireGuardConfigPath: path))
-    } catch {
-      logger.error("agent start stored config failed recovery=return-failure")
-      return failure(from: error)
-    }
-  }
-
-  /// Writes config text to a unique temp file and returns its path. The text also
-  /// lives in the saved VPN profile, so the temp file is no new exposure and is
-  /// removed once the start path has read it.
-  private func writeTempConfig(_ text: String) throws -> String {
+  /// Writes config text to a unique temp file and returns its path, used by the
+  /// in-place reload. The text also lives in the saved VPN profile, so the temp file
+  /// is no new exposure and is removed once the reload has read it.
+  func writeTempConfig(_ text: String) throws -> String {
     let directory = FileManager.default.temporaryDirectory
     let url = directory.appendingPathComponent("celltunnel-active-\(UUID().uuidString).conf")
     try Data(text.utf8).write(to: url, options: .atomic)
-    logger.notice("agent wrote temp config for start recovery=remove-after-read")
+    logger.notice("agent wrote temp config for reload recovery=remove-after-read")
     return url.path
   }
 
   /// Best-effort removal of a temp config file.
-  private func removeTempConfig(at path: String) {
+  func removeTempConfig(at path: String) {
     do {
       try FileManager.default.removeItem(atPath: path)
     } catch {

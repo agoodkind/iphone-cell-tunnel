@@ -115,10 +115,10 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
 /// Configs card, so the two surfaces stay one pipeline.
 public enum ConfigsCommand: Equatable, Sendable {
   case activate(reference: String)
-  case delete(id: String)
+  case delete(id: UUID)
   case importFile(path: String)
   case list
-  case rename(id: String, name: String)
+  case rename(id: UUID, name: String)
 
   public static func parse(arguments: [String]) throws -> Self {
     guard let subcommand = arguments.first else {
@@ -137,10 +137,16 @@ public enum ConfigsCommand: Equatable, Sendable {
       guard rest.count == renameArgumentCount else {
         throw TunnelDaemonError.usage("configs rename requires <id> <name>")
       }
-      return .rename(id: rest[0], name: rest[1])
+      guard let id = UUID(uuidString: rest[0]) else {
+        throw TunnelDaemonError.usage("configs rename <id> must be a config id")
+      }
+      return .rename(id: id, name: rest[1])
     case "delete":
-      guard let id = rest.first, rest.count == singleArgumentCount else {
+      guard let reference = rest.first, rest.count == singleArgumentCount else {
         throw TunnelDaemonError.usage("configs delete requires <id>")
+      }
+      guard let id = UUID(uuidString: reference) else {
+        throw TunnelDaemonError.usage("configs delete <id> must be a config id")
       }
       return .delete(id: id)
     case "import":
@@ -236,10 +242,12 @@ public struct TunnelControlCLIExecutor: Sendable {
   // Resolves a name or id reference to a config id, preferring an exact id match,
   // then an exact case-insensitive name match. An unmatched reference is a usage
   // error rather than a silent no-op.
-  private func resolveConfigID(reference: String) async throws -> String {
+  private func resolveConfigID(reference: String) async throws -> UUID {
     let snapshot = try await client.status()
     let configs = snapshot.configLibrary ?? []
-    if let byID = configs.first(where: { $0.id == reference }) {
+    if let id = UUID(uuidString: reference),
+      let byID = configs.first(where: { $0.id == id })
+    {
       return byID.id
     }
     let byName = configs.first { config in
@@ -254,14 +262,14 @@ public struct TunnelControlCLIExecutor: Sendable {
   // One row per stored config: its name and id, with the active one flagged, or a
   // single line when the library is empty.
   private func renderConfigListing(
-    configs: [TunnelConfigSummary], activeID: String?
+    configs: [TunnelConfigSummary], activeID: UUID?
   ) -> String {
     guard !configs.isEmpty else {
       return noConfigsMessage
     }
     var lines: [String] = []
     for config in configs {
-      var line = "\(config.name)  \(config.id)"
+      var line = "\(config.name)  \(config.id.uuidString)"
       if config.id == activeID {
         line += " (active)"
       }

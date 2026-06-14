@@ -15,6 +15,8 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 private let relayPort = 51_820
 private let discoverySelectionPort = 5_354
 private let fixedConfigEpoch: TimeInterval = 1_717_200_000
+private let configIDOne = UUID()
+private let configIDTwo = UUID()
 
 struct TunnelControlModelsTests {
   @Test func startSettingsUsesDaemonSelectedRelayByDefault() {
@@ -180,7 +182,7 @@ struct TunnelControlModelsTests {
 
   @Test func configSummaryRoundTripsThroughCoding() throws {
     let date = Date(timeIntervalSince1970: fixedConfigEpoch)
-    let summary = TunnelConfigSummary(id: "cfg-1", name: "Home", createdAt: date)
+    let summary = TunnelConfigSummary(id: configIDOne, name: "Home", createdAt: date)
 
     let encoded = try JSONEncoder().encode(summary)
     let decoded = try JSONDecoder().decode(TunnelConfigSummary.self, from: encoded)
@@ -192,31 +194,31 @@ struct TunnelControlModelsTests {
     let date = Date(timeIntervalSince1970: fixedConfigEpoch)
     let snapshot = TunnelDaemonStatusSnapshot(
       configLibrary: [
-        TunnelConfigSummary(id: "cfg-1", name: "Home", createdAt: date),
-        TunnelConfigSummary(id: "cfg-2", name: "Work", createdAt: date),
+        TunnelConfigSummary(id: configIDOne, name: "Home", createdAt: date),
+        TunnelConfigSummary(id: configIDTwo, name: "Work", createdAt: date),
       ],
-      activeConfigID: "cfg-2"
+      activeConfigID: configIDTwo
     )
 
     let encoded = try JSONEncoder().encode(snapshot)
     let decoded = try JSONDecoder().decode(TunnelDaemonStatusSnapshot.self, from: encoded)
 
     #expect(decoded.configLibrary?.count == 2)
-    #expect(decoded.activeConfigID == "cfg-2")
+    #expect(decoded.activeConfigID == configIDTwo)
     #expect(decoded.configLibrary?.first?.name == "Home")
   }
 
   @Test func snapshotRenderedOutputListsConfigLibrary() {
     let date = Date(timeIntervalSince1970: fixedConfigEpoch)
     let snapshot = TunnelDaemonStatusSnapshot(
-      configLibrary: [TunnelConfigSummary(id: "cfg-1", name: "Home", createdAt: date)],
-      activeConfigID: "cfg-1"
+      configLibrary: [TunnelConfigSummary(id: configIDOne, name: "Home", createdAt: date)],
+      activeConfigID: configIDOne
     )
 
     let output = snapshot.renderedOutput
 
     #expect(output.contains("configs=1"))
-    #expect(output.contains("config.cfg-1=Home active"))
+    #expect(output.contains("config.\(configIDOne.uuidString)=Home active"))
   }
 
   @Test func cliParseConfigsList() throws {
@@ -233,9 +235,15 @@ struct TunnelControlModelsTests {
 
   @Test func cliParseConfigsRenameTakesIDAndName() throws {
     let action = try TunnelControlCLIAction.parse(
-      arguments: ["configs", "rename", "cfg-1", "Home"])
+      arguments: ["configs", "rename", configIDOne.uuidString, "Home"])
 
-    #expect(action == .configs(.rename(id: "cfg-1", name: "Home")))
+    #expect(action == .configs(.rename(id: configIDOne, name: "Home")))
+  }
+
+  @Test func cliParseConfigsRenameRejectsNonUUID() {
+    #expect(throws: (any Error).self) {
+      try TunnelControlCLIAction.parse(arguments: ["configs", "rename", "not-a-uuid", "Home"])
+    }
   }
 
   @Test func cliExecutorConfigsListReportsEmptyLibrary() async throws {
@@ -271,7 +279,8 @@ struct TunnelControlModelsTests {
     let output = try await runCLI(.configs(.activate(reference: importedName)), on: client)
 
     #expect(client.events.contains("activateConfig"))
-    #expect(output.contains("\(importedName)  cfg-1 (active)"))
+    #expect(output.contains(importedName))
+    #expect(output.contains("(active)"))
   }
 }
 
@@ -365,7 +374,7 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
   )
   // The config library the configs subcommands list, resolve, and mutate against.
   var configs: [TunnelConfigSummary] = []
-  var activeConfigID: String?
+  var activeConfigID: UUID?
   private let fixedConfigDate = Date(timeIntervalSince1970: fixedConfigEpoch)
 
   private func libraryStatus() -> TunnelDaemonStatusSnapshot {
@@ -449,28 +458,27 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
     await Task.yield()
     events.append("importConfig")
     _ = text
-    let summary = TunnelConfigSummary(
-      id: "cfg-\(configs.count + 1)", name: name, createdAt: fixedConfigDate)
+    let summary = TunnelConfigSummary(id: UUID(), name: name, createdAt: fixedConfigDate)
     configs.append(summary)
     activeConfigID = summary.id
     return libraryStatus()
   }
 
-  func activateConfig(id: String) async -> TunnelDaemonStatusSnapshot {
+  func activateConfig(id: UUID) async -> TunnelDaemonStatusSnapshot {
     await Task.yield()
     events.append("activateConfig")
     activeConfigID = id
     return libraryStatus()
   }
 
-  func saveConfigEdit(id: String, text: String) async -> TunnelDaemonStatusSnapshot {
+  func saveConfigEdit(id: UUID, text: String) async -> TunnelDaemonStatusSnapshot {
     await Task.yield()
     events.append("saveConfigEdit")
     _ = (id, text)
     return libraryStatus()
   }
 
-  func renameConfig(id: String, name: String) async -> TunnelDaemonStatusSnapshot {
+  func renameConfig(id: UUID, name: String) async -> TunnelDaemonStatusSnapshot {
     await Task.yield()
     events.append("renameConfig")
     if let index = configs.firstIndex(where: { $0.id == id }) {
@@ -479,7 +487,7 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
     return libraryStatus()
   }
 
-  func deleteConfig(id: String) async -> TunnelDaemonStatusSnapshot {
+  func deleteConfig(id: UUID) async -> TunnelDaemonStatusSnapshot {
     await Task.yield()
     events.append("deleteConfig")
     configs.removeAll { $0.id == id }
@@ -489,7 +497,7 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
     return libraryStatus()
   }
 
-  func getConfigText(id: String) async -> String {
+  func getConfigText(id: UUID) async -> String {
     await Task.yield()
     events.append("getConfigText")
     _ = id

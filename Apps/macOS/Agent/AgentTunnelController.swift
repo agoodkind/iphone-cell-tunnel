@@ -19,6 +19,7 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 
 private let providerBundleIdentifier = tunnelProviderBundleIdentifier
 private let providerConfigWireGuardKey = "wireguardConfig"
+private let providerConfigConfigIDKey = "configID"
 private let providerConfigRelayServiceKey = "selectedRelayServiceName"
 private let tunnelLocalizedDescription = "Cell Tunnel"
 private let tunnelServerAddressPlaceholder = "iPhone Cellular Relay"
@@ -36,6 +37,10 @@ actor AgentTunnelController {
   /// command-line tool both read over XPC. Every status response carries its
   /// text-free summaries, and the start path registers whatever config it runs.
   let configStore: TunnelConfigStore
+  /// The loud message set by the boot assertion when the running tunnel's stamped
+  /// config id disagrees with the library, or `nil` when they agree. Read into every
+  /// status snapshot's `configDrift`. The assertion never mutates the library.
+  var configDriftMessage: String?
 
   /// The carrying link info, written from the bridge's egress callback off-actor and
   /// read into the served snapshot. Nonisolated because the `Mutex` is its own
@@ -235,6 +240,10 @@ actor AgentTunnelController {
     return AgentControlResponse(report: TunnelEnvironmentReport(checks: checks))
   }
 
+  /// Starts a tunnel from a config file path, the CLI and XPC entry point. This is
+  /// the one boundary where external text resolves to a library id: it registers the
+  /// config (deduped by content), marks it active, then starts. A store failure fails
+  /// the start, because a tunnel the library cannot identify must not run.
   func handleStartTunnel(settings: TunnelStartSettings) async -> AgentControlResponse {
     guard settings.hasWireGuardConfigPath else {
       return failure(
@@ -242,21 +251,45 @@ actor AgentTunnelController {
         message: "start requires a WireGuard config path"
       )
     }
+    let saved: StoredTunnelConfig
     do {
       let configText = try readConfigText(at: settings.wireGuardConfigPath)
-      registerActiveConfig(
-        text: configText,
-        defaultName: Self.configName(fromPath: settings.wireGuardConfigPath)
+      saved = try configStore.addDeduplicated(
+        name: Self.configName(fromPath: settings.wireGuardConfigPath),
+        text: configText
       )
+      configStore.setActive(id: saved.id)
+    } catch {
+      logger.error(
+        """
+        startTunnel config resolve failed \
+        details=\(String(describing: error), privacy: .public) \
+        recovery=return-failure-response
+        """
+      )
+      return failure(from: error)
+    }
+    return await startTunnel(configText: saved.text, configID: saved.id)
+  }
+
+  /// Starts the tunnel for an already-resolved library entry, stamping the saved
+  /// profile with the library id so the profile is a downstream projection of the
+  /// active entry. Activation and import call this directly with the known id.
+  func startTunnel(configText: String, configID: UUID) async -> AgentControlResponse {
+    do {
       let loadedManager = try await loadOrCreateManager()
-      applyConfiguration(to: loadedManager, wireGuardConfig: configText)
+      applyConfiguration(to: loadedManager, wireGuardConfig: configText, configID: configID)
       try await save(manager: loadedManager)
       try await load(manager: loadedManager)
       try await startControlListener(wireGuardConfig: configText)
       observeStatus(on: loadedManager)
       try startSession(on: loadedManager)
-      logger.notice("agent tunnel start requested")
+      logger.notice(
+        "agent tunnel start requested configID=\(configID.uuidString, privacy: .public)")
       await waitForSessionConnected(on: loadedManager)
+      // The running tunnel now carries the active library id, so any prior boot
+      // drift is resolved.
+      configDriftMessage = nil
       return try await forwardStatus(on: loadedManager)
     } catch {
       logger.error(
@@ -360,14 +393,21 @@ extension AgentTunnelController {
     return resolved
   }
 
+  /// Writes the active config into the saved profile and stamps it with the library
+  /// id (as `uuidString`), so the profile is a downstream projection of the active
+  /// library entry that boot can verify by id.
   private func applyConfiguration(
     to manager: NETunnelProviderManager,
-    wireGuardConfig: String
+    wireGuardConfig: String,
+    configID: UUID
   ) {
     let providerProtocol = NETunnelProviderProtocol()
     providerProtocol.providerBundleIdentifier = providerBundleIdentifier
     providerProtocol.serverAddress = tunnelServerAddressPlaceholder
-    var providerConfiguration = [providerConfigWireGuardKey: wireGuardConfig]
+    var providerConfiguration = [
+      providerConfigWireGuardKey: wireGuardConfig,
+      providerConfigConfigIDKey: configID.uuidString,
+    ]
     if let relayName = resolvedRelayServiceName() {
       providerConfiguration[providerConfigRelayServiceKey] = relayName
     }

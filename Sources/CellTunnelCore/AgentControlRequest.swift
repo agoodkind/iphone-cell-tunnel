@@ -28,36 +28,36 @@ public protocol TunnelControlClientProtocol: Sendable {
   /// status carrying the updated library.
   func importConfig(name: String, text: String) async throws -> TunnelDaemonStatusSnapshot
   /// Makes a stored config active and starts the tunnel with it.
-  func activateConfig(id: String) async throws -> TunnelDaemonStatusSnapshot
+  func activateConfig(id: UUID) async throws -> TunnelDaemonStatusSnapshot
   /// Saves edited config text and reloads the tunnel when that config is active.
-  func saveConfigEdit(id: String, text: String) async throws -> TunnelDaemonStatusSnapshot
+  func saveConfigEdit(id: UUID, text: String) async throws -> TunnelDaemonStatusSnapshot
   /// Renames a stored config.
-  func renameConfig(id: String, name: String) async throws -> TunnelDaemonStatusSnapshot
+  func renameConfig(id: UUID, name: String) async throws -> TunnelDaemonStatusSnapshot
   /// Deletes a stored config, stopping the tunnel first when it is the active one.
-  func deleteConfig(id: String) async throws -> TunnelDaemonStatusSnapshot
+  func deleteConfig(id: UUID) async throws -> TunnelDaemonStatusSnapshot
   /// Returns the secret text of a stored config, fetched only for editing.
-  func getConfigText(id: String) async throws -> String
+  func getConfigText(id: UUID) async throws -> String
 }
 
 // MARK: - AgentControlRequest
 
 public enum AgentControlRequest: Codable, Sendable {
   /// Makes a stored config active and starts the tunnel with it.
-  case activateConfig(id: String)
+  case activateConfig(id: UUID)
   case check
   /// Deletes a stored config, stopping the tunnel first when it is active.
-  case deleteConfig(id: String)
+  case deleteConfig(id: UUID)
   /// Returns the secret text of a stored config, fetched only for editing.
-  case getConfigText(id: String)
+  case getConfigText(id: UUID)
   /// Validates, stores, activates, and starts a config from its text.
   case importConfig(name: String, text: String)
   case listRelayServices
   case reloadTunnel(TunnelStartSettings)
   /// Renames a stored config.
-  case renameConfig(id: String, name: String)
+  case renameConfig(id: UUID, name: String)
   case reset
   /// Saves edited config text and reloads the tunnel when that config is active.
-  case saveConfigEdit(id: String, text: String)
+  case saveConfigEdit(id: UUID, text: String)
   /// Selects which connected iPhone the agent routes egress through, by the
   /// per-connection id the roster carries.
   case selectEgressPeer(peerID: String)
@@ -110,15 +110,15 @@ public enum AgentControlRequest: Codable, Sendable {
     let kind = try container.decode(Kind.self, forKey: .kind)
     switch kind {
     case .activateConfig:
-      let id = try container.decode(String.self, forKey: .configID)
+      let id = try container.decode(UUID.self, forKey: .configID)
       self = .activateConfig(id: id)
     case .check:
       self = .check
     case .deleteConfig:
-      let id = try container.decode(String.self, forKey: .configID)
+      let id = try container.decode(UUID.self, forKey: .configID)
       self = .deleteConfig(id: id)
     case .getConfigText:
-      let id = try container.decode(String.self, forKey: .configID)
+      let id = try container.decode(UUID.self, forKey: .configID)
       self = .getConfigText(id: id)
     case .importConfig:
       let name = try container.decode(String.self, forKey: .configName)
@@ -130,13 +130,13 @@ public enum AgentControlRequest: Codable, Sendable {
       let settings = try container.decode(TunnelStartSettings.self, forKey: .reloadSettings)
       self = .reloadTunnel(settings)
     case .renameConfig:
-      let id = try container.decode(String.self, forKey: .configID)
+      let id = try container.decode(UUID.self, forKey: .configID)
       let name = try container.decode(String.self, forKey: .configName)
       self = .renameConfig(id: id, name: name)
     case .reset:
       self = .reset
     case .saveConfigEdit:
-      let id = try container.decode(String.self, forKey: .configID)
+      let id = try container.decode(UUID.self, forKey: .configID)
       let text = try container.decode(String.self, forKey: .configText)
       self = .saveConfigEdit(id: id, text: text)
     case .selectRelayService:

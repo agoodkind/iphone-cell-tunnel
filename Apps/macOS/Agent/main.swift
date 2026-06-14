@@ -206,9 +206,9 @@ private func runAgent() -> Never {
 
   agentRuntime.start()
 
-  // Register a tunnel started before this build, or over the command line, into the
-  // config library so the Mac card shows it on the first poll instead of "No configs".
-  Task { await controller.reconcileRunningConfig() }
+  // Assert, without mutating the library, that the running tunnel's stamped config id
+  // agrees with the library's active selection, surfacing any drift loudly on status.
+  Task { await controller.assertRunningConfigMatchesLibrary() }
 
   dispatchMain()
 }

@@ -180,8 +180,9 @@ import Foundation
     }
 
     /// Makes a stored config active and starts the tunnel with it.
-    public func activateConfig(id: String) async throws -> TunnelDaemonStatusSnapshot {
-      logger.notice("agent client invoked rpc=activate-config id=\(id, privacy: .public)")
+    public func activateConfig(id: UUID) async throws -> TunnelDaemonStatusSnapshot {
+      logger.notice(
+        "agent client invoked rpc=activate-config id=\(id.uuidString, privacy: .public)")
       let response = try await send(
         request: .activateConfig(id: id),
         operationName: "activateConfig"
@@ -191,11 +192,11 @@ import Foundation
 
     /// Saves edited config text and reloads the tunnel when that config is active.
     public func saveConfigEdit(
-      id: String, text: String
+      id: UUID, text: String
     ) async throws -> TunnelDaemonStatusSnapshot {
       logger.notice(
         """
-        agent client invoked rpc=save-config-edit id=\(id, privacy: .public) \
+        agent client invoked rpc=save-config-edit id=\(id.uuidString, privacy: .public) \
         bytes=\(text.count, privacy: .public)
         """
       )
@@ -207,8 +208,9 @@ import Foundation
     }
 
     /// Renames a stored config.
-    public func renameConfig(id: String, name: String) async throws -> TunnelDaemonStatusSnapshot {
-      logger.notice("agent client invoked rpc=rename-config id=\(id, privacy: .public)")
+    public func renameConfig(id: UUID, name: String) async throws -> TunnelDaemonStatusSnapshot {
+      logger.notice(
+        "agent client invoked rpc=rename-config id=\(id.uuidString, privacy: .public)")
       let response = try await send(
         request: .renameConfig(id: id, name: name),
         operationName: "renameConfig"
@@ -217,8 +219,9 @@ import Foundation
     }
 
     /// Deletes a stored config, stopping the tunnel first when it is the active one.
-    public func deleteConfig(id: String) async throws -> TunnelDaemonStatusSnapshot {
-      logger.notice("agent client invoked rpc=delete-config id=\(id, privacy: .public)")
+    public func deleteConfig(id: UUID) async throws -> TunnelDaemonStatusSnapshot {
+      logger.notice(
+        "agent client invoked rpc=delete-config id=\(id.uuidString, privacy: .public)")
       let response = try await send(
         request: .deleteConfig(id: id),
         operationName: "deleteConfig"
@@ -227,8 +230,9 @@ import Foundation
     }
 
     /// Returns the secret text of a stored config, fetched only for editing.
-    public func getConfigText(id: String) async throws -> String {
-      logger.notice("agent client invoked rpc=get-config-text id=\(id, privacy: .public)")
+    public func getConfigText(id: UUID) async throws -> String {
+      logger.notice(
+        "agent client invoked rpc=get-config-text id=\(id.uuidString, privacy: .public)")
       let response = try await send(
         request: .getConfigText(id: id),
         operationName: "getConfigText"
