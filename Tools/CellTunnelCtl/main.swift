@@ -62,6 +62,11 @@ private func printUsage() {
                                    Optional: --relay <host:port>.
       stop                         Stop the tunnel.
       reset                        Remove the saved Mac VPN configuration.
+      configs list                 List the agent's config library.
+      configs activate <name|id>   Activate a stored config and start the tunnel.
+      configs rename <id> <name>   Rename a stored config.
+      configs delete <id>          Delete a stored config (stops the tunnel if active).
+      configs import <path>        Import, activate, and start a WireGuard config file.
       --help, -h                   Print this help text.
     """
   FileHandle.standardOutput.write(Data((usage + "\n").utf8))

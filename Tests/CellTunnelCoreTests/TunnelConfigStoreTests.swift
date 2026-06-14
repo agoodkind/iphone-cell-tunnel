@@ -65,6 +65,58 @@ struct TunnelConfigStoreTests {
     #expect(store.activeID == nil)
   }
 
+  @Test func addDeduplicatedReusesEntryWithMatchingText() throws {
+    let store: TunnelConfigStore = InMemoryTunnelConfigStore()
+    let first = try store.addDeduplicated(name: "Home", text: "same text")
+
+    let second = try store.addDeduplicated(name: "Home again", text: "same text")
+
+    #expect(second.id == first.id)
+    #expect(store.list().count == 1)
+  }
+
+  @Test func addDeduplicatedAddsWhenTextDiffers() throws {
+    let store: TunnelConfigStore = InMemoryTunnelConfigStore()
+    _ = try store.addDeduplicated(name: "Home", text: "first text")
+
+    _ = try store.addDeduplicated(name: "Work", text: "second text")
+
+    #expect(store.list().count == 2)
+  }
+
+  @Test func summariesDropConfigText() throws {
+    let store: TunnelConfigStore = InMemoryTunnelConfigStore()
+    let saved = try store.add(name: "Home", text: "PrivateKey = secret")
+
+    let summaries = store.summaries()
+
+    #expect(
+      summaries == [
+        TunnelConfigSummary(id: saved.id, name: "Home", createdAt: saved.createdAt)
+      ])
+  }
+
+  @Test func reconcileRunningRegistersIntoEmptyStoreAndMarksActive() throws {
+    let store: TunnelConfigStore = InMemoryTunnelConfigStore()
+
+    let saved = try store.reconcileRunning(text: "running text", nameIfNew: "home.goodkind.io")
+
+    #expect(store.list().count == 1)
+    #expect(store.activeID == saved.id)
+    #expect(store.list().first?.name == "home.goodkind.io")
+  }
+
+  @Test func reconcileRunningReusesKnownConfig() throws {
+    let store: TunnelConfigStore = InMemoryTunnelConfigStore()
+    let existing = try store.add(name: "Home", text: "running text")
+
+    let reconciled = try store.reconcileRunning(text: "running text", nameIfNew: "host")
+
+    #expect(reconciled.id == existing.id)
+    #expect(store.list().count == 1)
+    #expect(store.activeID == existing.id)
+  }
+
   @Test func renameChangesNameOnly() throws {
     let date = Date(timeIntervalSince1970: 1_717_200_000)
     let store: TunnelConfigStore = InMemoryTunnelConfigStore(now: { date }, makeID: { "config-1" })
