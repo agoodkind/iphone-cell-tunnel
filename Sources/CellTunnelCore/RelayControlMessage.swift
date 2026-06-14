@@ -89,6 +89,11 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
     /// by the host. The agent reports it as the connected peer name, so the Mac
     /// shows which iPhone is connected.
     public var deviceName: String?
+    /// The sending device's stable per-install id, so the Mac recognizes the same
+    /// iPhone across the control-connection reconnects it takes on every sleep/wake
+    /// cycle and re-binds a remembered egress selection to it. Optional so an old
+    /// peer's payload still decodes; `nil` from an app that does not send one.
+    public var deviceID: String?
     /// The sending side's relay-link candidates, so the agent shows the
     /// iPhone's `Available Interfaces` row. Optional so an old peer's payload
     /// still decodes; a non-nil value also signals the sender understands the
@@ -101,6 +106,7 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
       lastError: String? = nil,
       counters: TunnelCounters? = nil,
       deviceName: String? = nil,
+      deviceID: String? = nil,
       availableLinks: [RelayLinkSummary]? = nil,
       version: Int = relayControlWireVersion
     ) {
@@ -109,6 +115,7 @@ public enum RelayControlMessage: Codable, Sendable, Equatable {
       self.lastError = lastError
       self.counters = counters
       self.deviceName = deviceName
+      self.deviceID = deviceID
       self.availableLinks = availableLinks
       self.version = version
     }

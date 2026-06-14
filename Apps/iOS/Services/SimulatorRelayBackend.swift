@@ -28,7 +28,12 @@
   @MainActor
   final class SimulatorRelayBackend: RelayControlBackend {
     private let runtime = RelayRuntime(
-      composition: .hostNetwork(deviceName: UIDevice.current.name)
+      composition: .hostNetwork(
+        deviceName: UIDevice.current.name,
+        deviceID: relayServiceDeviceID(
+          defaults: UserDefaults(suiteName: cellTunnelAppGroupIdentifier) ?? .standard
+        )
+      )
     )
 
     // MARK: - Lifecycle

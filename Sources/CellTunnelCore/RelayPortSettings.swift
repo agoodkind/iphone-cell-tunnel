@@ -43,6 +43,25 @@ public func resolvedRelayServiceDeviceName(
   return stored
 }
 
+// App-group key the iPhone stores its stable per-install device id under, so the app
+// and the background extension that share the app group send the agent the same id.
+public let relayServiceDeviceIDDefaultsKey = "io.goodkind.celltunnel.relay.deviceID"
+
+/// The stable per-install device id the iPhone sends to the agent so the Mac recognizes
+/// the same device across the control-connection reconnects it takes on every sleep/wake
+/// cycle. Returns the persisted value, creating and storing a fresh UUID on first call,
+/// so the app and the extension sharing the app-group defaults resolve the same id.
+public func relayServiceDeviceID(defaults: UserDefaults = .standard) -> String {
+  if let stored = defaults.string(forKey: relayServiceDeviceIDDefaultsKey),
+    !stored.isEmpty
+  {
+    return stored
+  }
+  let generated = UUID().uuidString
+  defaults.set(generated, forKey: relayServiceDeviceIDDefaultsKey)
+  return generated
+}
+
 public func resolvedRelayListenerPort(
   defaults: UserDefaults = .standard
 ) -> NWEndpoint.Port {

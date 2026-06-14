@@ -54,6 +54,9 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     composition: .pinned(
       deviceName: resolvedRelayServiceDeviceName(
         defaults: UserDefaults(suiteName: cellTunnelAppGroupIdentifier) ?? .standard
+      ),
+      deviceID: relayServiceDeviceID(
+        defaults: UserDefaults(suiteName: cellTunnelAppGroupIdentifier) ?? .standard
       )
     )
   )

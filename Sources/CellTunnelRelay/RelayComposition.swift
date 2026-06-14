@@ -158,11 +158,15 @@ public struct RelayComposition {
   /// push so the agent reports it as the connected peer. The relay framework stays
   /// UIKit-free, so the host supplies the value.
   let deviceName: String?
+  /// This device's stable per-install id, carried in the status push so the agent
+  /// recognizes the same iPhone across reconnects. The host supplies the value.
+  let deviceID: String?
 
   /// The on-device graph: pin each connection to its physical interface. The egress
   /// interface type comes from `configuration`, the source of truth, not a literal.
   public static func pinned(
     deviceName: String? = nil,
+    deviceID: String? = nil,
     configuration: RelayConfiguration = .default
   ) -> RelayComposition {
     logger.notice("relay composition built mode=\("pinned", privacy: .public)")
@@ -174,7 +178,8 @@ public struct RelayComposition {
         requiredInterfaceType: configuration.egressInterfaceType),
       publicProbe: PublicAddressProbe(),
       configuration: configuration,
-      deviceName: deviceName
+      deviceName: deviceName,
+      deviceID: deviceID
     )
   }
 
@@ -183,6 +188,7 @@ public struct RelayComposition {
   /// still comes from `configuration`.
   public static func hostNetwork(
     deviceName: String? = nil,
+    deviceID: String? = nil,
     configuration: RelayConfiguration = .default
   ) -> RelayComposition {
     logger.notice("relay composition built mode=\("host-network", privacy: .public)")
@@ -193,7 +199,8 @@ public struct RelayComposition {
       cellular: CellularPathObserver(requiredInterfaceType: nil),
       publicProbe: PublicAddressProbe(),
       configuration: configuration,
-      deviceName: deviceName
+      deviceName: deviceName,
+      deviceID: deviceID
     )
   }
 }

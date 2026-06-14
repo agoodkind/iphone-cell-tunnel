@@ -99,6 +99,9 @@ public final class RelayRuntime: @unchecked Sendable {
   /// This device's name, supplied by the host, sent in each status push so the
   /// agent reports it as the connected peer.
   private let deviceName: String?
+  /// This device's stable per-install id, supplied by the host, sent in each status
+  /// push so the agent recognizes the same iPhone across reconnects.
+  private let deviceID: String?
   private let statusState = Mutex(RelayStatusState())
 
   public init(composition: RelayComposition) {
@@ -109,6 +112,7 @@ public final class RelayRuntime: @unchecked Sendable {
     publicProbe = composition.publicProbe
     preferredCarryingInterface = composition.configuration.preferredCarryingInterface
     deviceName = composition.deviceName
+    deviceID = composition.deviceID
   }
 
   // MARK: - Lifecycle
@@ -276,7 +280,10 @@ public final class RelayRuntime: @unchecked Sendable {
   // Builds one status push from the live cellular path, the forwarder metrics, the
   // last error, and the host-supplied device name, which the iPhone sends to the
   // agent so the agent reports this device as the connected peer.
-  private func currentStatusPush(deviceName: String?) -> RelayControlMessage.Status {
+  private func currentStatusPush(
+    deviceName: String?,
+    deviceID: String?
+  ) -> RelayControlMessage.Status {
     let cellularPath = cellular.snapshot
     let relayStatus = statusState.withLock { state in
       (lastError: state.lastError, availableLinks: state.localAvailableLinks)
@@ -287,15 +294,20 @@ public final class RelayRuntime: @unchecked Sendable {
       lastError: relayStatus.lastError,
       counters: forwarder.metrics.snapshot(),
       deviceName: deviceName,
+      deviceID: deviceID,
       availableLinks: relayStatus.availableLinks
     )
   }
 
   /// Builds a minimal status push for the narrow nil-self fallback path.
-  private static func emptyStatusPush(deviceName: String?) -> RelayControlMessage.Status {
+  private static func emptyStatusPush(
+    deviceName: String?,
+    deviceID: String?
+  ) -> RelayControlMessage.Status {
     RelayControlMessage.Status(
       hasCellularPath: false,
       deviceName: deviceName,
+      deviceID: deviceID,
       availableLinks: []
     )
   }
@@ -351,6 +363,7 @@ public final class RelayRuntime: @unchecked Sendable {
     let client = self.control
     let relayForwarder = self.forwarder
     let hostDeviceName = self.deviceName
+    let hostDeviceID = self.deviceID
     Task { @MainActor [weak self] in
       client.configure(
         onSetServerEndpoint: { [weak self] endpoint in
@@ -385,9 +398,9 @@ public final class RelayRuntime: @unchecked Sendable {
             "relay peer name resolved peer=\(name ?? "none", privacy: .public)"
           )
         },
-        statusProvider: { [weak self, hostDeviceName] in
-          self?.currentStatusPush(deviceName: hostDeviceName)
-            ?? Self.emptyStatusPush(deviceName: hostDeviceName)
+        statusProvider: { [weak self, hostDeviceName, hostDeviceID] in
+          self?.currentStatusPush(deviceName: hostDeviceName, deviceID: hostDeviceID)
+            ?? Self.emptyStatusPush(deviceName: hostDeviceName, deviceID: hostDeviceID)
         }
       )
       self?.registerControlHandlers(on: client)
