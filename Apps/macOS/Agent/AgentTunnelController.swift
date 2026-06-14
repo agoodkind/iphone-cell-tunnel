@@ -274,9 +274,11 @@ actor AgentTunnelController {
       await stopControlListener()
       manager = nil
       // Reset restores the factory state, so the routing preference clears back
-      // to its default-on alongside the removed tunnel configuration.
+      // to its default-on alongside the removed tunnel configuration, and the
+      // remembered egress device is forgotten.
       RoutingIntentStore.clear()
       routingEnabled = RoutingIntentStore.load()
+      EgressSelectionStore.clear()
       if let statusObserver {
         NotificationCenter.default.removeObserver(statusObserver)
         self.statusObserver = nil

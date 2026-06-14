@@ -41,6 +41,13 @@ func stableHostName() -> String {
 private struct ControlPeer {
   let id: UInt64
   let connection: NWConnection
+  /// A monotonic accept order, so the newest connection for a device wins when one
+  /// device briefly holds two connections across a reconnect.
+  let sequence: Int
+  /// The iPhone's stable per-install id from its status push, `nil` until the first
+  /// arrives or for an old app that does not send one. It is the roster id and the key
+  /// the Mac persists a selection against, so a reconnect maps back to the same device.
+  var deviceID: String?
   /// The iPhone's display name from its status push, `nil` until the first arrives.
   var deviceName: String?
   /// Whether this iPhone's status push carried `availableLinks`, the signal that it
@@ -66,9 +73,17 @@ actor AgentControlListener {
   private var listener: NWListener?
   /// Every iPhone currently holding a control connection, keyed by its minted id.
   private var peers: [UInt64: ControlPeer] = [:]
-  /// The id of the iPhone the Mac routes egress through, or `nil` when none is
-  /// selected. v1 never auto-selects, so this stays `nil` until the user picks.
+  /// The minted id of the live connection currently bound as egress, the value
+  /// installed in the bridge, or `nil` when nothing is bound. Cleared when that
+  /// connection drops; re-set when the chosen device reconnects.
   private var selectedPeerID: UInt64?
+  /// The stable device id the user chose, persisted in `EgressSelectionStore`, so the
+  /// same device re-binds automatically whenever it reappears. `nil` for no selection
+  /// or a legacy peer chosen by connection handle. Loaded at start from the store.
+  private var selectedDeviceID: String?
+  /// A monotonic counter stamped onto each accepted connection, so the newest wins
+  /// when one device holds two connections briefly across a reconnect.
+  private var acceptCounter = 0
   private var didStart = false
   /// This Mac's latest relay-link candidates, published by the controller as the
   /// bridge's link set changes, sent to the selected peer on each change and when
@@ -131,6 +146,9 @@ actor AgentControlListener {
       return
     }
     didStart = true
+    // Load the remembered egress device so it re-binds as soon as it reconnects, which
+    // restores the user's choice across the sleep/wake reconnects and an agent restart.
+    selectedDeviceID = EgressSelectionStore.selectedDeviceID()
     try startListener()
   }
 
@@ -140,6 +158,7 @@ actor AgentControlListener {
     }
     peers.removeAll()
     selectedPeerID = nil
+    selectedDeviceID = nil
     listener?.cancel()
     listener = nil
     didStart = false
@@ -205,6 +224,8 @@ actor AgentControlListener {
       """
     )
     let peerID = UInt64.random(in: .min ... .max)
+    acceptCounter += 1
+    let sequence = acceptCounter
     newConnection.stateUpdateHandler = { [weak self] state in
       applyAcceptedConnectionState(state)
       switch state {
@@ -225,6 +246,8 @@ actor AgentControlListener {
       peers[peerID] = ControlPeer(
         id: peerID,
         connection: newConnection,
+        sequence: sequence,
+        deviceID: nil,
         deviceName: nil,
         supportsLinkInventory: false
       )
@@ -255,31 +278,54 @@ actor AgentControlListener {
 
   // MARK: - Egress selection
 
-  /// Selects which connected iPhone the Mac routes egress through. It marks the peer
-  /// selected, mints nothing new (the peer's id is its relay-session id), installs
-  /// that id into the bridge so the bridge admits only this iPhone's data links, then
-  /// sends the relay-session and the routing truth on its connection so the iPhone
-  /// primes its links. A switch from another peer rotates the bridge session, which
-  /// drops the prior peer's links. An unknown id is ignored.
+  /// Selects which connected iPhone the Mac routes egress through, by the roster id
+  /// (a stable device id, or a legacy connection handle for an app that sends none).
+  /// A device-id selection is persisted so the same device re-binds whenever it
+  /// reappears; a legacy handle selection binds the connection but persists nothing.
+  /// An unknown id is ignored.
   func selectPeer(peerID: String) async {
-    guard let id = UInt64(peerID), let peer = peers[id] else {
+    guard let peer = resolvePeer(reference: peerID) else {
       logger.error(
         "agent control select-egress rejected reason=unknown-peer id=\(peerID, privacy: .public)"
       )
       return
     }
-    selectedPeerID = id
-    peers[id]?.supportsLinkInventory = false
-    logger.notice("agent control selected egress peer id=\(id, privacy: .public)")
-    // Install the selected peer's id as the bridge admit token before the iPhone can
-    // prime with it, then send it so the iPhone stamps it on every relay prime.
-    onSessionEstablished?(id)
-    await sendRelaySession(id, on: peer.connection)
+    selectedDeviceID = peer.deviceID
+    EgressSelectionStore.setSelectedDeviceID(peer.deviceID)
+    logger.notice(
+      "agent control selected egress device=\(peer.deviceID ?? "legacy", privacy: .public)")
+    await bind(peer)
+  }
+
+  /// Resolves a roster id to a live peer: a stable device id wins, taking the newest
+  /// connection when one device holds two across a reconnect, else a legacy handle.
+  private func resolvePeer(reference: String) -> ControlPeer? {
+    let byDevice = peers.values
+      .filter { $0.deviceID == reference }
+      .max { $0.sequence < $1.sequence }
+    if let byDevice {
+      return byDevice
+    }
+    guard let handle = UInt64(reference) else {
+      return nil
+    }
+    return peers[handle]
+  }
+
+  /// Binds a peer as the live egress connection: installs its id as the bridge admit
+  /// token, sends the relay-session so the iPhone primes its data links, and syncs the
+  /// routing truth. Binding admits the link only; whether traffic routes still depends
+  /// on the routing intent and the link coming up. A switch rotates the bridge session,
+  /// dropping the prior peer's links.
+  private func bind(_ peer: ControlPeer) async {
+    selectedPeerID = peer.id
+    peers[peer.id]?.supportsLinkInventory = false
+    logger.notice("agent control bound egress connection id=\(peer.id, privacy: .public)")
+    onSessionEstablished?(peer.id)
+    await sendRelaySession(peer.id, on: peer.connection)
     if let routingSyncProvider {
       let sync = await routingSyncProvider()
       await sendRoutingIntent(sync.intent, on: peer.connection)
-      // The selected peer's data links are not up yet, so report not-installed; the
-      // link-up path upgrades it once the iPhone primes and the bridge admits.
       await sendRouteState(false, on: peer.connection)
     }
     if let deviceName = peer.deviceName {
@@ -404,9 +450,12 @@ extension AgentControlListener {
     }
     peers.removeValue(forKey: id)
     if selectedPeerID == id {
+      // Unbind the live connection and idle the data plane, but keep the remembered
+      // device id so the device re-binds on its next connection. The selection is
+      // forgotten only by an explicit different pick or a reset.
       selectedPeerID = nil
       onConnectionDropped?()
-      logger.notice("agent control selected connection ended; selection cleared")
+      logger.notice("agent control bound connection ended; egress unbound, choice kept")
     }
     publishRoster()
   }
@@ -424,6 +473,16 @@ extension AgentControlListener {
   /// peer since the peer `Available Interfaces` row is about the egress peer. Both the
   /// status-loop path routes here with the sending peer's id.
   func surface(status snapshot: RelayControlMessage.Status, fromPeerID id: UInt64) {
+    if let deviceID = snapshot.deviceID, !deviceID.isEmpty, peers[id]?.deviceID != deviceID {
+      peers[id]?.deviceID = deviceID
+      publishRoster()
+      // Sticky re-bind: when the remembered device reappears (a sleep/wake reconnect or
+      // a fresh start), bind egress back to it with no manual re-pick. Binds only the
+      // device the user already chose, and only admits its link; routing is unchanged.
+      if deviceID == selectedDeviceID, selectedPeerID != id, let peer = peers[id] {
+        Task { await self.bind(peer) }
+      }
+    }
     if let deviceName = snapshot.deviceName, !deviceName.isEmpty {
       if peers[id]?.deviceName != deviceName {
         peers[id]?.deviceName = deviceName
@@ -443,18 +502,38 @@ extension AgentControlListener {
   }
 
   /// Publishes the current roster of connected iPhones, the selected one flagged,
-  /// sorted by id for a stable rendering.
+  /// sorted by id for a stable rendering. Peers with a stable device id are deduped to
+  /// one entry per device (the newest connection), so a reconnecting device stays a
+  /// single stable row keyed by its device id; a legacy peer without one keeps its
+  /// per-connection handle as the id.
   private func publishRoster() {
-    let roster = peers.values
-      .map { peer in
-        ConnectedPeer(
-          id: String(peer.id),
-          name: peer.deviceName ?? "",
-          isSelected: peer.id == selectedPeerID
-        )
+    var newestByDevice: [String: ControlPeer] = [:]
+    var legacyPeers: [ControlPeer] = []
+    for peer in peers.values {
+      guard let deviceID = peer.deviceID else {
+        legacyPeers.append(peer)
+        continue
       }
-      .sorted { $0.id < $1.id }
-    onRosterChanged?(roster)
+      if let existing = newestByDevice[deviceID], existing.sequence >= peer.sequence {
+        continue
+      }
+      newestByDevice[deviceID] = peer
+    }
+    var roster = newestByDevice.values.map { peer in
+      ConnectedPeer(
+        id: peer.deviceID ?? String(peer.id),
+        name: peer.deviceName ?? "",
+        isSelected: peer.deviceID == selectedDeviceID
+      )
+    }
+    roster += legacyPeers.map { peer in
+      ConnectedPeer(
+        id: String(peer.id),
+        name: peer.deviceName ?? "",
+        isSelected: selectedDeviceID == nil && peer.id == selectedPeerID
+      )
+    }
+    onRosterChanged?(roster.sorted { $0.id < $1.id })
   }
 
   /// Records this host's latest measured public address, sent on each accepted
