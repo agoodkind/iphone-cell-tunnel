@@ -201,11 +201,15 @@ final class AgentConfigStore: TunnelConfigStore {
     }
   }
 
-  /// Builds a service-scoped keychain query.
+  /// Builds a service-scoped keychain query. It opts into the data-protection
+  /// keychain so the agent reads its own items without the login-keychain ACL
+  /// prompts that block a background agent from reading item data; the agent's
+  /// `application-identifier` entitlement gives every item a default access group.
   private func serviceQuery() -> NSMutableDictionary {
     let query = NSMutableDictionary()
     query.setObject(kSecClassGenericPassword, forKey: kSecClass as NSString)
     query.setObject(agentConfigStoreService, forKey: kSecAttrService as NSString)
+    query.setObject(true, forKey: kSecUseDataProtectionKeychain as NSString)
     return query
   }
 
