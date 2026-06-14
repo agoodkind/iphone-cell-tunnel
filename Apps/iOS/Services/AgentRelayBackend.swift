@@ -13,23 +13,18 @@
 
   private let logger = CellTunnelLog.logger(category: .relay)
 
-  // The file name the imported tunnel config is copied to inside the shared
-  // app-group container, where the agent reads it to start the tunnel.
-  private let importedTunnelConfigName = "imported-tunnel.conf"
-
   // MARK: - AgentRelayBackend
 
   /// Drives the Mac relay UI by reading the headless agent over XPC. The agent
-  /// owns the Mac tunnel, so this backend only reads status; it does not bring a
-  /// tunnel up or down. It maps the agent's status snapshot onto the shared
-  /// reading the views render.
+  /// owns the Mac tunnel and the config library, so this backend reads status and
+  /// forwards every config mutation over XPC; it holds no local store. It maps the
+  /// agent's status snapshot onto the shared reading the views render.
   ///
   /// The Mac and the command-line tool share one control client, `AgentClient`,
   /// which connects to the agent's mach service with the libxpc session API.
   @MainActor
   final class AgentRelayBackend: RelayControlBackend {
     private let client = AgentClient()
-    private let store = KeychainTunnelConfigStore()
 
     // MARK: - Lifecycle
 
@@ -116,37 +111,18 @@
 
     // MARK: - Tunnel install
 
-    // Copies the imported config into the shared app-group container, where the
-    // agent can read it, then asks the agent to start the tunnel from that path.
+    // Reads the imported config and asks the agent to import it, which validates,
+    // stores, activates, and starts it. The agent owns the library, so the install
+    // setup action and the Configs import share one path.
     func installTunnel(configURL: URL) async {
-      do {
-        let path = try copyConfigIntoSharedContainer(configURL)
-        _ = try await client.startTunnel(
-          settings: TunnelStartSettings(wireGuardConfigPath: path))
-        logger.notice("agent relay backend tunnel install requested")
-      } catch {
-        logger.error(
-          """
-          agent relay backend tunnel install failed \
-          details=\(String(describing: error), privacy: .public) recovery=keep-state
-          """
-        )
-      }
+      await importConfig(url: configURL, name: defaultName(from: configURL))
     }
 
     // MARK: - Config library
 
-    /// Lists the stored WireGuard configurations in the Catalyst keychain store.
-    func listConfigs() -> [StoredTunnelConfig] {
-      store.list()
-    }
-
-    /// The stored configuration currently selected as active.
-    var activeConfigID: String? {
-      store.activeID
-    }
-
-    /// Imports, validates, stores, selects, and applies one WireGuard config file.
+    /// Reads a picked config file and asks the agent to import it: validate, store,
+    /// activate, and start. The text crosses to the agent over XPC; the agent owns
+    /// the keychain storage.
     func importConfig(url: URL, name: String) async {
       let text: String
       let accessing = url.startAccessingSecurityScopedResource()
@@ -168,127 +144,59 @@
       }
 
       do {
-        try await client.validateConfig(text: text)
+        _ = try await client.importConfig(name: name, text: text)
+        logger.notice("agent relay backend config import forwarded")
       } catch {
         logger.error(
           """
-          agent relay backend import rejected invalid config recovery=keep-state
-          """
-        )
-        return
-      }
-
-      do {
-        let saved = try store.add(name: name, text: text)
-        store.setActive(id: saved.id)
-        let path = try writeConfigTextToContainer(text)
-        _ = try await client.startTunnel(
-          settings: TunnelStartSettings(wireGuardConfigPath: path))
-        logger.notice(
-          "agent relay backend config imported id=\(saved.id, privacy: .public)"
-        )
-      } catch {
-        logger.error(
-          """
-          agent relay backend config import apply failed \
-          details=\(String(describing: error), privacy: .public) \
-          recovery=stored-not-started
+          agent relay backend config import forward failed \
+          details=\(String(describing: error), privacy: .public) recovery=keep-state
           """
         )
       }
     }
 
-    /// Selects and applies a stored WireGuard configuration by id.
+    /// Asks the agent to make a stored config active and start the tunnel with it.
     func activateConfig(id: String) async {
-      guard let config = store.list().first(where: { $0.id == id }) else {
-        logger.error(
-          """
-          agent relay backend config activation missing \
-          id=\(id, privacy: .public) recovery=keep-state
-          """
-        )
-        return
-      }
-
-      store.setActive(id: id)
       do {
-        let path = try writeConfigTextToContainer(config.text)
-        _ = try await client.startTunnel(
-          settings: TunnelStartSettings(wireGuardConfigPath: path))
-        logger.notice("agent relay backend config activated id=\(id, privacy: .public)")
+        _ = try await client.activateConfig(id: id)
+        logger.notice("agent relay backend config activate forwarded id=\(id, privacy: .public)")
       } catch {
         logger.error(
           """
-          agent relay backend config activation failed \
+          agent relay backend config activate forward failed \
           id=\(id, privacy: .public) \
-          details=\(String(describing: error), privacy: .public) \
-          recovery=selection-stored-not-started
+          details=\(String(describing: error), privacy: .public) recovery=keep-state
           """
         )
       }
     }
 
-    /// Saves edited WireGuard config text and reloads the tunnel when it is active.
+    /// Asks the agent to save edited config text and reload when that config is active.
     func saveConfigEdit(id: String, text: String) async {
       do {
-        try await client.validateConfig(text: text)
+        _ = try await client.saveConfigEdit(id: id, text: text)
+        logger.notice("agent relay backend config edit forwarded id=\(id, privacy: .public)")
       } catch {
         logger.error(
           """
-          agent relay backend save rejected invalid config \
-          id=\(id, privacy: .public) recovery=keep-state
-          """
-        )
-        return
-      }
-
-      do {
-        try store.update(id: id, text: text)
-        logger.notice("agent relay backend config edit saved id=\(id, privacy: .public)")
-      } catch {
-        logger.error(
-          """
-          agent relay backend config edit store failed \
+          agent relay backend config edit forward failed \
           id=\(id, privacy: .public) \
           details=\(String(describing: error), privacy: .public) recovery=keep-state
-          """
-        )
-        return
-      }
-
-      guard store.activeID == id else {
-        return
-      }
-
-      do {
-        let path = try writeConfigTextToContainer(text)
-        _ = try await client.reloadTunnel(
-          settings: TunnelStartSettings(wireGuardConfigPath: path))
-        logger.notice(
-          "agent relay backend active config edit reloaded id=\(id, privacy: .public)"
-        )
-      } catch {
-        logger.error(
-          """
-          agent relay backend reload after edit failed \
-          id=\(id, privacy: .public) \
-          details=\(String(describing: error), privacy: .public) \
-          recovery=stored-not-reloaded
           """
         )
       }
     }
 
-    /// Renames a stored WireGuard configuration.
+    /// Asks the agent to rename a stored config.
     func renameConfig(id: String, name: String) async {
-      await Task.yield()
       do {
-        try store.rename(id: id, name: name)
-        logger.notice("agent relay backend config renamed id=\(id, privacy: .public)")
+        _ = try await client.renameConfig(id: id, name: name)
+        logger.notice("agent relay backend config rename forwarded id=\(id, privacy: .public)")
       } catch {
         logger.error(
           """
-          agent relay backend config rename failed \
+          agent relay backend config rename forward failed \
           id=\(id, privacy: .public) \
           details=\(String(describing: error), privacy: .public) recovery=keep-state
           """
@@ -296,16 +204,16 @@
       }
     }
 
-    /// Deletes a stored WireGuard configuration.
+    /// Asks the agent to delete a stored config, which stops the tunnel first when it
+    /// is the active one.
     func deleteConfig(id: String) async {
-      await Task.yield()
       do {
-        try store.delete(id: id)
-        logger.notice("agent relay backend config deleted id=\(id, privacy: .public)")
+        _ = try await client.deleteConfig(id: id)
+        logger.notice("agent relay backend config delete forwarded id=\(id, privacy: .public)")
       } catch {
         logger.error(
           """
-          agent relay backend config delete failed \
+          agent relay backend config delete forward failed \
           id=\(id, privacy: .public) \
           details=\(String(describing: error), privacy: .public) recovery=keep-state
           """
@@ -313,31 +221,26 @@
       }
     }
 
-    /// Writes config text into the shared app-group container for the agent.
-    private func writeConfigTextToContainer(_ text: String) throws -> String {
-      guard
-        let container = FileManager.default.containerURL(
-          forSecurityApplicationGroupIdentifier: cellTunnelAppGroupIdentifier)
-      else {
-        throw AgentRelayBackendError.sharedContainerUnavailable
+    /// Fetches a stored config's secret text from the agent for the editor only.
+    func loadConfigText(id: String) async -> String? {
+      do {
+        return try await client.getConfigText(id: id)
+      } catch {
+        logger.error(
+          """
+          agent relay backend config text read failed \
+          id=\(id, privacy: .public) \
+          details=\(String(describing: error), privacy: .public) recovery=nil-text
+          """
+        )
+        return nil
       }
-      let destination = container.appendingPathComponent(importedTunnelConfigName)
-      let data = Data(text.utf8)
-      try data.write(to: destination, options: .atomic)
-      logger.notice("agent relay backend wrote imported config into shared container")
-      return destination.path
     }
 
-    /// Reads a security-scoped config file and writes its text into the container.
-    private func copyConfigIntoSharedContainer(_ source: URL) throws -> String {
-      let accessing = source.startAccessingSecurityScopedResource()
-      defer {
-        if accessing {
-          source.stopAccessingSecurityScopedResource()
-        }
-      }
-      let text = try String(contentsOf: source, encoding: .utf8)
-      return try writeConfigTextToContainer(text)
+    /// The default library name for an imported file, its basename without the
+    /// extension.
+    private func defaultName(from url: URL) -> String {
+      url.deletingPathExtension().lastPathComponent
     }
 
     // MARK: - Sampling
@@ -372,19 +275,6 @@
           """
         )
         return TunnelDiscoverySnapshot()
-      }
-    }
-  }
-
-  // MARK: - AgentRelayBackendError
-
-  enum AgentRelayBackendError: LocalizedError {
-    case sharedContainerUnavailable
-
-    var errorDescription: String? {
-      switch self {
-      case .sharedContainerUnavailable:
-        return "the shared app-group container is unavailable for the imported config"
       }
     }
   }

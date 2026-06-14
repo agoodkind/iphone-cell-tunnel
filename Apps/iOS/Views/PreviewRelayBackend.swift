@@ -45,12 +45,9 @@ final class PreviewRelayBackend: RelayControlBackend {
 
   // MARK: - Config library
 
-  func listConfigs() -> [StoredTunnelConfig] {
-    []
-  }
-
-  var activeConfigID: String? {
-    nil
+  func loadConfigText(id _: String) async -> String? {
+    await Task.yield()
+    return nil
   }
 
   func importConfig(url _: URL, name _: String) async {

@@ -32,6 +32,10 @@ actor AgentTunnelController {
   var controlListener: AgentControlListener?
   let relayBridge: AgentRelayBridge
   let relayBrowser: RelayDeviceBrowser
+  /// The agent's config library, the single source of truth the Mac app and the
+  /// command-line tool both read over XPC. Every status response carries its
+  /// text-free summaries, and the start path registers whatever config it runs.
+  let configStore: TunnelConfigStore
 
   /// The carrying link info, written from the bridge's egress callback off-actor and
   /// read into the served snapshot. Nonisolated because the `Mutex` is its own
@@ -76,9 +80,14 @@ actor AgentTunnelController {
   /// is no longer current is ignored when its timer fires.
   var routeWithdrawGeneration = 0
 
-  init(relayBridge: AgentRelayBridge, relayBrowser: RelayDeviceBrowser) {
+  init(
+    relayBridge: AgentRelayBridge,
+    relayBrowser: RelayDeviceBrowser,
+    configStore: TunnelConfigStore = AgentConfigStore()
+  ) {
     self.relayBridge = relayBridge
     self.relayBrowser = relayBrowser
+    self.configStore = configStore
     self.routingEnabled = RoutingIntentStore.load()
   }
 
@@ -130,6 +139,18 @@ actor AgentTunnelController {
     case .selectEgressPeer(let peerID):
       return await handleSelectEgressPeer(peerID: peerID)
     case .setRoutingEnabled(let enabled): return await handleSetRoutingEnabled(enabled)
+    case let .importConfig(name, text):
+      return await handleImportConfig(name: name, text: text)
+    case .activateConfig(let id):
+      return await handleActivateConfig(id: id)
+    case let .saveConfigEdit(id, text):
+      return await handleSaveConfigEdit(id: id, text: text)
+    case let .renameConfig(id, name):
+      return await handleRenameConfig(id: id, name: name)
+    case .deleteConfig(let id):
+      return await handleDeleteConfig(id: id)
+    case .getConfigText(let id):
+      return handleGetConfigText(id: id)
     }
   }
 
@@ -145,11 +166,11 @@ actor AgentTunnelController {
     return await handleStatus()
   }
 
-  private func handleStatus() async -> AgentControlResponse {
+  func handleStatus() async -> AgentControlResponse {
     do {
       let loadedManager = try await loadOrCreateManager()
       guard isSessionActive(on: loadedManager) else {
-        return AgentControlResponse(status: snapshot(from: loadedManager))
+        return AgentControlResponse(status: augmented(snapshot(from: loadedManager)))
       }
       return try await forwardStatus(on: loadedManager)
     } catch {
@@ -214,7 +235,7 @@ actor AgentTunnelController {
     return AgentControlResponse(report: TunnelEnvironmentReport(checks: checks))
   }
 
-  private func handleStartTunnel(settings: TunnelStartSettings) async -> AgentControlResponse {
+  func handleStartTunnel(settings: TunnelStartSettings) async -> AgentControlResponse {
     guard settings.hasWireGuardConfigPath else {
       return failure(
         errorCode: .missingWireGuardConfigPath,
@@ -223,6 +244,10 @@ actor AgentTunnelController {
     }
     do {
       let configText = try readConfigText(at: settings.wireGuardConfigPath)
+      registerActiveConfig(
+        text: configText,
+        defaultName: Self.configName(fromPath: settings.wireGuardConfigPath)
+      )
       let loadedManager = try await loadOrCreateManager()
       applyConfiguration(to: loadedManager, wireGuardConfig: configText)
       try await save(manager: loadedManager)
@@ -245,13 +270,13 @@ actor AgentTunnelController {
     }
   }
 
-  private func handleStopTunnel() async -> AgentControlResponse {
+  func handleStopTunnel() async -> AgentControlResponse {
     do {
       let loadedManager = try await loadOrCreateManager()
       stopSession(on: loadedManager)
       await stopControlListener()
       logger.notice("agent tunnel stop requested")
-      return AgentControlResponse(status: snapshot(from: loadedManager))
+      return AgentControlResponse(status: augmented(snapshot(from: loadedManager)))
     } catch {
       logger.error(
         """
@@ -279,6 +304,9 @@ actor AgentTunnelController {
       RoutingIntentStore.clear()
       routingEnabled = RoutingIntentStore.load()
       EgressSelectionStore.clear()
+      // Reset restores factory state, so the config library clears alongside the
+      // removed tunnel, leaving nothing the card could show as active.
+      clearConfigLibrary()
       if let statusObserver {
         NotificationCenter.default.removeObserver(statusObserver)
         self.statusObserver = nil
@@ -290,7 +318,9 @@ actor AgentTunnelController {
         status: TunnelDaemonStatusSnapshot(
           running: false,
           routeState: .notInstalled,
-          peerState: .notSelected
+          peerState: .notSelected,
+          configLibrary: configStore.summaries(),
+          activeConfigID: configStore.activeID
         )
       )
     } catch {
@@ -303,54 +333,6 @@ actor AgentTunnelController {
       )
       return failure(from: error)
     }
-  }
-
-  private func startDiscovery() -> AgentControlResponse {
-    relayBrowser.start()
-    logger.notice("agent relay discovery started from browser")
-    return snapshotResponse()
-  }
-
-  private func selectRelay(serviceID: String) -> AgentControlResponse {
-    let devices = relayBrowser.snapshot()
-    guard let device = devices.first(where: { $0.identifier == serviceID }) else {
-      return failure(
-        errorCode: .relaySelectionRequired,
-        message: "no discovered relay with id \(serviceID)"
-      )
-    }
-    RelaySelectionStore.setSelectedRelayServiceName(device.serviceName)
-    logger.notice(
-      "agent selected relay service=\(device.serviceName, privacy: .public)"
-    )
-    return snapshotResponse()
-  }
-
-  private func snapshotResponse() -> AgentControlResponse {
-    let devices = relayBrowser.snapshot()
-    let selectedServiceName = RelaySelectionStore.selectedRelayServiceName()
-    let services = devices.map { device in
-      TunnelRelayService(
-        id: device.identifier,
-        serviceName: device.serviceName,
-        serviceType: device.serviceType,
-        domain: device.domain,
-        interfaceIndex: device.interfaceIndex,
-        hostName: "",
-        endpoints: [],
-        preferredEndpoint: nil,
-        isSelected: device.serviceName == selectedServiceName
-      )
-    }
-    let selectedServiceID = devices.first { device in
-      device.serviceName == selectedServiceName
-    }?.identifier
-    let snapshot = TunnelDiscoverySnapshot(
-      phase: services.isEmpty ? .browsing : .ready,
-      services: services,
-      selectedServiceID: selectedServiceID
-    )
-    return AgentControlResponse(discovery: snapshot)
   }
 
   func forwardStatus(

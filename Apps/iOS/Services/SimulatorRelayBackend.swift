@@ -96,12 +96,10 @@
 
     // MARK: - Config library
 
-    func listConfigs() -> [StoredTunnelConfig] {
-      []
-    }
-
-    var activeConfigID: String? {
-      nil
+    // The in-process simulator relay hosts no config library.
+    func loadConfigText(id _: String) async -> String? {
+      await Task.yield()
+      return nil
     }
 
     func importConfig(url _: URL, name _: String) async {

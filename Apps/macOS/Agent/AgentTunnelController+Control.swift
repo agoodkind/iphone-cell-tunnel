@@ -246,6 +246,8 @@ extension AgentTunnelController {
     merged.routingIntentEnabled = TunnelRoutingIntent(enabled: routingEnabled)
     merged.agentLinks = agentLinks.withLock { $0 }
     merged.connectedPeers = connectedPeers.withLock { $0 }
+    merged.configLibrary = configStore.summaries()
+    merged.activeConfigID = configStore.activeID
     return merged
   }
 
