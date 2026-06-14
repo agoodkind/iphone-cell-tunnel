@@ -26,10 +26,11 @@ private let skeletonValue = "000.000.000.000"
 /// row width or alignment. One rule, the `Interface IPv6` rule: a value short enough to
 /// share the line sits inline with the label leading and the value trailing; a value
 /// too long, or one with several lines, drops to its own line(s) below the label.
-/// `ViewThatFits` picks the inline layout first and falls back to the stacked layout,
-/// and the inline texts are fixed-size so the row relocates the value rather than
-/// truncating it. A not-yet-arrived value renders as a redacted skeleton bar (only the
-/// Mac reaches that case, since the iPhone drops placeholder rows before they render).
+/// `ViewThatFits` picks the inline layout first and falls back to the stacked layout.
+/// The stacked value scrolls horizontally, so long addresses stay on one line instead
+/// of wrapping into stray fragments. A not-yet-arrived value renders as a redacted
+/// skeleton bar (only the Mac reaches that case, since the iPhone drops placeholder
+/// rows before they render).
 struct RelayValueRow: View {
   let row: ConnectionRow
 
@@ -64,14 +65,15 @@ struct RelayValueRow: View {
   }
 
   // Label on top, value beneath, left-aligned: the layout for any value that cannot
-  // share the line, including a multi-line value. The value is fixed to its natural
-  // height so a long line wraps in full rather than truncating with an ellipsis when
-  // the container is narrow.
+  // share the line, including a multi-line value. The value scrolls horizontally so
+  // long lines stay intact instead of wrapping into clipped fragments.
   private var stacked: some View {
     VStack(alignment: .leading, spacing: stackedRowSpacing) {
       Text(row.label)
-      value
-        .fixedSize(horizontal: false, vertical: true)
+      ScrollView(.horizontal, showsIndicators: true) {
+        value
+          .fixedSize(horizontal: true, vertical: true)
+      }
     }
   }
 
