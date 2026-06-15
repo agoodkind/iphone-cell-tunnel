@@ -36,7 +36,7 @@ Each component handles only its own leg and knows nothing of the others.
 - iPhone packet-tunnel extension (`CellTunnelPhoneTunnel`): dials the agent, then bridges the link datagram channel to and from the cellular UDP socket to the WireGuard server. It also chooses which path the local link uses and changes it on its own. See "Path selection". It limits how many datagrams sit in the cellular socket at once and sizes that limit from the time each datagram waits for the socket to accept it, so the local send buffer stays short and upload latency under load stays low.
 - Mac agent control listener (`AgentSessionListener`): the single control entry point on the agent's mach service. The command-line tool and the Mac app both reach it through one shared client, `AgentClient`, over `XPCSession`.
 - `celltunnelctl`: the command-line control client of the agent.
-- `CellTunnelPhone`: one app target, two products, the iPhone relay driver and the Mac read-only viewer. See "User interface".
+- `CellTunnelPhone`: one app target, two products, the iPhone relay driver and the Mac front-end. See "User interface".
 - `CellTunnelCore`: the shared control wire protocol, framer, wire models, and keys.
 - `CellTunnelLog`: the pinned logging subsystem and categories.
 
@@ -44,7 +44,7 @@ WireGuard is a transport tool, not a participant. Its handshake carries no proje
 
 ## User interface
 
-One app target, `CellTunnelPhone`, builds two products from the same SwiftUI screen. The iPhone product drives the iPhone relay and shows the status screen. The Mac product is built through Mac Catalyst and is a read-only front-end to the agent: it shows the same screen filled from the agent's status snapshot and owns no tunnel.
+One app target, `CellTunnelPhone`, builds two products from the same SwiftUI screen. The iPhone product drives the iPhone relay and shows the status screen. The Mac product is built through Mac Catalyst and is a front-end to the agent: it shows the same screen filled from the agent's status snapshot and drives the agent's config library (import, activate, edit, rename, delete) over XPC. It owns no tunnel; the agent owns the tunnel and the library, and the app reads status and forwards config commands.
 
 The views bind to one observable controller, `RelayController`, which holds a `RelayControlBackend` and never branches on platform. Two backends sit behind it. `PhoneRelayBackend` (iPhone) owns the tunnel manager, the on-demand rule, the device-name publish, and the status poll over the provider message channel. `AgentRelayBackend` (Mac) reads the agent's status and maps it onto the same reading the views render.
 
@@ -62,6 +62,8 @@ The iPhone keeps a connection to the agent open over every reachable path at onc
 ## Configuration and routes
 
 The program owns the captured route set and the WireGuard configuration as values it holds, applied to the running tunnel through a single boundary.
+
+The agent owns the config library, the single source of truth for the stored configs and the active selection. It keeps each config in the data-protection keychain, identifies it by a `UUID`, and stamps that id onto the saved VPN profile on every start, so the profile is a downstream projection of the active library entry. On launch the agent asserts that the profile's stamped id matches the active selection without mutating the library, and surfaces any drift on `relay-status` rather than recreating a row. The Mac app and `celltunnelctl configs` drive the library over XPC.
 
 - The destinations the Mac tunnel captures are a program-owned scoped list, not the WireGuard config's `AllowedIPs`. The single relay peer's cryptokey `AllowedIPs` span `0.0.0.0/0` and `::/0` so WireGuard encrypts every captured packet to the one peer, while the OS routes the tunnel installs come from the program list. `RouteGate` (`Apps/macOS/TunnelProvider/Runtime/RouteGate.swift`) is the sole authority over `includedRoutes`: it installs the program list while the iPhone link is up, strips captured routes to none while it is down, and discards the wide routes WireGuardKit derives from the broad cryptokey `AllowedIPs`. The captured routes therefore stay scoped and never widen to `0.0.0.0/0` or `::/0`.
 - A change to the running tunnel falls into one of three tiers. The live tier takes effect with no VPN profile save and no session restart, covering the WireGuard keys, peer endpoint, cryptokey `AllowedIPs`, interface addresses, MTU, keepalive, the captured route set, and DNS; the running tunnel applies these through `WireGuardAdapter.update(tunnelConfiguration:)`, which reconfigures the backend and reapplies settings while preserving the relay bind, followed by a `RouteGate` reapply. The profile-save tier calls `saveToPreferences` with no app reinstall, covering the cold-start seed the system uses when it launches the extension on its own, the on-demand rules, and the server address. The reinstall tier covers app code, entitlements, and bundle identifiers.
