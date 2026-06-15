@@ -8,6 +8,7 @@
 
 import CellTunnelLog
 import Foundation
+import SwiftMkCore
 
 private let logger = CellTunnelLog.logger(category: .build)
 private let keyValuePairComponentCount = 2
@@ -154,6 +155,45 @@ func appStoreConnectAuthArguments() throws -> [String] {
     "-authenticationKeyIssuerID", issuerID,
     "-authenticationKeyPath", keyPath,
   ]
+}
+
+// The wildcard Developer ID identity Xcode resolves to under automatic signing.
+// xcodebuild's effective CODE_SIGN_IDENTITY for a managed Developer ID profile is
+// this name, not a certificate SHA-1, so swift-mk's verifier must expect it too.
+let developerIdAutomaticIdentity = "Developer ID Application"
+
+// The two macOS NetworkExtension targets (CellTunnelAgent and
+// CellTunnelTunnelProvider) carry App Groups + Network Extensions entitlements, so
+// even Developer ID signing needs a provisioning profile. Two Developer ID
+// (MAC_APP_DIRECT) profiles exist in the portal; Xcode downloads them with
+// -allowProvisioningUpdates only under automatic signing, which a named-certificate
+// CODE_SIGN_IDENTITY would defeat by forcing CODE_SIGN_STYLE=Manual in swift-mk.
+//
+// When an App Store Connect API key is configured (the CI distribution context) and
+// a real Developer ID identity is in play, switch swift-mk to automatic Developer ID
+// signing for these targets: SWIFT_MK_SIGN_* win over the bare CODE_SIGN_* names, so
+// the override xcconfig becomes "Developer ID Application" + Automatic + the team, and
+// swift-mk's verifier expects the same wildcard identity the build resolves to. This
+// is a no-op for local builds with no ASC key (they keep their own signing) and for
+// ad-hoc PR-check builds (identity "-"), so only the entitled CI build is affected.
+func enableAutomaticDeveloperIdSigningForNetworkExtensionTargets() {
+  let hasAscKey =
+    signingEnvironmentValue("APPLE_NOTARY_KEY_ID") != nil
+    && signingEnvironmentValue("APPLE_NOTARY_ISSUER_ID") != nil
+    && (signingEnvironmentValue("APPLE_NOTARY_KEY_PATH") != nil
+      || signingEnvironmentValue("APPLE_NOTARY_KEY_BASE64") != nil)
+  guard hasAscKey else {
+    return
+  }
+  let configuredIdentity = SigningBuildConfig.environmentInputs().identity
+    .trimmingCharacters(in: .whitespaces)
+  guard !configuredIdentity.isEmpty, configuredIdentity != "-" else {
+    return
+  }
+  setenv("SWIFT_MK_SIGN_IDENTITY", developerIdAutomaticIdentity, 1)
+  setenv("SWIFT_MK_SIGN_STYLE", "Automatic", 1)
+  printToolOutput(
+    "signing: automatic Developer ID for NetworkExtension targets via -allowProvisioningUpdates")
 }
 
 // Reads a signing value from the process environment first, then from
