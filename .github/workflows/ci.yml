@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches-ignore:
+      - main
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+# The caller must grant every permission the called workflow's jobs request.
+permissions:
+  contents: read
+
+jobs:
+  swift:
+    uses: agoodkind/swift-makefile/.github/workflows/_ci.yml@main
+    with:
+      runner: macos-26
+      fetch-depth: "0"
+      # The vendored wireguard-apple WireGuardKitGo target builds a Go c-archive
+      # (libwg-go.a) through its own Makefile, whose goroot prepare step fails
+      # unless `go env GOROOT` resolves. The macos-26 runner does not put Go on the
+      # build PATH, so install it through brew; the WireGuardKitGo Makefile already
+      # adds /opt/homebrew/bin to PATH, which is where brew installs go. Both the
+      # gate (dead-code coverage build) and the build target link WireGuardKitGo.
+      brew-packages: go
+      # gate (lint/audit/deadcode) runs in the reusable workflow's mandatory gate
+      # job; its dead-code coverage build compiles mac, mac-catalyst, and the iOS
+      # simulator unsigned, so those three are compile-checked on every PR. The
+      # build matrix target below produces the signed macOS product.
+      targets: '["build","test"]'
+      # Import the Developer ID Application certificate into the runner keychain and
+      # hand its SHA-1 to swift-mk as CODE_SIGN_IDENTITY. swift-mk builds the
+      # signing xcconfig (Developer ID identity + Manual style + team) and exports
+      # XCODE_XCCONFIG_FILE so it wins over every target. Developer ID is
+      # distribution signing, so the macOS agent + provider build with no device
+      # registration and no development profiles, unlike the prior development
+      # signing that failed on the unregistered runner.
+      import-signing-cert: true
+      signing-identity-name: "Developer ID Application: Alex Goodkind (H3BMXM4W7H)"
+      apple-team-id: H3BMXM4W7H
+      # Build the macOS agent + provider only. CODE_SIGN_IDENTITY and
+      # CODE_SIGN_STYLE are deliberately NOT set here: setting them in make-args
+      # would beat swift-mk's Developer ID override and force the failing
+      # development signing, the exact bug in the prior CI. The iOS simulator and
+      # Mac Catalyst slices are compile-checked unsigned by the mandatory gate job;
+      # the iOS device build needs an archive/App-Store flow and belongs at release.
+      make-args: "TARGET=mac"
+    secrets: inherit
