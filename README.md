@@ -35,19 +35,27 @@ make install-mac CONFIG=Debug
 make iphone-install CONFIG=Debug
 ```
 
-Drive the tunnel with `celltunnelctl`. Each command returns after one round-trip to the agent:
+Bring the tunnel up from a WireGuard config. The Mac VPN connects immediately, and the routes install once the iPhone dials in over the link:
 
 ```sh
-celltunnelctl devices                 # list discovered relay devices
-celltunnelctl select <n|serviceID>    # select a relay by 1-based index or service id
-celltunnelctl start --config <path>   # start the tunnel (optional: --relay <host:port>)
-celltunnelctl status                  # print current tunnel status
-celltunnelctl stop                    # stop the tunnel
+swift Tools/cell-tunnel-dev.swift relay-up --config <path>   # bring the tunnel up end to end
+swift Tools/cell-tunnel-dev.swift relay-status               # full state dump with a drift verdict
+swift Tools/cell-tunnel-dev.swift relay-down                 # stop the tunnel
 ```
 
-The iPhone app is always-on. It auto-starts the relay on launch and on returning to the foreground, with no Start button, and shows a minimal status screen with relay state, cellular egress, throughput, and dropped counts.
+The agent owns one config library, so a config you start is stored once and reused. Manage it from the Mac app's Configs card or with `celltunnelctl configs`:
 
-The Mac Catalyst build shows the same status screen, populated from the agent over XPC. It is a viewer: control still happens through `celltunnelctl`. Build it with `make build TARGET=mac-catalyst CONFIG=Debug`.
+```sh
+celltunnelctl configs list                 # list stored configs, active one flagged
+celltunnelctl configs import <path>        # import, activate, and start a config
+celltunnelctl configs activate <name|id>   # switch the running tunnel to a stored config
+```
+
+Run `celltunnelctl --help` for the full command set, including `status`, `stop`, and the `peers`/`select` egress roster used when more than one iPhone is dialed in.
+
+The iPhone app is always-on. It auto-starts the relay on launch and on returning to the foreground, with no Start button, and shows a status screen with relay state, cellular egress, throughput, and dropped counts.
+
+The Mac Catalyst build shows the same status screen, filled from the agent over XPC, and manages the config library: import, activate, edit, rename, and delete. The agent owns the tunnel; the app drives it over XPC.
 
 ## Requirements
 
