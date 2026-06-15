@@ -80,6 +80,33 @@ else ifeq ($(TARGET),daemon)
 SWIFT_MK_VERIFY_SIGNING_PATHS := Products/$(CONFIG)/CellTunnelAgent.app
 endif
 
+# Automatic Developer ID signing for the macOS NetworkExtension targets. The two
+# macOS targets (CellTunnelAgent, CellTunnelTunnelProvider) carry App Groups +
+# Network Extensions entitlements, so even Developer ID signing needs a
+# provisioning profile. Two Developer ID (MAC_APP_DIRECT) profiles exist in the
+# portal; Xcode downloads them with -allowProvisioningUpdates only under automatic
+# signing. CI imports the Developer ID cert and exports CODE_SIGN_IDENTITY as its
+# SHA-1, from which swift-mk's signing-xcconfig prelude would infer
+# CODE_SIGN_STYLE=Manual, and Manual disables -allowProvisioningUpdates.
+#
+# SWIFT_MK_SIGN_* win over the bare CODE_SIGN_* names inside swift-mk, both in the
+# signing-xcconfig prelude (which writes .make/signing.xcconfig before the dev tool
+# runs) and in the verifier. Setting them here, before the prelude, makes the
+# override "Developer ID Application" + Automatic + the team, so Xcode auto-provisions
+# the two profiles and the verifier expects the wildcard identity the build resolves
+# to. Gated on the App Store Connect API key (the CI distribution context) and the
+# macOS NE targets, so local ad-hoc and development builds are untouched.
+ifneq ($(strip $(APPLE_NOTARY_KEY_ID)),)
+ifneq ($(strip $(APPLE_NOTARY_ISSUER_ID)),)
+ifneq ($(or $(strip $(APPLE_NOTARY_KEY_BASE64)),$(strip $(APPLE_NOTARY_KEY_PATH))),)
+ifneq ($(filter $(TARGET),mac daemon all),)
+export SWIFT_MK_SIGN_IDENTITY := Developer ID Application
+export SWIFT_MK_SIGN_STYLE := Automatic
+endif
+endif
+endif
+endif
+
 SWIFT_SOURCE_ROOTS := Apps Sources Tests Tools/CellTunnelCtl Tools/CellTunnelDev Tools/LoggingAudit
 SWIFT_OWNED_SWIFT_FILES := $(shell find $(SWIFT_SOURCE_ROOTS) -path '*/.build/*' -prune -o -name '*.swift' -print)
 SWIFT_PACKAGE_MANIFESTS := Package.swift Project.swift Tuist.swift Tuist/Package.swift Tools/Package.swift Tools/cell-tunnel-dev.swift

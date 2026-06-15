@@ -40,11 +40,12 @@ jobs:
       # CODE_SIGN_IDENTITY; swift-mk would infer CODE_SIGN_STYLE=Manual from that
       # named identity, but Manual disables -allowProvisioningUpdates, and the two
       # macOS NetworkExtension targets (App Groups + Network Extensions entitlements)
-      # need a provisioning profile even under Developer ID. So the dev tool's
-      # buildMacAgent/buildMacTunnelProvider flip swift-mk to automatic Developer ID
-      # signing (SWIFT_MK_SIGN_IDENTITY="Developer ID Application", SWIFT_MK_SIGN_STYLE
-      # =Automatic) whenever the App Store Connect API key is present, letting Xcode
-      # download the two minted Developer ID (MAC_APP_DIRECT) profiles automatically.
+      # need a provisioning profile even under Developer ID. So the consumer Makefile
+      # exports SWIFT_MK_SIGN_IDENTITY="Developer ID Application" + SWIFT_MK_SIGN_STYLE
+      # =Automatic for the macOS NE targets whenever the App Store Connect API key is
+      # present; those win over the SHA-1 inside swift-mk's signing-xcconfig prelude,
+      # so the override is automatic Developer ID and Xcode downloads the two minted
+      # Developer ID (MAC_APP_DIRECT) profiles via -allowProvisioningUpdates.
       import-signing-cert: true
       signing-identity-name: "Developer ID Application: Alex Goodkind (H3BMXM4W7H)"
       apple-team-id: H3BMXM4W7H

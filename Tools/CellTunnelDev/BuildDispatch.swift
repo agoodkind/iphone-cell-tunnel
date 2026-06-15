@@ -81,7 +81,6 @@ private func buildMacAgent(configuration: String) throws {
   buildDispatchLogger.notice(
     "building CellTunnelAgent scheme configuration=\(configuration, privacy: .public)"
   )
-  enableAutomaticDeveloperIdSigningForNetworkExtensionTargets()
   try buildScheme(
     scheme: "CellTunnelAgent",
     configuration: configuration,
@@ -95,7 +94,6 @@ private func buildMacTunnelProvider(configuration: String) throws {
   buildDispatchLogger.notice(
     "building CellTunnelTunnelProvider scheme configuration=\(configuration, privacy: .public)"
   )
-  enableAutomaticDeveloperIdSigningForNetworkExtensionTargets()
   try buildScheme(
     scheme: "CellTunnelTunnelProvider",
     configuration: configuration,
