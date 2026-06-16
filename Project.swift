@@ -55,6 +55,28 @@ let macHardenedRuntimeSettings: SettingsDictionary = [
   "REGISTER_APP_GROUPS": "YES",
 ]
 
+// Tuist evaluates this manifest in a separate process and forwards only TUIST_*
+// variables to it, reachable through the Environment API; a raw host variable such
+// as PROVISIONING_PROFILE_SPECIFIER is never visible here. iphone's Makefile sets
+// TUIST_DEVELOPER_ID_SIGNING=1 for the signed CI build (where the engine installed
+// the provisioning profiles) and leaves it unset for the dead-code coverage build
+// and for local builds, so the per-target specifiers below apply only then.
+let isDeveloperIdProvisioning = Environment.developerIdSigning.getBoolean(default: false)
+
+// The two macOS NetworkExtension targets carry App Groups + Network Extensions
+// entitlements (the app-extension packet-tunnel-provider), so each needs its own
+// provisioning profile; a single global override cannot express two specifiers, and
+// Developer ID cannot authorize app-extension NetworkExtension on macOS. Pin each
+// macOS-only target to its installed Mac App Store profile by name. Applied only in
+// CI provisioning mode; locally the target keeps its automatic signing.
+func macNetworkExtensionSettings(profileName: String) -> SettingsDictionary {
+  var settings = macHardenedRuntimeSettings
+  if isDeveloperIdProvisioning {
+    settings["PROVISIONING_PROFILE_SPECIFIER"] = SettingValue(stringLiteral: profileName)
+  }
+  return settings
+}
+
 let cellTunnelPhoneBaseSettings: SettingsDictionary = [
   "PRODUCT_NAME": "CellTunnelPhone",
   "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "",
@@ -221,7 +243,8 @@ let project = Project(
         .target(name: "CellTunnelTunnelProvider"),
         .external(name: "WireGuardKit"),
       ],
-      settings: .settings(base: macHardenedRuntimeSettings)
+      settings: .settings(
+        base: macNetworkExtensionSettings(profileName: "CellTunnel Agent App Store"))
     ),
     .target(
       name: "CellTunnelTunnelProvider",
@@ -235,7 +258,8 @@ let project = Project(
       ],
       entitlements: .file(path: "Apps/macOS/Entitlements/TunnelProvider.entitlements"),
       dependencies: tunnelProviderDependencies,
-      settings: .settings(base: macHardenedRuntimeSettings)
+      settings: .settings(
+        base: macNetworkExtensionSettings(profileName: "CellTunnel TunnelProvider App Store"))
     ),
     .target(
       name: "CellTunnelPhoneTunnel",
