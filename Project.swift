@@ -64,10 +64,11 @@ let macHardenedRuntimeSettings: SettingsDictionary = [
 let isDeveloperIdProvisioning = Environment.developerIdSigning.getBoolean(default: false)
 
 // The two macOS NetworkExtension targets carry App Groups + Network Extensions
-// entitlements, so each needs its own provisioning profile even under Developer ID;
-// a single global override cannot express two specifiers. Pin each macOS-only target
-// to its installed Developer ID (MAC_APP_DIRECT) profile by name. Applied only in CI
-// provisioning mode; locally the target keeps its automatic signing.
+// entitlements (the app-extension packet-tunnel-provider), so each needs its own
+// provisioning profile; a single global override cannot express two specifiers, and
+// Developer ID cannot authorize app-extension NetworkExtension on macOS. Pin each
+// macOS-only target to its installed Mac App Store profile by name. Applied only in
+// CI provisioning mode; locally the target keeps its automatic signing.
 func macNetworkExtensionSettings(profileName: String) -> SettingsDictionary {
   var settings = macHardenedRuntimeSettings
   if isDeveloperIdProvisioning {
@@ -243,7 +244,7 @@ let project = Project(
         .external(name: "WireGuardKit"),
       ],
       settings: .settings(
-        base: macNetworkExtensionSettings(profileName: "CellTunnel Agent Developer ID"))
+        base: macNetworkExtensionSettings(profileName: "CellTunnel Agent App Store"))
     ),
     .target(
       name: "CellTunnelTunnelProvider",
@@ -258,7 +259,7 @@ let project = Project(
       entitlements: .file(path: "Apps/macOS/Entitlements/TunnelProvider.entitlements"),
       dependencies: tunnelProviderDependencies,
       settings: .settings(
-        base: macNetworkExtensionSettings(profileName: "CellTunnel TunnelProvider Developer ID"))
+        base: macNetworkExtensionSettings(profileName: "CellTunnel TunnelProvider App Store"))
     ),
     .target(
       name: "CellTunnelPhoneTunnel",

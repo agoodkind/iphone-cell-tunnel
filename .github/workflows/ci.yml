@@ -34,23 +34,23 @@ jobs:
       # simulator unsigned, so those three are compile-checked on every PR. The
       # build matrix target below produces the signed macOS product.
       targets: '["build","test"]'
-      # Import the Developer ID Application certificate into the runner keychain and
-      # hand its SHA-1 to swift-mk as CODE_SIGN_IDENTITY. swift-mk builds the
-      # signing xcconfig (Developer ID identity + Manual style + team) and exports
-      # XCODE_XCCONFIG_FILE so it wins over every target. Developer ID is
-      # distribution signing, so the macOS agent + provider build with no device
-      # registration and no development profiles, unlike the prior development
-      # signing that failed on the unregistered runner.
+      # Import the Apple Distribution certificate into the runner keychain and hand
+      # its SHA-1 to swift-mk as CODE_SIGN_IDENTITY. swift-mk builds the signing
+      # xcconfig (the identity + Manual style + team) and exports XCODE_XCCONFIG_FILE
+      # so it wins over every target. The macOS agent and tunnel provider use the
+      # app-extension NetworkExtension entitlement (packet-tunnel-provider), which
+      # Developer ID cannot authorize on macOS; App Store distribution profiles do,
+      # and they enumerate no devices, so the build signs on an unregistered runner.
       import-signing-cert: true
-      signing-identity-name: "Developer ID Application: Alex Goodkind (H3BMXM4W7H)"
+      signing-identity-name: "Apple Distribution: Alex Goodkind (H3BMXM4W7H)"
       apple-team-id: H3BMXM4W7H
       # The agent and tunnel-provider targets carry App Groups + Network Extensions
-      # entitlements, so even under Developer ID each needs a provisioning profile.
-      # Two Developer ID (MAC_APP_DIRECT) profiles are installed from the
-      # newline-separated APPLE_DEVELOPER_ID_PROFILE_BASE64 secret; Project.swift
-      # maps each NE target to its profile by name when the engine signals Developer
-      # ID provisioning (a non-empty PROVISIONING_PROFILE_SPECIFIER), so local builds
-      # that install no profile are unaffected.
+      # entitlements, so each needs its own provisioning profile. Two Mac App Store
+      # provisioning profiles are installed from the newline-separated
+      # APPLE_DEVELOPER_ID_PROFILE_BASE64 secret; Project.swift maps each NE target to
+      # its profile by name when the engine signals provisioning (a non-empty
+      # PROVISIONING_PROFILE_SPECIFIER), so local builds that install no profile are
+      # unaffected.
       install-provisioning-profile: true
       # Build the macOS agent + provider only. CODE_SIGN_IDENTITY and
       # CODE_SIGN_STYLE are deliberately NOT set here: setting them in make-args
