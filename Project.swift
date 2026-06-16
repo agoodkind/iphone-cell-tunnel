@@ -55,25 +55,23 @@ let macHardenedRuntimeSettings: SettingsDictionary = [
   "REGISTER_APP_GROUPS": "YES",
 ]
 
-// swift-mk's reusable CI exports a non-empty PROVISIONING_PROFILE_SPECIFIER once it
-// installs Developer ID provisioning profiles, which is the signal that this build
-// is Developer ID distribution on a runner. A local build installs no profile and
-// leaves it empty, so the per-target specifiers below apply only in that CI context.
-let isDeveloperIdProvisioning =
-  !(ProcessInfo.processInfo.environment["PROVISIONING_PROFILE_SPECIFIER"] ?? "")
-  .trimmingCharacters(in: .whitespaces).isEmpty
+// Tuist evaluates this manifest in a separate process and forwards only TUIST_*
+// variables to it, reachable through the Environment API; a raw host variable such
+// as PROVISIONING_PROFILE_SPECIFIER is never visible here. iphone's Makefile sets
+// TUIST_DEVELOPER_ID_SIGNING=1 for the signed CI build (where the engine installed
+// the provisioning profiles) and leaves it unset for the dead-code coverage build
+// and for local builds, so the per-target specifiers below apply only then.
+let isDeveloperIdProvisioning = Environment.developerIdSigning.getBoolean(default: false)
 
 // The two macOS NetworkExtension targets carry App Groups + Network Extensions
 // entitlements, so each needs its own provisioning profile even under Developer ID;
-// a single global override cannot express two specifiers. Pin each target to its
-// installed Developer ID (MAC_APP_DIRECT) profile by name, scoped to the macOS SDK
-// so the Catalyst and iOS slices are untouched. Applied only in CI provisioning
-// mode; locally the target keeps its automatic signing.
+// a single global override cannot express two specifiers. Pin each macOS-only target
+// to its installed Developer ID (MAC_APP_DIRECT) profile by name. Applied only in CI
+// provisioning mode; locally the target keeps its automatic signing.
 func macNetworkExtensionSettings(profileName: String) -> SettingsDictionary {
   var settings = macHardenedRuntimeSettings
   if isDeveloperIdProvisioning {
-    settings["PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]"] =
-      SettingValue(stringLiteral: profileName)
+    settings["PROVISIONING_PROFILE_SPECIFIER"] = SettingValue(stringLiteral: profileName)
   }
   return settings
 }
