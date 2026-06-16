@@ -80,6 +80,10 @@ enum WireGuardTunnelConfigBuilder {
     if let mtu = section.mtu {
       interfaceConfig.mtu = UInt16(clamping: mtu)
     }
+    // DNS is deliberately left unset here so WireGuardKit's settings generator
+    // produces no `dnsSettings`. `RouteGate` is the sole authority over DNS and
+    // gates it by the iPhone link state; setting `interfaceConfig.dns` here would
+    // double-apply an ungated copy.
     return interfaceConfig
   }
 

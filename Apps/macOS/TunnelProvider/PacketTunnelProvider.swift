@@ -140,6 +140,13 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     let programRoutes = ProgramRouteSet.routes(from: parsedConfig.peer.allowedIPs)
     _ = routeGate.setProgramRoutes(ipv4: programRoutes.ipv4, ipv6: programRoutes.ipv6)
 
+    // Seed the config's DNS the same way, so the gate publishes it as the system
+    // resolver while the link is up and withdraws it when the link drops.
+    _ = routeGate.setProgramDNS(
+      servers: parsedConfig.interface.dnsServers,
+      searchDomains: parsedConfig.interface.dnsSearchDomains
+    )
+
     let agentEndpoint = Self.agentRelayEndpoint()
     try relayTransport.connect(to: agentEndpoint)
     logger.notice(
@@ -245,9 +252,12 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       let parsedConfig = try WireGuardConfigParser.parse(text)
       serverEndpoint = parsedConfig.peer.endpoint
       let programRoutes = ProgramRouteSet.routes(from: parsedConfig.peer.allowedIPs)
-      if let settings = routeGate.setProgramRoutes(
-        ipv4: programRoutes.ipv4,
-        ipv6: programRoutes.ipv6
+      _ = routeGate.setProgramRoutes(ipv4: programRoutes.ipv4, ipv6: programRoutes.ipv6)
+      // Seed DNS too and apply once, so a live reload swaps routes and DNS in a
+      // single gated settings apply.
+      if let settings = routeGate.setProgramDNS(
+        servers: parsedConfig.interface.dnsServers,
+        searchDomains: parsedConfig.interface.dnsSearchDomains
       ) {
         super.setTunnelNetworkSettings(settings, completionHandler: nil)
       }

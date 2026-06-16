@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Network
 
 // X25519 public/private key length in bytes per RFC 7748.
 private let wireGuardKeyLengthBytes = 32
@@ -101,18 +102,26 @@ public struct WireGuardInterfaceSection: Equatable, Sendable {
   public var addresses: [AddressPrefix]
   public var listenPort: UInt16?
   public var mtu: Int?
+  /// IP-literal DNS servers from the `DNS =` line, in declared order.
+  public var dnsServers: [String]
+  /// Non-IP entries from the `DNS =` line, treated as DNS search domains.
+  public var dnsSearchDomains: [String]
 
   /// Creates a parsed WireGuard interface section.
   public init(
     privateKey: WireGuardKey? = nil,
     addresses: [AddressPrefix] = [],
     listenPort: UInt16? = nil,
-    mtu: Int? = nil
+    mtu: Int? = nil,
+    dnsServers: [String] = [],
+    dnsSearchDomains: [String] = []
   ) {
     self.privateKey = privateKey
     self.addresses = addresses
     self.listenPort = listenPort
     self.mtu = mtu
+    self.dnsServers = dnsServers
+    self.dnsSearchDomains = dnsSearchDomains
   }
 }
 
@@ -252,11 +261,39 @@ public enum WireGuardConfigParser {
         throw WireGuardConfigError.invalidMTU(value)
       }
       section.mtu = parsed
-    case "DNS", "Table", "PreUp", "PostUp", "PreDown", "PostDown", "SaveConfig", "FwMark":
+    case "DNS":
+      let parsed = parseDNSList(value)
+      section.dnsServers.append(contentsOf: parsed.servers)
+      section.dnsSearchDomains.append(contentsOf: parsed.searchDomains)
+    case "Table", "PreUp", "PostUp", "PreDown", "PostDown", "SaveConfig", "FwMark":
       break
     default:
       break
     }
+  }
+
+  /// Splits a WireGuard `DNS =` value into IP-literal servers and search
+  /// domains. WireGuard treats each comma-separated token that parses as an IP
+  /// address as a DNS server and every other token as a search domain, so the
+  /// classification uses the Network framework's address parsers rather than a
+  /// colon heuristic, which cannot tell a hostname from an IP.
+  private static func parseDNSList(
+    _ value: String
+  ) -> (servers: [String], searchDomains: [String]) {
+    var servers: [String] = []
+    var searchDomains: [String] = []
+    for raw in value.split(separator: ",") {
+      let token = raw.trimmingCharacters(in: .whitespaces)
+      if token.isEmpty {
+        continue
+      }
+      if IPv4Address(token) != nil || IPv6Address(token) != nil {
+        servers.append(token)
+      } else {
+        searchDomains.append(token)
+      }
+    }
+    return (servers, searchDomains)
   }
 
   private static func applyPeerField(
