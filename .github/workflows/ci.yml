@@ -34,26 +34,29 @@ jobs:
       # simulator unsigned, so those three are compile-checked on every PR. The
       # build matrix target below produces the signed macOS product.
       targets: '["build","test"]'
-      # Import the Developer ID Application certificate (with its private key) into
-      # the runner keychain so codesign and automatic signing can use it. The action
-      # also resolves the cert SHA-1, which the reusable workflow exports as
-      # CODE_SIGN_IDENTITY; swift-mk would infer CODE_SIGN_STYLE=Manual from that
-      # named identity, but Manual disables -allowProvisioningUpdates, and the two
-      # macOS NetworkExtension targets (App Groups + Network Extensions entitlements)
-      # need a provisioning profile even under Developer ID. So the consumer Makefile
-      # exports SWIFT_MK_SIGN_IDENTITY="Developer ID Application" + SWIFT_MK_SIGN_STYLE
-      # =Automatic for the macOS NE targets whenever the App Store Connect API key is
-      # present; those win over the SHA-1 inside swift-mk's signing-xcconfig prelude,
-      # so the override is automatic Developer ID and Xcode downloads the two minted
-      # Developer ID (MAC_APP_DIRECT) profiles via -allowProvisioningUpdates.
+      # Import the Developer ID Application certificate into the runner keychain and
+      # hand its SHA-1 to swift-mk as CODE_SIGN_IDENTITY. swift-mk builds the
+      # signing xcconfig (Developer ID identity + Manual style + team) and exports
+      # XCODE_XCCONFIG_FILE so it wins over every target. Developer ID is
+      # distribution signing, so the macOS agent + provider build with no device
+      # registration and no development profiles, unlike the prior development
+      # signing that failed on the unregistered runner.
       import-signing-cert: true
       signing-identity-name: "Developer ID Application: Alex Goodkind (H3BMXM4W7H)"
       apple-team-id: H3BMXM4W7H
-      # Build the macOS agent + provider only. The APPLE_NOTARY_* secrets flow in via
-      # secrets: inherit and feed the dev tool's -allowProvisioningUpdates +
-      # -authenticationKey* args, so Xcode auto-provisions on the ephemeral runner.
-      # The iOS simulator and Mac Catalyst slices are compile-checked unsigned by the
-      # mandatory gate job; the iOS device build needs an archive/App-Store flow and
-      # belongs at release.
+      # The agent and tunnel-provider targets carry App Groups + Network Extensions
+      # entitlements, so even under Developer ID each needs a provisioning profile.
+      # Two Developer ID (MAC_APP_DIRECT) profiles are installed from the
+      # newline-separated APPLE_DEVELOPER_ID_PROFILE_BASE64 secret; Project.swift
+      # maps each NE target to its profile by name when the engine signals Developer
+      # ID provisioning (a non-empty PROVISIONING_PROFILE_SPECIFIER), so local builds
+      # that install no profile are unaffected.
+      install-provisioning-profile: true
+      # Build the macOS agent + provider only. CODE_SIGN_IDENTITY and
+      # CODE_SIGN_STYLE are deliberately NOT set here: setting them in make-args
+      # would beat swift-mk's Developer ID override and force the failing
+      # development signing, the exact bug in the prior CI. The iOS simulator and
+      # Mac Catalyst slices are compile-checked unsigned by the mandatory gate job;
+      # the iOS device build needs an archive/App-Store flow and belongs at release.
       make-args: "TARGET=mac"
     secrets: inherit

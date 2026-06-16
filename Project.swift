@@ -55,6 +55,29 @@ let macHardenedRuntimeSettings: SettingsDictionary = [
   "REGISTER_APP_GROUPS": "YES",
 ]
 
+// swift-mk's reusable CI exports a non-empty PROVISIONING_PROFILE_SPECIFIER once it
+// installs Developer ID provisioning profiles, which is the signal that this build
+// is Developer ID distribution on a runner. A local build installs no profile and
+// leaves it empty, so the per-target specifiers below apply only in that CI context.
+let isDeveloperIdProvisioning =
+  !(ProcessInfo.processInfo.environment["PROVISIONING_PROFILE_SPECIFIER"] ?? "")
+  .trimmingCharacters(in: .whitespaces).isEmpty
+
+// The two macOS NetworkExtension targets carry App Groups + Network Extensions
+// entitlements, so each needs its own provisioning profile even under Developer ID;
+// a single global override cannot express two specifiers. Pin each target to its
+// installed Developer ID (MAC_APP_DIRECT) profile by name, scoped to the macOS SDK
+// so the Catalyst and iOS slices are untouched. Applied only in CI provisioning
+// mode; locally the target keeps its automatic signing.
+func macNetworkExtensionSettings(profileName: String) -> SettingsDictionary {
+  var settings = macHardenedRuntimeSettings
+  if isDeveloperIdProvisioning {
+    settings["PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]"] =
+      SettingValue(stringLiteral: profileName)
+  }
+  return settings
+}
+
 let cellTunnelPhoneBaseSettings: SettingsDictionary = [
   "PRODUCT_NAME": "CellTunnelPhone",
   "ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME": "",
@@ -221,7 +244,8 @@ let project = Project(
         .target(name: "CellTunnelTunnelProvider"),
         .external(name: "WireGuardKit"),
       ],
-      settings: .settings(base: macHardenedRuntimeSettings)
+      settings: .settings(
+        base: macNetworkExtensionSettings(profileName: "CellTunnel Agent Developer ID"))
     ),
     .target(
       name: "CellTunnelTunnelProvider",
@@ -235,7 +259,8 @@ let project = Project(
       ],
       entitlements: .file(path: "Apps/macOS/Entitlements/TunnelProvider.entitlements"),
       dependencies: tunnelProviderDependencies,
-      settings: .settings(base: macHardenedRuntimeSettings)
+      settings: .settings(
+        base: macNetworkExtensionSettings(profileName: "CellTunnel TunnelProvider Developer ID"))
     ),
     .target(
       name: "CellTunnelPhoneTunnel",
