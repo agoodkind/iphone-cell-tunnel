@@ -21,6 +21,29 @@ let swiftMakefileDependency: Package.Dependency = {
   return .package(url: "https://github.com/agoodkind/swift-makefile.git", branch: "main")
 }()
 
+let repositoryRootPath = URL(fileURLWithPath: #filePath)
+  .deletingLastPathComponent()
+  .deletingLastPathComponent()
+  .standardizedFileURL
+  .path
+let swiftMakefileManagedRootPath = URL(fileURLWithPath: repositoryRootPath)
+  .appendingPathComponent(".make/dev/iphone-cell-tunnel")
+  .standardizedFileURL
+  .path
+let cellTunnelRootPath: String = {
+  var isDirectory = ObjCBool(false)
+  let pathExists = FileManager.default.fileExists(
+    atPath: swiftMakefileManagedRootPath,
+    isDirectory: &isDirectory
+  )
+  if pathExists, isDirectory.boolValue {
+    return swiftMakefileManagedRootPath
+  }
+  return repositoryRootPath
+}()
+let cellTunnelDependency = Package.Dependency.package(path: cellTunnelRootPath)
+let cellTunnelPackageIdentity = URL(fileURLWithPath: cellTunnelRootPath).lastPathComponent
+
 let package = Package(
   name: "CellTunnelTools",
   platforms: [
@@ -32,9 +55,9 @@ let package = Package(
   ],
   dependencies: [
     // swift-mk creates this symlink to the repo root with the correct basename, so
-    // the self-reference resolves from any worktree. The fragile_package_path rule
-    // forbids a bare `..` here.
-    .package(path: "../.make/dev/iphone-cell-tunnel"),
+    // the self-reference resolves from any worktree. Dependabot reads the manifest
+    // before bootstrap creates it, so it falls back to the checkout root above.
+    cellTunnelDependency,
     swiftMakefileDependency,
     .package(url: "https://github.com/swiftlang/swift-syntax.git", exact: "603.0.0"),
     .package(url: "https://github.com/rarestype/swift-ip.git", from: "0.3.10"),
@@ -43,8 +66,8 @@ let package = Package(
     .executableTarget(
       name: "CellTunnelDev",
       dependencies: [
-        .product(name: "CellTunnelCore", package: "iphone-cell-tunnel"),
-        .product(name: "CellTunnelLog", package: "iphone-cell-tunnel"),
+        .product(name: "CellTunnelCore", package: cellTunnelPackageIdentity),
+        .product(name: "CellTunnelLog", package: cellTunnelPackageIdentity),
         .product(name: "IP", package: "swift-ip"),
         .product(name: "SwiftMkCore", package: "swift-makefile"),
       ],
