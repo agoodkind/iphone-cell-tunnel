@@ -30,18 +30,19 @@ let swiftMakefileManagedRootPath = URL(fileURLWithPath: repositoryRootPath)
   .appendingPathComponent(".make/dev/iphone-cell-tunnel")
   .standardizedFileURL
   .path
-let cellTunnelDependency: Package.Dependency = {
-  if FileManager.default.fileExists(atPath: swiftMakefileManagedRootPath) {
-    return .package(path: swiftMakefileManagedRootPath)
+let cellTunnelRootPath: String = {
+  var isDirectory = ObjCBool(false)
+  let pathExists = FileManager.default.fileExists(
+    atPath: swiftMakefileManagedRootPath,
+    isDirectory: &isDirectory
+  )
+  if pathExists, isDirectory.boolValue {
+    return swiftMakefileManagedRootPath
   }
-  return .package(path: repositoryRootPath)
+  return repositoryRootPath
 }()
-let cellTunnelPackageIdentity: String = {
-  if FileManager.default.fileExists(atPath: swiftMakefileManagedRootPath) {
-    return "iphone-cell-tunnel"
-  }
-  return URL(fileURLWithPath: repositoryRootPath).lastPathComponent
-}()
+let cellTunnelDependency = Package.Dependency.package(path: cellTunnelRootPath)
+let cellTunnelPackageIdentity = URL(fileURLWithPath: cellTunnelRootPath).lastPathComponent
 
 let package = Package(
   name: "CellTunnelTools",
