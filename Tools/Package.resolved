@@ -1,5 +1,5 @@
 {
-  "originHash" : "4b87cb016945bf7cd02f69be7bfb96a643abaac00d4ceec2532f87525f80a29b",
+  "originHash" : "368203548da7f0bdf2cfb30a6fce717e5d1ab44472658efb66a4ab8dae57c454",
   "pins" : [
     {
       "identity" : "aexml",
@@ -53,15 +53,6 @@
       "state" : {
         "revision" : "d77f1400f4c5738f04a1aec0a1246aec5240e9fa",
         "version" : "2.5.0"
-      }
-    },
-    {
-      "identity" : "opentracing-objc",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/undefinedlabs/opentracing-objc",
-      "state" : {
-        "revision" : "18c1a35ca966236cee0c5a714a51a73ff33384c1",
-        "version" : "0.5.2"
       }
     },
     {
@@ -217,6 +208,15 @@
       }
     },
     {
+      "identity" : "swift-makefile",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/agoodkind/swift-makefile.git",
+      "state" : {
+        "branch" : "main",
+        "revision" : "f7a214ca346698a14fbefe48faeae331ffec4fb1"
+      }
+    },
+    {
       "identity" : "swift-metrics",
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/apple/swift-metrics.git",
@@ -302,8 +302,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/swiftlang/swift-syntax.git",
       "state" : {
-        "revision" : "2b59c0c741e9184ab057fd22950b491076d42e91",
-        "version" : "603.0.0"
+        "revision" : "79e4b74a295b6eb74a8b585e3a39d29e70c1dbd1",
+        "version" : "603.0.2"
       }
     },
     {
@@ -313,15 +313,6 @@
       "state" : {
         "revision" : "669763cfd5806a67e21972d7e5e2d6b80b1ea985",
         "version" : "1.6.5"
-      }
-    },
-    {
-      "identity" : "thrift-swift",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/undefinedlabs/Thrift-Swift",
-      "state" : {
-        "revision" : "18ff09e6b30e589ed38f90a1af23e193b8ecef8e",
-        "version" : "1.1.2"
       }
     },
     {
