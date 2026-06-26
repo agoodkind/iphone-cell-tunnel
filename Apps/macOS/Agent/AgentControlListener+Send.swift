@@ -17,18 +17,20 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 
 extension AgentControlListener {
   func sendSetServerEndpoint(on connection: NWConnection) async throws {
+    guard let serverEndpoint else {
+      throw AgentControlListenerError.connectionFailed("relay endpoint not configured")
+    }
     logger.notice(
       """
       agent control sending set-server-endpoint \
-      host=\(self.serverEndpoint.host, privacy: .public) \
-      port=\(self.serverEndpoint.port, privacy: .public)
+      host=\(serverEndpoint.host, privacy: .public) \
+      port=\(serverEndpoint.port, privacy: .public)
       """
     )
     let message = RelayControlMessage.setServerEndpoint(
       RelayControlMessage.SetServerEndpoint(endpoint: serverEndpoint)
     )
     try await send(message, on: connection)
-    try await awaitAcknowledge(on: connection, requestKind: "set-server-endpoint")
   }
 
   /// Sends the agent's confirmed route state to the selected iPhone, so the app
@@ -115,73 +117,4 @@ extension AgentControlListener {
     )
   }
 
-  func awaitAcknowledge(
-    on connection: NWConnection,
-    requestKind: String
-  ) async throws {
-    let received = try await receiveOne(on: connection)
-    switch received {
-    case .acknowledge(let payload) where payload.requestKind == requestKind:
-      logger.notice(
-        """
-        agent control acknowledge received \
-        requestKind=\(payload.requestKind, privacy: .public)
-        """
-      )
-    case .error(let failure):
-      throw AgentControlListenerError.remoteError(
-        AgentControlListenerError.RemoteErrorPayload(
-          code: failure.code,
-          message: failure.message
-        )
-      )
-    case .status(let snapshot):
-      // A status arriving before the ack is consumed and its ack awaited again. The
-      // device name it carries is applied from the status receive loop instead, once
-      // this connection is in the roster, so a pre-ack status is not attributed here.
-      logger.notice(
-        """
-        agent control received status before ack \
-        hasCellularPath=\(snapshot.hasCellularPath, privacy: .public)
-        """
-      )
-      try await awaitAcknowledge(on: connection, requestKind: requestKind)
-    case .publicAddress(let payload):
-      onPeerPublicAddress?(payload.addresses)
-      try await awaitAcknowledge(on: connection, requestKind: requestKind)
-    default:
-      throw AgentControlListenerError.acknowledgeMissing
-    }
-  }
-
-  func receiveOne(on connection: NWConnection) async throws -> RelayControlMessage {
-    try await withCheckedThrowingContinuation { continuation in
-      connection.receiveMessage { data, _, _, error in
-        if let error {
-          continuation.resume(throwing: error)
-          return
-        }
-        guard let data, !data.isEmpty else {
-          continuation.resume(
-            throwing: AgentControlListenerError.connectionFailed(
-              "empty payload received"
-            )
-          )
-          return
-        }
-        do {
-          let decoded = try RelayControlMessageCodec.decode(data)
-          continuation.resume(returning: decoded)
-        } catch {
-          logger.error(
-            """
-            agent control decode failed during receive \
-            error=\(error.localizedDescription, privacy: .public)
-            """
-          )
-          continuation.resume(throwing: error)
-        }
-      }
-    }
-  }
 }

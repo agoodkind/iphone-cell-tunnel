@@ -82,30 +82,13 @@ final class AgentRuntime: @unchecked Sendable {
       )
       switch service.status {
       case .notRegistered, .notFound:
-        // Apple docs say .notRegistered is the fresh-install case, but the
-        // framework empirically returns .notFound (rawValue 3) for a freshly
-        // installed app whose plist is present and sealed. Attempt register
-        // in either case and log the resulting status.
-        do {
-          try service.register()
-          logger.notice(
-            """
-            agent SMAppService register ok post \
-            raw=\(service.status.rawValue, privacy: .public) \
-            desc=\(String(describing: service.status), privacy: .public)
-            """
-          )
-        } catch {
-          logger.error(
-            """
-            agent SMAppService register failed \
-            details=\(String(describing: error), privacy: .public) \
-            recovery=continue-listening
-            """
-          )
-        }
+        registerLaunchAgent(service)
       case .enabled:
-        logger.notice("agent SMAppService already enabled")
+        // A replaced app bundle can leave launchd holding stale metadata for the
+        // previously registered helper. Re-registering while enabled refreshes the
+        // launchd wiring to the current bundle contents.
+        logger.notice("agent SMAppService enabled; refreshing registration")
+        registerLaunchAgent(service)
       case .requiresApproval:
         logger.notice(
           "agent SMAppService requiresApproval; enable in System Settings, General, Login Items"
@@ -118,6 +101,31 @@ final class AgentRuntime: @unchecked Sendable {
           """
         )
       }
+    }
+  }
+
+  private func registerLaunchAgent(_ service: SMAppService) {
+    // Apple docs say .notRegistered is the fresh-install case, but the framework
+    // empirically returns .notFound (rawValue 3) for a freshly installed app whose
+    // plist is present and sealed. Attempt register in either case, and also when
+    // enabled so a replaced bundle refreshes launchd's cached helper metadata.
+    do {
+      try service.register()
+      logger.notice(
+        """
+        agent SMAppService register ok post \
+        raw=\(service.status.rawValue, privacy: .public) \
+        desc=\(String(describing: service.status), privacy: .public)
+        """
+      )
+    } catch {
+      logger.error(
+        """
+        agent SMAppService register failed \
+        details=\(String(describing: error), privacy: .public) \
+        recovery=continue-listening
+        """
+      )
     }
   }
 

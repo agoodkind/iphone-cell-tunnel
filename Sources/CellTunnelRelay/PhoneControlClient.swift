@@ -250,6 +250,7 @@ final class PhoneControlClient {
       )
       onPeerName?(peerServiceName)
       receive(on: connection)
+      sendStatusSnapshot(on: connection)
       startStatusLoop()
       onConnectionReady?()
     case .waiting(let error):

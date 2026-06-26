@@ -61,14 +61,12 @@ private struct ControlPeer {
 /// Hosts the control link in the agent, a normal process that receives inbound from
 /// the iPhones over the local link. It advertises the control Bonjour service and
 /// accepts every iPhone that dials in, holding each as a `ControlPeer` so the Mac
-/// can choose which one carries egress. On each accepted connection it sends the
-/// WireGuard server endpoint, waits for the acknowledgement, then consumes that
-/// iPhone's status pushes. The iPhone owns the dial; the `set-server-endpoint`
-/// message travels from agent to iPhone. A peer relays only once selected, when the
-/// agent mints its relay-session id, installs it in the bridge, and sends it so the
-/// iPhone primes its data links.
+/// can choose which one carries egress. The iPhone owns the dial, so pairing can
+/// complete before the relay is armed; the Mac later sends the WireGuard server
+/// endpoint and relay-session only to the selected peer when relay start is
+/// requested.
 actor AgentControlListener {
-  let serverEndpoint: RelayEndpoint
+  var serverEndpoint: RelayEndpoint?
   private let connectionQueue = DispatchQueue(label: "io.goodkind.celltunnel.agent.control")
   private var listener: NWListener?
   /// Every iPhone currently holding a control connection, keyed by its minted id.
@@ -124,7 +122,7 @@ actor AgentControlListener {
   /// next change or status poll. Set by the controller before `start()`.
   private var routingSyncProvider: (@Sendable () async -> (intent: Bool, installed: Bool))?
 
-  init(serverEndpoint: RelayEndpoint) {
+  init(serverEndpoint: RelayEndpoint? = nil) {
     self.serverEndpoint = serverEndpoint
   }
 
@@ -133,10 +131,7 @@ actor AgentControlListener {
   /// The control connection of the iPhone the Mac routes egress through, the target
   /// of every "send to the current peer" path, or `nil` when none is selected.
   var selectedConnection: NWConnection? {
-    guard let selectedPeerID else {
-      return nil
-    }
-    return peers[selectedPeerID]?.connection
+    currentSelectedPeer()?.connection
   }
 
   // MARK: - Lifecycle
@@ -236,44 +231,29 @@ actor AgentControlListener {
       }
     }
     newConnection.start(queue: connectionQueue)
-    do {
-      try await sendSetServerEndpoint(on: newConnection)
-      // The handshake completed, so record this iPhone in the roster. It is not
-      // selected and gets no relay-session id, so it holds control only and relays
-      // nothing until the Mac selects it. A transient connection that loses a
-      // multi-interface dial race and never handshakes is dropped in the catch
-      // without ever entering the roster.
-      peers[peerID] = ControlPeer(
-        id: peerID,
-        connection: newConnection,
-        sequence: sequence,
-        deviceID: nil,
-        deviceName: nil,
-        supportsLinkInventory: false
-      )
-      startReceiveLoop(on: newConnection, peerID: peerID)
-      // Sync the routing truth to this connection: the persisted intent and a
-      // not-installed route state, since a freshly connected iPhone is not the
-      // egress peer. Selecting it and bringing its link up upgrades the route state.
-      if let routingSyncProvider {
-        let sync = await routingSyncProvider()
-        await sendRoutingIntent(sync.intent, on: newConnection)
-        await sendRouteState(false, on: newConnection)
-      }
-      if !latestDeviceAddress.isEmpty {
-        await sendPublicAddress(latestDeviceAddress, on: newConnection)
-      }
-      publishRoster()
-    } catch {
-      logger.error(
-        """
-        agent control handshake failed \
-        error=\(error.localizedDescription, privacy: .public) \
-        recovery=drop-this-connection
-        """
-      )
-      newConnection.cancel()
+    // Record the control connection at once so the Mac can show the peer roster
+    // before any relay session is armed.
+    peers[peerID] = ControlPeer(
+      id: peerID,
+      connection: newConnection,
+      sequence: sequence,
+      deviceID: nil,
+      deviceName: nil,
+      supportsLinkInventory: false
+    )
+    startReceiveLoop(on: newConnection, peerID: peerID)
+    // Sync the routing truth to this connection: the persisted intent and a
+    // not-installed route state, since a freshly connected iPhone is not the
+    // egress peer. Selecting it and bringing its link up upgrades the route state.
+    if let routingSyncProvider {
+      let sync = await routingSyncProvider()
+      await sendRoutingIntent(sync.intent, on: newConnection)
+      await sendRouteState(false, on: newConnection)
     }
+    if !latestDeviceAddress.isEmpty {
+      await sendPublicAddress(latestDeviceAddress, on: newConnection)
+    }
+    publishRoster()
   }
 
   // MARK: - Egress selection
@@ -294,7 +274,19 @@ actor AgentControlListener {
     EgressSelectionStore.setSelectedDeviceID(peer.deviceID)
     logger.notice(
       "agent control selected egress device=\(peer.deviceID ?? "legacy", privacy: .public)")
-    await bind(peer)
+    await selectCurrentPeer(peer)
+    if serverEndpoint != nil {
+      do {
+        try await arm(peer)
+      } catch {
+        logger.error(
+          """
+          agent control arm on select failed \
+          error=\(error.localizedDescription, privacy: .public) recovery=keep-selection
+          """
+        )
+      }
+    }
   }
 
   /// Resolves a roster id to a live peer: a stable device id wins, taking the newest
@@ -312,17 +304,10 @@ actor AgentControlListener {
     return peers[handle]
   }
 
-  /// Binds a peer as the live egress connection: installs its id as the bridge admit
-  /// token, sends the relay-session so the iPhone primes its data links, and syncs the
-  /// routing truth. Binding admits the link only; whether traffic routes still depends
-  /// on the routing intent and the link coming up. A switch rotates the bridge session,
-  /// dropping the prior peer's links.
-  private func bind(_ peer: ControlPeer) async {
+  /// Marks a peer as the current selection and mirrors the routing truth to that
+  /// connection. Selection alone does not arm the relay session.
+  private func selectCurrentPeer(_ peer: ControlPeer) async {
     selectedPeerID = peer.id
-    peers[peer.id]?.supportsLinkInventory = false
-    logger.notice("agent control bound egress connection id=\(peer.id, privacy: .public)")
-    onSessionEstablished?(peer.id)
-    await sendRelaySession(peer.id, on: peer.connection)
     if let routingSyncProvider {
       let sync = await routingSyncProvider()
       await sendRoutingIntent(sync.intent, on: peer.connection)
@@ -332,6 +317,16 @@ actor AgentControlListener {
       onPeerDeviceName?(deviceName)
     }
     publishRoster()
+  }
+
+  /// Arms the selected peer for relay traffic by sending the endpoint and the
+  /// relay-session id. The selected peer then primes its data links under this id.
+  private func arm(_ peer: ControlPeer) async throws {
+    try await sendSetServerEndpoint(on: peer.connection)
+    peers[peer.id]?.supportsLinkInventory = false
+    logger.notice("agent control armed egress connection id=\(peer.id, privacy: .public)")
+    onSessionEstablished?(peer.id)
+    await sendRelaySession(peer.id, on: peer.connection)
   }
 
   // MARK: - Status receive loop
@@ -412,6 +407,31 @@ extension AgentControlListener {
     onRosterChanged = handler
   }
 
+  /// Sets the WireGuard server endpoint the selected peer should relay to when the
+  /// relay is armed.
+  func setServerEndpoint(_ endpoint: RelayEndpoint) {
+    serverEndpoint = endpoint
+  }
+
+  /// Clears any armed relay endpoint while leaving the control pairing alive.
+  func clearServerEndpoint() {
+    serverEndpoint = nil
+  }
+
+  /// Arms whichever peer is currently selected, whether it was selected explicitly
+  /// in this session or restored from the remembered device id.
+  func armSelectedPeer() async throws {
+    guard let peer = currentSelectedPeer() else {
+      throw AgentControlListenerError.connectionFailed("no selected peer connection")
+    }
+    try await arm(peer)
+  }
+
+  /// Whether the listener currently has a selected live peer connection.
+  func hasSelectedPeer() -> Bool {
+    currentSelectedPeer() != nil
+  }
+
   /// Sends the selected peer's relay-session id to its iPhone, so the phone stamps it
   /// on every relay prime and the bridge admits its links. Sent on the selected
   /// connection directly, since it is the first thing after selection.
@@ -480,7 +500,21 @@ extension AgentControlListener {
       // a fresh start), bind egress back to it with no manual re-pick. Binds only the
       // device the user already chose, and only admits its link; routing is unchanged.
       if deviceID == selectedDeviceID, selectedPeerID != id, let peer = peers[id] {
-        Task { await self.bind(peer) }
+        Task {
+          await self.selectCurrentPeer(peer)
+          if self.serverEndpoint != nil {
+            do {
+              try await self.arm(peer)
+            } catch {
+              logger.error(
+                """
+                agent control re-arm failed \
+                error=\(error.localizedDescription, privacy: .public) recovery=keep-selection
+                """
+              )
+            }
+          }
+        }
       }
     }
     if let deviceName = snapshot.deviceName, !deviceName.isEmpty {
@@ -534,6 +568,18 @@ extension AgentControlListener {
       )
     }
     onRosterChanged?(roster.sorted { $0.id < $1.id })
+  }
+
+  private func currentSelectedPeer() -> ControlPeer? {
+    if let selectedPeerID, let selected = peers[selectedPeerID] {
+      return selected
+    }
+    guard let selectedDeviceID else {
+      return nil
+    }
+    return peers.values
+      .filter { $0.deviceID == selectedDeviceID }
+      .max { $0.sequence < $1.sequence }
   }
 
   /// Records this host's latest measured public address, sent on each accepted
