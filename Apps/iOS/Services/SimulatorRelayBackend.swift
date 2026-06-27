@@ -44,6 +44,12 @@
       runtime.start()
     }
 
+    func startRelay() async {
+      await Task.yield()
+      logger.notice("simulator relay backend start relay requested")
+      runtime.start()
+    }
+
     /// The simulator hosts the relay in process, so launch gating always proceeds.
     func tunnelProvisioned() async -> Bool {
       await Task.yield()
@@ -82,6 +88,10 @@
       await Task.yield()
       logger.notice("simulator relay backend select peer id=\(id, privacy: .public)")
       runtime.selectPeer(id: id)
+    }
+
+    func selectEgressPeer(id _: String) async {
+      await Task.yield()
     }
 
     // MARK: - Tunnel install

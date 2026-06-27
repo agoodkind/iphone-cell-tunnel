@@ -28,18 +28,32 @@
 
     // MARK: - Lifecycle
 
-    // The agent owns the Mac tunnel, so the Mac UI does not start or stop it. It
-    // does ask the agent to begin relay discovery so the peers list populates.
+    // The Mac starts the agent's control pairing path on launch so the iPhone can
+    // appear in the peer roster before any relay session starts.
     func start() async {
-      logger.notice("agent relay backend start: read-only, requesting relay discovery")
+      logger.notice("agent relay backend start: requesting control pairing")
       do {
-        _ = try await client.startRelayDiscovery()
-        logger.notice("agent relay backend relay discovery started")
+        _ = try await client.startPairing()
+        logger.notice("agent relay backend control pairing started")
       } catch {
         logger.error(
           """
-          agent relay backend discovery start failed \
+          agent relay backend pairing start failed \
           details=\(String(describing: error), privacy: .public) recovery=retry-on-sample
+          """
+        )
+      }
+    }
+
+    func startRelay() async {
+      do {
+        _ = try await client.startRelay()
+        logger.notice("agent relay backend relay start forwarded")
+      } catch {
+        logger.error(
+          """
+          agent relay backend relay start failed \
+          details=\(String(describing: error), privacy: .public) recovery=keep-state
           """
         )
       }
@@ -156,10 +170,10 @@
       }
     }
 
-    /// Asks the agent to make a stored config active and start the tunnel with it.
+    /// Asks the agent to mark a stored config active without starting relay.
     func activateConfig(id: UUID) async {
       do {
-        _ = try await client.activateConfig(id: id)
+        _ = try await client.setActiveConfig(id: id)
         logger.notice(
           "agent relay backend config activate forwarded id=\(id.uuidString, privacy: .public)")
       } catch {
@@ -253,7 +267,10 @@
       do {
         var snapshot = try await client.status()
         snapshot.discovery = await discoverySnapshot()
-        return RelayStatusSample(snapshot: snapshot)
+        var sample = RelayStatusSample(snapshot: snapshot)
+        sample.isTunnelInstalled =
+          snapshot.activeConfigID != nil || !(snapshot.configLibrary ?? []).isEmpty
+        return sample
       } catch {
         logger.error(
           """
