@@ -16,11 +16,9 @@ private let logger = CellTunnelLog.logger(category: .app)
 
 private let emptyValuePlaceholder = "(none)"
 private let openLoginItemsTitle = "Open Login Items"
-// The Mac selector subtitle when no iPhone has dialed in, the only new copy the
-// roster introduces; the one-or-more not-selected case reuses the status label.
-private let noPeersAvailableSubtitle = "Waiting for iPhone"
 private let dataSectionTitle = "Data"
 private let currentSpeedSectionTitle = "Current Speed"
+private let connectingStatusLabel = "Connecting"
 private let bytesCountStyle = ByteCountFormatStyle(style: .file, spellsOutZero: false)
 
 // MARK: - ConnectionRow
@@ -70,34 +68,40 @@ enum RelayUITier: Equatable {
 
 // MARK: - RelayStatus
 
-/// The relay status, the single value the whole status screen renders from. The seven
+/// The relay status, the single value the whole status screen renders from. The eight
 /// cases are the canonical states shared by the iPhone and the Mac, a set rather than
-/// a precedence chain. The type owns its UI tier, its label, whether routing is
-/// available, whether the live speed shows, and the offered action, so the views never
-/// infer state from a pile of separate flags. The labels are neutral placeholders, not
-/// final copy, and never use the banned words.
+/// a precedence chain. The type owns its UI tier, its label, whether the live speed
+/// shows, and the offered action, so the views never infer state from a pile of
+/// separate flags. The model is peer-keyed: the relay carries nothing until the peer
+/// link is up, so the peer is the gate and a local interface running flag never drives
+/// the status. The labels are neutral placeholders, not final copy, and never use the
+/// banned words.
 enum RelayStatus: Equatable {
   case error(String)
+  case noActiveConfig
   case noAgent
   case noPeerSelected
   case noPeersFound
   case noTunnelInstalled
-  case passthrough
-  case readyToStartRelay
-  case relayEnabled
+  case readyToRoute
+  case routing
 
   /// Builds the status from named, single-purpose inputs. A failure wins; then the
   /// agent must be present, then a saved tunnel. An established peer link decides the
   /// rest before discovery, since a live link means the screen is connected whether or
-  /// not this side browsed for it: with the link up, routing on is relaying and routing
-  /// off is passthrough. Without a link, no discovered peer is the searching state and a
-  /// discovered-but-unconnected peer is the select state. `isAgentInstalled` is always
-  /// true on the iPhone.
+  /// not this side browsed for it: a connected peer with no active config is the
+  /// choose-a-config state, then routes installed is the routing state and routes
+  /// withdrawn is ready to route. The split is the agent-confirmed routes, never a
+  /// local running flag, so
+  /// the iPhone and the Mac land on the same state for the same reality. Without a
+  /// link, no discovered peer is the searching state and a discovered-but-unconnected
+  /// peer is the select state. `isAgentInstalled` and `isActiveConfigPresent` (mirrored
+  /// from the saved tunnel) are always true on the iPhone.
   init(
     errorMessage: String?,
     isAgentInstalled: Bool,
     isTunnelInstalled: Bool,
-    isRunning: Bool,
+    isActiveConfigPresent: Bool,
     peersFound: Bool,
     isPeerConnected: Bool,
     isRouting: Bool
@@ -108,10 +112,10 @@ enum RelayStatus: Equatable {
       self = .noAgent
     } else if !isTunnelInstalled {
       self = .noTunnelInstalled
-    } else if isPeerConnected, isRunning {
-      self = isRouting ? .relayEnabled : .passthrough
+    } else if isPeerConnected, !isActiveConfigPresent {
+      self = .noActiveConfig
     } else if isPeerConnected {
-      self = .readyToStartRelay
+      self = isRouting ? .routing : .readyToRoute
     } else if !peersFound {
       self = .noPeersFound
     } else {
@@ -125,8 +129,8 @@ enum RelayStatus: Equatable {
     switch self {
     case .noAgent, .noTunnelInstalled:
       return .full
-    case .error, .noPeerSelected, .noPeersFound, .readyToStartRelay, .passthrough,
-      .relayEnabled:
+    case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
+      .routing:
       return .reduced
     }
   }
@@ -139,40 +143,28 @@ enum RelayStatus: Equatable {
       return "Error"
     case .noAgent:
       return "Agent not installed"
+    case .noActiveConfig:
+      return "No config selected"
     case .noPeerSelected:
       return "No peer selected"
     case .noPeersFound:
       return "Searching for peers"
     case .noTunnelInstalled:
       return "Tunnel not installed"
-    case .readyToStartRelay:
-      return "Ready to start relay"
-    case .passthrough:
-      return "Passthrough"
-    case .relayEnabled:
-      return "Relay on"
+    case .readyToRoute:
+      return "Ready to route traffic"
+    case .routing:
+      return "Routing traffic"
     }
   }
 
-  /// Whether the routing switch is usable. Only the two established-link states let
-  /// the user choose passthrough versus relaying; the rest disable the switch.
-  var allowsRouting: Bool {
-    switch self {
-    case .passthrough, .relayEnabled:
-      return true
-    case .error, .noAgent, .noPeerSelected, .noPeersFound, .noTunnelInstalled,
-      .readyToStartRelay:
-      return false
-    }
-  }
-
-  /// Whether the live `Current Speed` section shows, only while relaying.
+  /// Whether the live `Current Speed` section shows, only while routing.
   var showsSpeed: Bool {
-    self == .relayEnabled
+    self == .routing
   }
 
-  /// The optional offered action for the current state. Passthrough and relaying
-  /// offer no action beyond the routing switch itself.
+  /// The optional offered action for the current state. The ready-to-route and
+  /// routing states offer no action beyond the routing switch itself.
   var action: RelayHeroAction? {
     switch self {
     case .error:
@@ -183,7 +175,7 @@ enum RelayStatus: Equatable {
       return .installTunnel
     case .noPeerSelected:
       return .selectPeer
-    case .noPeersFound, .readyToStartRelay, .passthrough, .relayEnabled:
+    case .noActiveConfig, .noPeersFound, .readyToRoute, .routing:
       return nil
     }
   }
@@ -252,17 +244,27 @@ struct RelayScreenModel {
   /// The relay status, built from the controller's published signals through named,
   /// single-purpose inputs. The relay can carry traffic only with the peer, so the
   /// peer is the gate; the local interface flag (`isRunning`) is not an input. Both
-  /// screens read `status.label`, `status.allowsRouting`, and `status.showsSpeed`.
+  /// screens read `statusLabel` and `status.showsSpeed`.
   var status: RelayStatus {
     RelayStatus(
       errorMessage: controller.lastError,
       isAgentInstalled: controller.isAgentInstalled,
       isTunnelInstalled: controller.isTunnelInstalled,
-      isRunning: controller.isRunning,
+      isActiveConfigPresent: controller.hasActiveConfig,
       peersFound: peersAvailable,
       isPeerConnected: controller.connectedPeerName != nil,
       isRouting: controller.routeState == .installed
     )
+  }
+
+  /// The status word the screens show, the state's label except while a turn-on
+  /// request is in flight, when it reads `Connecting` so the switch and the word
+  /// agree during the relay connect.
+  var statusLabel: String {
+    if controller.routeControl.isConnecting {
+      return connectingStatusLabel
+    }
+    return status.label
   }
 
   /// Whether a peer is available to connect to, the `peersFound` input. The Mac reads
@@ -287,11 +289,18 @@ struct RelayScreenModel {
     status.uiTier
   }
 
-  /// Whether the routing switch shows at all. The switch appears only in a routeable
-  /// state, so it is absent rather than disabled when no link can carry traffic, and
-  /// the status word reports the state on its own.
-  var showsToggle: Bool {
-    status.allowsRouting
+  /// How the single Route traffic switch presents: hidden when no peer can carry
+  /// traffic, disabled with a choose-a-config hint when a peer is connected but no
+  /// config is active, enabled when the switch is live. Derived once on the controller
+  /// from the live relay session, so the iPhone and the Mac render it the same way.
+  var routeControl: RouteControl {
+    controller.routeControl
+  }
+
+  /// Whether a turn-on request is waiting for the relay to come up, so the enabled
+  /// switch shows a spinner and the status word reads `Connecting`.
+  var isConnecting: Bool {
+    controller.routeControl.isConnecting
   }
 
   /// The `Route traffic` switch binding: it reads the routing state and writes the
@@ -306,21 +315,10 @@ struct RelayScreenModel {
     )
   }
 
-  /// Whether a routing request is awaiting the agent's confirmation, so the screen
-  /// shows a spinner beside the switch while the real `routeState` catches up.
-  var isRouteRequestPending: Bool {
-    controller.isRouteRequestPending
-  }
-
   /// Brings the relay session up, the action behind `Retry`.
   func startSession() {
     logger.notice("relay screen start requested")
     Task { await controller.start() }
-  }
-
-  func startRelay() {
-    logger.notice("relay screen start relay requested")
-    Task { await controller.startRelay() }
   }
 
   // MARK: - Action
@@ -372,16 +370,17 @@ struct RelayScreenModel {
   }
 
   /// The Mac selector's subtitle, from the state matrix over (a peer selected or not)
-  /// and the roster count. None selected with no peers reads the new
-  /// `No peers available`; none selected with one or more reuses the existing
-  /// `No peer selected`; a selected peer leaves the subtitle to the screen's own
-  /// status word, so the tile shows only the checked roster.
+  /// and the roster count. None selected with no peers reuses the `Searching for peers`
+  /// label; none selected with one or more reuses the `No peer selected` label; a
+  /// selected peer leaves the subtitle to the screen's own status word, so the tile
+  /// shows only the checked roster. Both strings come from `RelayStatus`, so the
+  /// selector copy cannot drift from the status chokepoint.
   var rosterSubtitle: String? {
     if connectedPeers.contains(where: \.isSelected) {
       return nil
     }
     if connectedPeers.isEmpty {
-      return noPeersAvailableSubtitle
+      return RelayStatus.noPeersFound.label
     }
     return RelayStatus.noPeerSelected.label
   }
@@ -393,24 +392,23 @@ struct RelayScreenModel {
     Task { await controller.selectEgressPeer(id: id) }
   }
 
-  var canStartRelay: Bool {
-    controller.activeConfigID != nil
-      && controller.connectedPeers.contains(where: \.isSelected)
-      && !controller.isRunning
-  }
-
-  var showsStartRelayButton: Bool {
-    controller.usesEgressRoster && controller.isTunnelInstalled && !controller.isRunning
-  }
-
   // MARK: - Sections
 
-  /// Every section the status screen renders, in order: the lifetime `Data`, the
-  /// live `Current Speed` while routing, then the connection sections that have a
-  /// value. Both the iPhone list and the Mac dashboard render this one list, so the
-  /// section set and ordering live in one place.
+  /// Whether the traffic stats sections show, only while routing, so the
+  /// ready-to-route state shows no counters and no traffic figures.
+  private var showsStats: Bool {
+    status == .routing
+  }
+
+  /// Every section the status screen renders, in order: the lifetime `Data` and the
+  /// live `Current Speed`, both only while routing, then the connection sections that
+  /// have a value. Both the iPhone list and the Mac dashboard render this one list,
+  /// so the section set and ordering live in one place.
   var sections: [ConnectionSection] {
-    var result = [dataSection]
+    var result: [ConnectionSection] = []
+    if showsStats {
+      result.append(dataSection)
+    }
     if let currentSpeedSection {
       result.append(currentSpeedSection)
     }
@@ -427,7 +425,10 @@ struct RelayScreenModel {
   /// available interfaces, so when those are unknown it has nothing to show and is
   /// dropped rather than rendered as a lone skeleton tile, matching the iPhone.
   var macSections: [ConnectionSection] {
-    var result = [dataSection]
+    var result: [ConnectionSection] = []
+    if showsStats {
+      result.append(dataSection)
+    }
     if let currentSpeedSection {
       result.append(currentSpeedSection)
     }
@@ -435,7 +436,7 @@ struct RelayScreenModel {
     if hasData(connectionSection) {
       connection.append(connectionSection)
     }
-    connection.append(relaySection)
+    connection.append(transportSection)
     result.append(contentsOf: connection.map(macRows))
     return result
   }
@@ -497,7 +498,7 @@ struct RelayScreenModel {
   /// as having data when any non-qualifier row holds a value other than the
   /// placeholder, and a qualifier such as the protocol stays whenever its section does.
   var connectionSections: [ConnectionSection] {
-    [deviceSection, peerSection, connectionSection, relaySection]
+    [deviceSection, peerSection, connectionSection, transportSection]
       .filter(hasData)
       .map(visibleRows)
   }
@@ -569,9 +570,9 @@ struct RelayScreenModel {
     ConnectionSection(title: "Connection", rows: [availableInterfacesRow])
   }
 
-  // The WireGuard relay: the protocol, the configured endpoint hostname, and the
-  // server's addresses resolved from that hostname.
-  private var relaySection: ConnectionSection {
+  // The transport to the WireGuard server: the protocol, the configured endpoint
+  // hostname, and the server's addresses resolved from that hostname.
+  private var transportSection: ConnectionSection {
     var rows = [
       ConnectionRow(
         label: "Protocol",
@@ -581,7 +582,7 @@ struct RelayScreenModel {
       ConnectionRow(label: "Host", value: nonEmptyOrPlaceholder(controller.relayHost)),
     ]
     rows.append(addressRow(prefix: "", relayServerAddresses))
-    return ConnectionSection(title: "Relay", rows: rows)
+    return ConnectionSection(title: "Transport", rows: rows)
   }
 
   // The egress interface's addresses as one row, every IPv6 then every IPv4 address

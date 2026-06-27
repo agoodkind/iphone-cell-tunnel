@@ -14,10 +14,16 @@ import Observation
 private let logger = CellTunnelLog.logger(category: .relay)
 private let pollIntervalSeconds: Double = 1
 private let relayStoppedStateText = "Stopped"
-// Status polls an unconfirmed routing request waits for the agent to apply before
-// the switch reverts to the real state, so a request that never lands cannot leave
-// the spinner spinning forever. At the 1s poll cadence this is an 8s budget.
+// Status polls an unconfirmed routing-off request waits for the agent to apply
+// before the switch reverts to the real state, so a request that never lands cannot
+// leave the spinner spinning forever. Turning off stops the relay at once, so the
+// off budget is short; at the 1s poll cadence this is an 8s budget.
 private let routeIntentTimeoutPolls = 8
+// Turning on starts a relay session whose connect can take up to the session connect
+// timeout (~30s), so the on budget is long enough to cover the connect and the
+// spinner does not snap back to off mid-connect; at the 1s poll cadence this is a 32s
+// budget.
+private let routeConnectTimeoutPolls = 32
 
 // MARK: - RelayStatusSample
 
@@ -34,9 +40,12 @@ struct RelayStatusSample: Sendable {
   /// Whether the program routes are installed, which the screen reads as routing
   /// (installed) versus passthrough (not installed).
   var routeState: TunnelRouteState
-  /// The agent's persisted routing intent, the value behind the Route traffic
-  /// switch, or `nil` from a producer that predates the field.
-  var routingIntent: TunnelRoutingIntent?
+  /// The agent's routing intent, the shared value behind the Route traffic switch that
+  /// both screens mirror, so the switch reads the same on the iPhone and the Mac
+  /// regardless of the local interface running flag. A producer that predates the field
+  /// sends nil, so the sample falls back to `routeState` (installed reads as on), and a
+  /// mixed-version agent still shows the switch correctly.
+  var routingIntentEnabled: Bool
   /// Whether a WireGuard peer is configured, which gates the connected states.
   var peerState: TunnelPeerState
   /// Whether a tunnel profile is saved, the gate between the install-tunnel setup
@@ -95,7 +104,10 @@ struct RelayStatusSample: Sendable {
     counters = snapshot.phoneCounters ?? snapshot.macCounters ?? TunnelCounters()
     lastError = snapshot.lastError
     routeState = snapshot.routeState
-    routingIntent = snapshot.routingIntentEnabled
+    // An older agent omits the intent field; fall back to whether routes are installed
+    // so a mixed-version agent still reads the switch correctly.
+    let routesInstalledFallback = snapshot.routeState == .installed
+    routingIntentEnabled = snapshot.routingIntentEnabled?.isEnabled ?? routesInstalledFallback
     peerState = snapshot.peerState
     isTunnelInstalled = snapshot.peerState != .notSelected
     discoveredPeers = snapshot.discovery.services
@@ -128,13 +140,9 @@ struct RelayStatusSample: Sendable {
 @MainActor
 protocol RelayControlBackend {
   /// Brings the platform relay session up. The iPhone creates and starts its
-  /// tunnel. The Mac starts the control pairing path and leaves relay start to the
-  /// explicit Start Relay action.
+  /// tunnel. The Mac starts the control pairing path so the iPhone can appear in
+  /// the peer roster; turning the Route traffic switch on then starts the relay.
   func start() async
-
-  /// Starts relay transport using the backend's current selected peer and active
-  /// configuration. The Mac uses this for the explicit Start Relay action.
-  func startRelay() async
 
   /// Reads the saved tunnel state fresh from the platform without saving anything;
   /// true when a usable tunnel configuration exists. The iPhone reads
@@ -246,10 +254,10 @@ final class RelayController {
   var lastError: String?
   var relayStateDescription = relayStoppedStateText
   var routeState: TunnelRouteState = .notInstalled
-  /// The agent's persisted routing intent mirrored from the snapshot, the value
-  /// the Route traffic switch shows. `nil` until a producer reports it, which
-  /// falls back to the route-state reading for an old agent.
-  var routingIntent: TunnelRoutingIntent?
+  /// The agent's routing intent, the shared value behind the Route traffic switch. Both
+  /// the iPhone and the Mac mirror it from the agent, so the switch reads the same on
+  /// each rather than from a local running flag that differs per platform.
+  var routingIntentEnabled = false
   var peerState: TunnelPeerState = .notSelected
   /// The routing value the user last requested, held while a request is pending so
   /// the switch shows the requested state until the agent's real `routeState`
@@ -459,7 +467,7 @@ final class RelayController {
     assign(\.lastError, sample.lastError)
     assign(\.relayStateDescription, sample.relayStateDescription)
     assign(\.routeState, sample.routeState)
-    assign(\.routingIntent, sample.routingIntent)
+    assign(\.routingIntentEnabled, sample.routingIntentEnabled)
     reconcileRouteIntent()
     assign(\.peerState, sample.peerState)
     assign(\.isTunnelInstalled, sample.isTunnelInstalled)
@@ -509,23 +517,40 @@ final class RelayController {
 
   // MARK: - Routing control
 
-  /// The routing value the switch shows: the pending request while one is in
-  /// flight, otherwise the agent's mirrored intent. The switch represents the
-  /// user's choice, not the live route state, so a link blip does not flip it;
-  /// the status word reports the live state separately. The route-state reading
-  /// is the fallback for an old agent that never reports intent.
-  var displayedRouting: Bool {
-    if isRouteRequestPending {
-      return requestedRouting
+  /// Whether an active config exists to relay through, the gate that decides a
+  /// connected peer can route at all. The Mac reads the agent's active config id;
+  /// the iPhone, whose tunnel carries its own config, mirrors its saved-tunnel flag.
+  var hasActiveConfig: Bool {
+    if usesEgressRoster {
+      return activeConfigID != nil
     }
-    guard let routingIntent else {
-      return routeState == .installed
-    }
-    return routingIntent.isEnabled
+    return isTunnelInstalled
   }
 
-  /// Whether a routing request is awaiting the agent's confirmation, so the screen
-  /// shows a spinner beside the switch.
+  /// The derived state of the single Route traffic switch, computed once from the
+  /// agent's shared routing intent so both screens render the switch the same way and
+  /// the rule stays unit tested in `RouteControl`.
+  var routeControl: RouteControl {
+    RouteControl(
+      isPeerConnected: connectedPeerName != nil,
+      isRoutingEngaged: routingIntentEnabled,
+      hasActiveConfig: hasActiveConfig,
+      isRouting: routeState == .installed,
+      requestedRouting: requestedRouting,
+      isRequestPending: isRouteRequestPending
+    )
+  }
+
+  /// The routing value the switch shows, read straight from the derived control. It
+  /// reads on while a turn-on request is pending or the agent's routing intent is
+  /// engaged, so the iPhone and the Mac show the same switch and a link blip does not
+  /// flip it; the status word reports the live state separately.
+  var displayedRouting: Bool {
+    routeControl.isOn
+  }
+
+  /// Whether a routing request is awaiting the agent's confirmation, so the
+  /// reconcile loop counts down and the derived control can report connecting.
   var isRouteRequestPending: Bool {
     routeIntentPollsRemaining > 0
   }
@@ -534,20 +559,19 @@ final class RelayController {
     logger.notice(
       "relay controller route traffic requested enabled=\(enabled, privacy: .public)")
     requestedRouting = enabled
-    routeIntentPollsRemaining = routeIntentTimeoutPolls
+    routeIntentPollsRemaining = enabled ? routeConnectTimeoutPolls : routeIntentTimeoutPolls
     await backend.setRouting(enabled: enabled)
   }
 
-  // Clears the optimistic pending request once the agent's mirrored intent (or
-  // the route state, for an old agent) confirms it, or after the poll budget
-  // elapses, so the switch follows the confirmed value and a request the agent
-  // never applies snaps back rather than spinning forever.
+  // Clears the optimistic pending request once the agent's routing intent confirms the
+  // request, or after the poll budget elapses, so the switch follows the confirmed
+  // value and a request the agent never applies snaps back rather than spinning
+  // forever.
   private func reconcileRouteIntent() {
     guard isRouteRequestPending else {
       return
     }
-    let confirmed = routingIntent?.isEnabled ?? (routeState == .installed)
-    if confirmed == requestedRouting {
+    if routingIntentEnabled == requestedRouting {
       routeIntentPollsRemaining = 0
       return
     }
@@ -611,18 +635,6 @@ final class RelayController {
     Task { await backend.saveConfigEdit(id: id, text: text) }
   }
 
-  /// Renames a stored configuration.
-  func renameConfig(id: UUID, name: String) {
-    logger.notice("relay controller rename config requested")
-    Task { await backend.renameConfig(id: id, name: name) }
-  }
-
-  /// Deletes a stored configuration.
-  func deleteConfig(id: UUID) {
-    logger.notice("relay controller delete config requested")
-    Task { await backend.deleteConfig(id: id) }
-  }
-
   /// Spaces polls without `Task.sleep` by resuming off a dispatch queue after the
   /// configured interval.
   private static func delayBetweenPolls() async {
@@ -634,22 +646,6 @@ final class RelayController {
     }
   }
 
-}
-
-// MARK: - Relay start
-
-extension RelayController {
-  func startRelay() async {
-    logger.notice("relay controller start relay requested")
-    await backend.startRelay()
-    logger.notice("relay controller start relay submitted")
-    if pollTask == nil {
-      logger.notice("relay controller start relay starting status poll")
-      startPolling()
-    } else {
-      logger.notice("relay controller start relay left status poll running")
-    }
-  }
 }
 
 // MARK: - Peer selection
@@ -684,5 +680,21 @@ extension RelayController {
       await self?.backend.selectPeer(id: first.id)
       self?.autoSelectInFlight = false
     }
+  }
+}
+
+// MARK: - Config operations
+
+extension RelayController {
+  /// Renames a stored configuration.
+  func renameConfig(id: UUID, name: String) {
+    logger.notice("relay controller rename config requested")
+    Task { await backend.renameConfig(id: id, name: name) }
+  }
+
+  /// Deletes a stored configuration.
+  func deleteConfig(id: UUID) {
+    logger.notice("relay controller delete config requested")
+    Task { await backend.deleteConfig(id: id) }
   }
 }

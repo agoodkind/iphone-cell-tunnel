@@ -13,8 +13,7 @@
   // MARK: - Constants
 
   private let screenTitle = "Cell Tunnel"
-  private let routeToggleTitle = "Route Traffic"
-  private let startRelayTitle = "Start Relay"
+  private let routeToggleTitle = "Route traffic"
   private let dataSectionTitle = "Data"
   private let currentSpeedSectionTitle = "Current Speed"
   private let tileMinimumWidth: CGFloat = 300
@@ -68,18 +67,23 @@
 
     // MARK: - Header
 
-    // The title and live status on the left, the routing switch on the right. The
-    // switch appears only in a routeable state, so it is absent rather than disabled
-    // when no link can carry traffic; the error message and the Set Up or Retry
-    // action appear under the status when the status calls for them.
+    // The title and live status on the left, the single Route traffic switch on the
+    // right. The switch is hidden with no peer, disabled with a choose-a-config hint
+    // when a peer is connected but no config is active, and live otherwise; the error
+    // message and the Retry action appear under the status when the status calls for
+    // them.
     private var header: some View {
       HStack(alignment: .firstTextBaseline) {
         VStack(alignment: .leading, spacing: headerStackSpacing) {
           Text(screenTitle)
             .font(.largeTitle.bold())
-          Text(model.status.label)
-            .font(.title3)
-            .foregroundStyle(.secondary)
+          // In the no-peer state the Peers tile carries "Searching for peers", so the
+          // Mac header omits the status word to avoid showing the phrase twice.
+          if model.status != .noPeersFound {
+            Text(model.statusLabel)
+              .font(.title3)
+              .foregroundStyle(.secondary)
+          }
           if let message = model.errorMessage {
             Text(message)
               .font(.callout)
@@ -91,28 +95,43 @@
             }
             .buttonStyle(.borderedProminent)
             .padding(.top, actionTopPadding)
-          } else if model.showsStartRelayButton {
-            Button(startRelayTitle) {
-              model.startRelay()
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(!model.canStartRelay)
-            .padding(.top, actionTopPadding)
           }
         }
         Spacer(minLength: gridSpacing)
-        if model.showsToggle {
-          HStack(spacing: routeSpinnerSpacing) {
-            Toggle(routeToggleTitle, isOn: model.routeTrafficBinding)
-              .toggleStyle(.switch)
-              .fixedSize()
-            if model.isRouteRequestPending {
-              ProgressView()
-                .controlSize(.small)
-            }
+        routeControlView
+      }
+    }
+
+    // The Route traffic switch driven by the derived presentation: absent when
+    // hidden, a disabled switch with the hint beside it when a config must be chosen,
+    // and a live switch with a connect spinner when enabled.
+    @ViewBuilder private var routeControlView: some View {
+      switch model.routeControl.presentation {
+      case .hidden:
+        EmptyView()
+      case .disabled(let hint):
+        HStack(spacing: routeSpinnerSpacing) {
+          Text(hint)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+          routeToggle
+            .disabled(true)
+        }
+      case .enabled:
+        HStack(spacing: routeSpinnerSpacing) {
+          routeToggle
+          if model.isConnecting {
+            ProgressView()
+              .controlSize(.small)
           }
         }
       }
+    }
+
+    private var routeToggle: some View {
+      Toggle(routeToggleTitle, isOn: model.routeTrafficBinding)
+        .toggleStyle(.switch)
+        .fixedSize()
     }
 
     // MARK: - Masonry

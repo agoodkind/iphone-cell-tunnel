@@ -86,11 +86,6 @@
       }
     }
 
-    func startRelay() async {
-      logger.notice("phone relay backend start relay requested")
-      await start()
-    }
-
     // MARK: - Sampling
 
     func sample() async -> RelayStatusSample? {

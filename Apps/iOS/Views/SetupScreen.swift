@@ -145,8 +145,8 @@ struct SetupScreen: View {
       return "Install the background agent"
     case .noTunnelInstalled:
       return "Install the tunnel"
-    case .error, .noPeerSelected, .noPeersFound, .passthrough, .readyToStartRelay,
-      .relayEnabled:
+    case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
+      .routing:
       return model.status.label
     }
   }
@@ -154,12 +154,12 @@ struct SetupScreen: View {
   private var subtitleText: String {
     switch model.status {
     case .noAgent:
-      return "The agent runs in the background so the relay keeps working "
+      return "The agent runs in the background so it keeps working "
         + "after the app closes."
     case .noTunnelInstalled:
-      return "Import a tunnel configuration to set up the relay."
-    case .error, .noPeerSelected, .noPeersFound, .passthrough, .readyToStartRelay,
-      .relayEnabled:
+      return "Import a tunnel configuration to get started."
+    case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
+      .routing:
       return ""
     }
   }

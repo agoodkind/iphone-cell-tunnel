@@ -30,12 +30,15 @@ private let relayProtocolName = "WireGuard"
 private struct RelayStatusState {
   var running = false
   var lastError: String?
-  /// The peer device name shown as `Connected to`, the name of the agent's
-  /// control service the phone connected to. It is reported only while a live
-  /// data peer is up, so the screen shows it in the connected states.
+  /// The peer name while the data plane carries traffic, set on the live-peer change
+  /// and cleared when it goes idle. The snapshot's `connectedPeerName` is populated from
+  /// `controlPeerName` below for display, so this field tracks data-plane liveness
+  /// rather than the displayed peer.
   var connectedPeerName: String?
-  /// The agent's control-service name (the Mac hostname), captured when the
-  /// control link connects, and shown as the displayed peer name.
+  /// The agent's control-service name (the Mac hostname), captured when the control
+  /// link connects and cleared when it drops. This is the displayed peer name: the
+  /// status is peer-keyed on the control link, so the screen reads connected whenever
+  /// the link is up, in the ready-to-route state as well as while routing.
   var controlPeerName: String?
   /// Whether the data plane has a live peer link, from the forwarder.
   var hasLivePeer = false
@@ -236,7 +239,12 @@ public final class RelayRuntime: @unchecked Sendable {
       discovery: discoverySnapshot(from: state),
       phoneCounters: forwarder.metrics.snapshot(),
       cellularPath: cellular.snapshot,
-      connectedPeerName: state.connectedPeerName,
+      // Peer-keyed: the connected peer is the control link's peer, set whenever the
+      // link is up, so a paired iPhone reads connected in the ready-to-route state
+      // rather than only while the data plane carries traffic. Gated on running so a
+      // snapshot taken right after stop(), before the link-drop callback clears
+      // controlPeerName, does not surface a stale peer while the runtime is torn down.
+      connectedPeerName: state.running ? (state.controlPeerName ?? state.connectedPeerName) : nil,
       relayState: state.relayState,
       localLinkInterfaceName: state.localLinkInterfaceName,
       localLinkClass: state.localLinkClass,
