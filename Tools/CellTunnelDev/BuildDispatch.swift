@@ -28,22 +28,34 @@ enum BuildTarget: String, CaseIterable {
 let buildTargetUsage = BuildTarget.allCases.map(\.rawValue).joined(separator: "|")
 
 func buildProject(target: BuildTarget, configuration: String) throws {
-  // Two authorized paths to the same compile. Under `make` (or the deadcode coverage
-  // sub-build that `make check` shells), a live swift-mk gate ancestor authorizes
-  // Toolchain.build through GateProof, so run the existing prologue-then-compile flow
-  // unchanged. With no such ancestor (a direct `cell-tunnel-dev build`), run swift-mk's
-  // hard lint gate in-process through GatedBuild.run and compile with the minted
-  // receipt. Routing on the gate probe keeps the make path byte-identical and stops
-  // the in-make coverage sub-build from re-entering the gate.
+  try buildProjects(targets: [target], configuration: configuration)
+}
+
+/// Build one or more targets. A decoupled multi-target build, the way
+/// `clean-reinstall` builds the Mac agent and the iPhone app, runs every target's
+/// compile under a single `GatedBuild.run` so one hard gate authorizes them all.
+///
+/// Two authorized paths to the same compile. Under `make` (or the deadcode coverage
+/// sub-build that `make check` shells), a live swift-mk gate ancestor authorizes
+/// Toolchain.build through GateProof, so run the existing prologue-then-compile flow
+/// unchanged. With no such ancestor (a direct `cell-tunnel-dev build`), run swift-mk's
+/// hard lint gate in-process through GatedBuild.run and compile with the minted
+/// receipt. Routing on the gate probe keeps the make path byte-identical and stops
+/// the in-make coverage sub-build from re-entering the gate.
+func buildProjects(targets: [BuildTarget], configuration: String) throws {
   if GateProof.isCurrentlyGated() {
     try runBuildPrologue()
     try buildCLI()
-    try buildTargets(target: target, configuration: configuration, receipt: nil)
+    for target in targets {
+      try buildTargets(target: target, configuration: configuration, receipt: nil)
+    }
   } else {
-    try buildDecoupled(target: target, configuration: configuration)
+    try buildDecoupled(targets: targets, configuration: configuration)
   }
 
-  try printBuildArtifactFingerprints(target: target, configuration: configuration)
+  for target in targets {
+    try printBuildArtifactFingerprints(target: target, configuration: configuration)
+  }
 }
 
 // MARK: - Decoupled gated build
@@ -53,10 +65,11 @@ func buildProject(target: BuildTarget, configuration: String) throws {
 /// log-audit steps the make prologue runs become gate hooks so they run inside the
 /// gate, and the WireGuard Go bridge builds inside the compile closure, after the
 /// gate passes and before the xcodebuild graph that links it.
-private func buildDecoupled(target: BuildTarget, configuration: String) throws {
+private func buildDecoupled(targets: [BuildTarget], configuration: String) throws {
+  let names = targets.map(\.rawValue).joined(separator: ",")
   buildDispatchLogger.notice(
     """
-    decoupled gated build target=\(target.rawValue, privacy: .public) \
+    decoupled gated build targets=\(names, privacy: .public) \
     configuration=\(configuration, privacy: .public)
     """
   )
@@ -65,7 +78,7 @@ private func buildDecoupled(target: BuildTarget, configuration: String) throws {
   // layer exports it, so the decoupled path sets the same path the build writes to.
   setenv("SWIFT_MK_DERIVED_DATA", derivedDataDirectory.path, 1)
   let request = GatedBuild.Request(
-    entry: "cell-tunnel-dev build \(target.rawValue)",
+    entry: "cell-tunnel-dev build \(names)",
     signing: GatedBuild.SigningOptions(localXcconfigPaths: ["Config/local.xcconfig"]),
     hooks: GatedBuild.Hooks(
       generate: decoupledGenerateHook,
@@ -75,12 +88,12 @@ private func buildDecoupled(target: BuildTarget, configuration: String) throws {
       logAudit: decoupledLogAuditHook
     )
   ) { receipt in
-    decoupledCompile(target: target, configuration: configuration, receipt: receipt)
+    decoupledCompile(targets: targets, configuration: configuration, receipt: receipt)
   }
   let status = GatedBuild.run(request)
   guard status == 0 else {
     throw ToolError.failure(
-      "gated build failed for target \(target.rawValue) status \(status)")
+      "gated build failed for targets \(names) status \(status)")
   }
 }
 
@@ -189,15 +202,17 @@ private func decoupledDeadcodeCoverage(
 }
 
 /// The gate-authorized compile: build the WireGuard Go bridge, then compile every
-/// scheme for the target with the minted receipt. The bridge is rebuilt here because
+/// scheme for every target with the minted receipt. The bridge is rebuilt here because
 /// `.build/vendor` does not survive from the gate's coverage phase, and WireGuardKitGo
 /// links `libwg-go.a` from it. Returns the first nonzero status.
 private func decoupledCompile(
-  target: BuildTarget, configuration: String, receipt: GateReceipt
+  targets: [BuildTarget], configuration: String, receipt: GateReceipt
 ) -> Int32 {
   do {
     try buildWireGuardGoBridge()
-    try buildTargets(target: target, configuration: configuration, receipt: receipt)
+    for target in targets {
+      try buildTargets(target: target, configuration: configuration, receipt: receipt)
+    }
     return 0
   } catch {
     buildDispatchLogger.error(
