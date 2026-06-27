@@ -103,7 +103,8 @@ func buildScheme(
   platformName: String,
   action: String = "build",
   xcodebuildOptions: [String] = [],
-  buildSettings: [String: String] = [:]
+  buildSettings: [String: String] = [:],
+  receipt: GateReceipt? = nil
 ) throws {
   // swift-mk owns build-time signing. This dev tool builds through Toolchain
   // without the make prelude, so apply the same XCODE_XCCONFIG_FILE override here.
@@ -140,9 +141,16 @@ func buildScheme(
     extraSettings: settings,
     extraArguments: xcodebuildOptions + xcodeBuildCacheArguments(.enabled)
   )
+  // A receipt routes the product compile through the capability path, which a
+  // decoupled build with no make ancestor uses: GatedBuild.run mints the receipt
+  // only after the hard gate passes, so Toolchain.build(_:receipt:) skips the
+  // GateProof ancestry check the make path keeps. Without a receipt the compile
+  // takes the GateProof make path, refused unless a live gate ancestor exists.
   let status: Int32
   if action == "analyze" {
     status = Toolchain.analyze(request)
+  } else if let receipt {
+    status = Toolchain.build(request, receipt: receipt)
   } else {
     status = Toolchain.build(request)
   }
@@ -154,7 +162,8 @@ func buildScheme(
 func buildPhoneDevice(configuration: String) throws {
   try buildPhoneDevice(
     configuration: configuration,
-    shouldGenerateProject: true
+    shouldGenerateProject: true,
+    receipt: nil
   )
 }
 
@@ -168,7 +177,8 @@ func buildPhoneDevice(configuration: String) throws {
 // same secret names.
 func buildPhoneDevice(
   configuration: String,
-  shouldGenerateProject: Bool
+  shouldGenerateProject: Bool,
+  receipt: GateReceipt? = nil
 ) throws {
   logger.notice(
     "building phone device configuration=\(configuration, privacy: .public)")
@@ -181,7 +191,8 @@ func buildPhoneDevice(
     destination: ProcessInfo.processInfo.environment["IOS_DEVICE_DESTINATION"]
       ?? "generic/platform=iOS",
     platformName: iOSDevicePlatformName,
-    xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments()
+    xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments(),
+    receipt: receipt
   )
 }
 
