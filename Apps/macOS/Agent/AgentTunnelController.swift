@@ -98,14 +98,35 @@ actor AgentTunnelController {
     self.relayBridge = relayBridge
     self.relayBrowser = relayBrowser
     self.configStore = configStore
-    self.routingEnabled = RoutingIntentStore.load()
   }
 
-  /// The user's routing intent, loaded from `RoutingIntentStore` at init and
-  /// written through on every change, so it survives the agent's idle exit and a
-  /// kickstart. The agent installs the program routes only while this is true and
-  /// a phone link is up. The default is on: a fresh install routes without a tap.
-  var routingEnabled: Bool
+  /// Whether routing is on, which now equals "is the relay session active": turning
+  /// routing on starts the relay session and turning it off tears it down. This is a
+  /// live in-memory value with no persistence and no default, so it resets to off on
+  /// agent start. The agent installs the program routes only while this is true and a
+  /// phone link is up.
+  var routingEnabled = false
+
+  /// The message from a detached relay start that failed, surfaced into the status
+  /// snapshot's `lastError` so the app reverts the Route traffic switch to off and
+  /// shows the error rather than holding a stuck connecting state. Cleared on the
+  /// next enable, on disable, and on a successful start.
+  var lastStartError: String?
+
+  /// Whether the relay bridge is actually hosted, set true once the selected peer is
+  /// armed and the bridge is started and cleared when the relay stops. Enabling routing
+  /// reconciles routes against this rather than the macOS VPN session, which can read
+  /// connected after the agent and bridge are gone, so the switch never shows on while
+  /// nothing is relayed.
+  var relayHosted = false
+
+  /// Bumped on every routing enable and disable so an in-flight detached relay start
+  /// can tell that a later switch toggle superseded it.
+  var routingGeneration = 0
+
+  /// The in-flight detached relay start. The next start awaits it so two starts never
+  /// run concurrently, and a superseded start bows out on the generation check.
+  var relayStartTask: Task<Void, Never>?
 
   /// Whether a phone relay link is up, tracked from the relay bridge so a routing
   /// change installs or withdraws routes against the live link state.

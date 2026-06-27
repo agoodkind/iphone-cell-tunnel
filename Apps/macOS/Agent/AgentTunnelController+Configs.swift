@@ -49,14 +49,15 @@ extension AgentTunnelController {
     return await handleStatus()
   }
 
-  /// Makes a stored config active and starts the tunnel with it. The id is known, so
-  /// the start stamps the profile with it directly, with no content match.
+  /// Makes a stored config active without starting the tunnel. The relay session now
+  /// starts only through the routing-enable path, so activation just records the
+  /// selection and returns the refreshed status.
   func handleActivateConfig(id: UUID) async -> AgentControlResponse {
-    guard let text = configStore.text(forID: id) else {
+    guard configStore.text(forID: id) != nil else {
       return failure(errorCode: .internal, message: "no config with id \(id.uuidString)")
     }
     configStore.setActive(id: id)
-    return await startTunnel(configText: text, configID: id)
+    return await handleStatus()
   }
 
   /// Saves edited config text and reloads the tunnel in place when that config is
@@ -103,7 +104,9 @@ extension AgentTunnelController {
   /// nothing keeps running outside the library.
   func handleDeleteConfig(id: UUID) async -> AgentControlResponse {
     if configStore.activeID == id {
-      _ = await handleStopTunnel()
+      // Route through the disable path so routing state, the generation, the routes, and
+      // the relay session all clear together, the same as turning the switch off.
+      await disableRouting()
       // The tunnel is stopped and the config is gone, so any prior drift is moot.
       configDriftMessage = nil
     }

@@ -19,7 +19,7 @@ private let selectedEgressDeviceIDKey = "io.goodkind.celltunnel.selectedEgressDe
 /// the extension. The device id survives the control-connection drops the iPhone takes
 /// on every sleep/wake cycle, so the Mac re-binds egress to the same device when it
 /// reconnects rather than losing the choice. This is the "which peer" selection only,
-/// separate from `RoutingIntentStore`, which holds the "relay enabled" choice.
+/// separate from the relay-enabled state, which the agent holds only in memory.
 public enum EgressSelectionStore {
   private static var appGroupDefaults: UserDefaults {
     UserDefaults(suiteName: cellTunnelAppGroupIdentifier) ?? .standard
