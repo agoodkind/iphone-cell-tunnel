@@ -19,8 +19,55 @@ func generateProject() throws {
   guard Toolchain.installDependencies(.tuist) == 0 else {
     throw ToolError.failure("toolchain install failed")
   }
-  try run("make", ["xcconfig-generate-project"])
+  // Under a live gate ancestor keep the make render path unchanged. With no ancestor
+  // (a decoupled build) render the generation templates in-process and run the
+  // generator directly, so the gated build spawns no swift-mk/make subprocess.
+  if GateProof.isCurrentlyGated() {
+    try run("make", ["xcconfig-generate-project"])
+  } else {
+    try renderGeneratedFiles()
+    guard Toolchain.generate(.tuist) == 0 else {
+      throw ToolError.failure("tuist generate failed")
+    }
+  }
   try recordProjectGenerationFingerprint()
+}
+
+/// Render the project-generation templates in-process from the resolved xcconfig
+/// values, the decoupled replacement for `make xcconfig-generate-project`. The render
+/// plans mirror the Makefile XCCONFIG_RENDER_PLANS: every `*.template` under each
+/// templates directory renders, with its `[[KEY]]` tokens substituted, to the
+/// same-named file minus `.template` under the output directory.
+private func renderGeneratedFiles() throws {
+  let values = XcconfigValues.read(paths: [
+    repoRoot.appendingPathComponent("Config/Constants.xcconfig").path,
+    repoRoot.appendingPathComponent("Config/local.xcconfig").path,
+  ])
+  let renderPlans = [
+    ("Templates/Swift", "Sources/CellTunnelCore/Generated"),
+    ("Templates/Plists", "Derived/Generated/CellTunnelAgent"),
+  ]
+  var plans: [GeneratedFiles.Plan] = []
+  for (templatesDirectory, outputDirectory) in renderPlans {
+    let templatesURL = repoRoot.appendingPathComponent(templatesDirectory)
+    let entries = try fileManager.contentsOfDirectory(
+      at: templatesURL, includingPropertiesForKeys: nil)
+    for templateURL in entries where templateURL.pathExtension == "template" {
+      let outputName = templateURL.deletingPathExtension().lastPathComponent
+      let outputURL =
+        repoRoot
+        .appendingPathComponent(outputDirectory)
+        .appendingPathComponent(outputName)
+      plans.append(
+        GeneratedFiles.Plan(
+          templatePath: templateURL.path,
+          outputPath: outputURL.path,
+          values: values))
+    }
+  }
+  guard GeneratedFiles.render(plans) else {
+    throw ToolError.failure("in-process template render failed")
+  }
 }
 
 private let projectGenerationSources: [URL] = [
