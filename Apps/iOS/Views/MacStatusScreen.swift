@@ -14,6 +14,7 @@
 
   private let screenTitle = "Cell Tunnel"
   private let routeToggleTitle = "Route Traffic"
+  private let startRelayTitle = "Start Relay"
   private let dataSectionTitle = "Data"
   private let currentSpeedSectionTitle = "Current Speed"
   private let tileMinimumWidth: CGFloat = 300
@@ -89,6 +90,13 @@
               model.startSession()
             }
             .buttonStyle(.borderedProminent)
+            .padding(.top, actionTopPadding)
+          } else if model.showsStartRelayButton {
+            Button(startRelayTitle) {
+              model.startRelay()
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(!model.canStartRelay)
             .padding(.top, actionTopPadding)
           }
         }

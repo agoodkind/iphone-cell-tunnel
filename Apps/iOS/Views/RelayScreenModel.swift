@@ -18,7 +18,7 @@ private let emptyValuePlaceholder = "(none)"
 private let openLoginItemsTitle = "Open Login Items"
 // The Mac selector subtitle when no iPhone has dialed in, the only new copy the
 // roster introduces; the one-or-more not-selected case reuses the status label.
-private let noPeersAvailableSubtitle = "No peers available"
+private let noPeersAvailableSubtitle = "Waiting for iPhone"
 private let dataSectionTitle = "Data"
 private let currentSpeedSectionTitle = "Current Speed"
 private let bytesCountStyle = ByteCountFormatStyle(style: .file, spellsOutZero: false)
@@ -83,6 +83,7 @@ enum RelayStatus: Equatable {
   case noPeersFound
   case noTunnelInstalled
   case passthrough
+  case readyToStartRelay
   case relayEnabled
 
   /// Builds the status from named, single-purpose inputs. A failure wins; then the
@@ -96,6 +97,7 @@ enum RelayStatus: Equatable {
     errorMessage: String?,
     isAgentInstalled: Bool,
     isTunnelInstalled: Bool,
+    isRunning: Bool,
     peersFound: Bool,
     isPeerConnected: Bool,
     isRouting: Bool
@@ -106,8 +108,10 @@ enum RelayStatus: Equatable {
       self = .noAgent
     } else if !isTunnelInstalled {
       self = .noTunnelInstalled
-    } else if isPeerConnected {
+    } else if isPeerConnected, isRunning {
       self = isRouting ? .relayEnabled : .passthrough
+    } else if isPeerConnected {
+      self = .readyToStartRelay
     } else if !peersFound {
       self = .noPeersFound
     } else {
@@ -121,7 +125,8 @@ enum RelayStatus: Equatable {
     switch self {
     case .noAgent, .noTunnelInstalled:
       return .full
-    case .error, .noPeerSelected, .noPeersFound, .passthrough, .relayEnabled:
+    case .error, .noPeerSelected, .noPeersFound, .readyToStartRelay, .passthrough,
+      .relayEnabled:
       return .reduced
     }
   }
@@ -140,6 +145,8 @@ enum RelayStatus: Equatable {
       return "Searching for peers"
     case .noTunnelInstalled:
       return "Tunnel not installed"
+    case .readyToStartRelay:
+      return "Ready to start relay"
     case .passthrough:
       return "Passthrough"
     case .relayEnabled:
@@ -153,7 +160,8 @@ enum RelayStatus: Equatable {
     switch self {
     case .passthrough, .relayEnabled:
       return true
-    case .error, .noAgent, .noPeerSelected, .noPeersFound, .noTunnelInstalled:
+    case .error, .noAgent, .noPeerSelected, .noPeersFound, .noTunnelInstalled,
+      .readyToStartRelay:
       return false
     }
   }
@@ -175,7 +183,7 @@ enum RelayStatus: Equatable {
       return .installTunnel
     case .noPeerSelected:
       return .selectPeer
-    case .noPeersFound, .passthrough, .relayEnabled:
+    case .noPeersFound, .readyToStartRelay, .passthrough, .relayEnabled:
       return nil
     }
   }
@@ -250,6 +258,7 @@ struct RelayScreenModel {
       errorMessage: controller.lastError,
       isAgentInstalled: controller.isAgentInstalled,
       isTunnelInstalled: controller.isTunnelInstalled,
+      isRunning: controller.isRunning,
       peersFound: peersAvailable,
       isPeerConnected: controller.connectedPeerName != nil,
       isRouting: controller.routeState == .installed
@@ -307,6 +316,11 @@ struct RelayScreenModel {
   func startSession() {
     logger.notice("relay screen start requested")
     Task { await controller.start() }
+  }
+
+  func startRelay() {
+    logger.notice("relay screen start relay requested")
+    Task { await controller.startRelay() }
   }
 
   // MARK: - Action
@@ -377,6 +391,16 @@ struct RelayScreenModel {
   func selectEgressPeer(id: String) {
     logger.notice("relay screen select egress peer requested")
     Task { await controller.selectEgressPeer(id: id) }
+  }
+
+  var canStartRelay: Bool {
+    controller.activeConfigID != nil
+      && controller.connectedPeers.contains(where: \.isSelected)
+      && !controller.isRunning
+  }
+
+  var showsStartRelayButton: Bool {
+    controller.usesEgressRoster && controller.isTunnelInstalled && !controller.isRunning
   }
 
   // MARK: - Sections

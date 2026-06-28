@@ -128,8 +128,13 @@ struct RelayStatusSample: Sendable {
 @MainActor
 protocol RelayControlBackend {
   /// Brings the platform relay session up. The iPhone creates and starts its
-  /// tunnel. The Mac leaves the agent's tunnel untouched.
+  /// tunnel. The Mac starts the control pairing path and leaves relay start to the
+  /// explicit Start Relay action.
   func start() async
+
+  /// Starts relay transport using the backend's current selected peer and active
+  /// configuration. The Mac uses this for the explicit Start Relay action.
+  func startRelay() async
 
   /// Reads the saved tunnel state fresh from the platform without saving anything;
   /// true when a usable tunnel configuration exists. The iPhone reads
@@ -190,13 +195,12 @@ protocol RelayControlBackend {
 
 // MARK: - RelayControlBackend defaults
 
-/// Defaults so only the Mac backend implements egress selection and only the iPhone
-/// backends auto-dial; every other backend inherits the no-op and the off flag.
+/// Defaults for the two capability flags: a backend that does not override them does
+/// not auto-dial and hosts no egress roster. The Mac overrides the roster flag and the
+/// iPhone backends override auto-dial. Egress selection itself has no default; each
+/// backend implements its own `selectEgressPeer`, which the iPhone backends leave as a
+/// no-op.
 extension RelayControlBackend {
-  func selectEgressPeer(id _: String) async {
-    await Task.yield()
-  }
-
   var autoSelectsDiscoveredPeer: Bool {
     false
   }
@@ -630,6 +634,22 @@ final class RelayController {
     }
   }
 
+}
+
+// MARK: - Relay start
+
+extension RelayController {
+  func startRelay() async {
+    logger.notice("relay controller start relay requested")
+    await backend.startRelay()
+    logger.notice("relay controller start relay submitted")
+    if pollTask == nil {
+      logger.notice("relay controller start relay starting status poll")
+      startPolling()
+    } else {
+      logger.notice("relay controller start relay left status poll running")
+    }
+  }
 }
 
 // MARK: - Peer selection
