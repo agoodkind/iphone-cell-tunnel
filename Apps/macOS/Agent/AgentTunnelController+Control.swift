@@ -300,36 +300,56 @@ extension AgentTunnelController {
     }
   }
 
-  /// Turns routing on. It bumps the start generation, marks the intent before any link
-  /// callback can fire, mirrors it to the phone, then reconciles routes when the relay
-  /// is already hosted or starts the relay session detached otherwise. Reconciling
-  /// against `relayHosted` rather than the macOS VPN session means a stale connected
-  /// session left by a crash never makes the switch read on without a hosted relay. A
-  /// missing precondition reverts the intent without starting.
+  /// Turns routing on. It bumps the start generation, classifies the precondition
+  /// synchronously before any await, then marks intent and starts only on a branch that
+  /// will proceed. Resolving the config before marking intent means a `handlePhoneLink`
+  /// interleaving at the first await never sees `routingEnabled=true` for a request that
+  /// will fail, so the no-config bail installs no routes. Reconciling against
+  /// `relayHosted` rather than the macOS VPN session means a stale connected session left
+  /// by a crash never makes the switch read on without a hosted relay. The no-config bail
+  /// reverts the intent and sets `lastStartError` so the app surfaces the failure.
   private func enableRouting() async {
     routingGeneration += 1
     let generation = routingGeneration
-    routingEnabled = true
-    lastStartError = nil
-    await controlListener?.sendRoutingIntent(true)
-    logger.notice(
-      "agent routing enabled phoneLinkUp=\(self.phoneLinkUp, privacy: .public)"
-    )
-    if relayHosted {
+
+    // Resolve the active config synchronously, before any await, so the precondition is
+    // decided against a stable read and no interleaving callback observes a half-applied
+    // intent.
+    let activeID = configStore.activeID
+    let configText = activeID.flatMap { configStore.text(forID: $0) }
+
+    switch routingEnablePrecondition(
+      relayHosted: relayHosted,
+      hasResolvableActiveConfig: configText != nil
+    ) {
+    case .relayHostedReady:
+      routingEnabled = true
+      lastStartError = nil
+      await controlListener?.sendRoutingIntent(true)
+      logger.notice(
+        "agent routing enabled phoneLinkUp=\(self.phoneLinkUp, privacy: .public)"
+      )
       if phoneLinkUp {
         await signalRouteState(true)
       }
-      return
-    }
-    guard let activeID = configStore.activeID,
-      let configText = configStore.text(forID: activeID)
-    else {
+    case .noActiveConfig:
       routingEnabled = false
+      lastStartError = noActiveConfigSelectedMessage
       await controlListener?.sendRoutingIntent(false)
       logger.notice("agent routing enable found no active config recovery=skip-start")
-      return
+    case .activeConfigReady:
+      guard let activeID, let configText else {
+        return
+      }
+      routingEnabled = true
+      lastStartError = nil
+      await controlListener?.sendRoutingIntent(true)
+      logger.notice(
+        "agent routing enabled phoneLinkUp=\(self.phoneLinkUp, privacy: .public)"
+      )
+      startRelaySessionDetached(
+        configText: configText, configID: activeID, generation: generation)
     }
-    startRelaySessionDetached(configText: configText, configID: activeID, generation: generation)
   }
 
   /// Turns routing off. It bumps the start generation so an in-flight detached start is

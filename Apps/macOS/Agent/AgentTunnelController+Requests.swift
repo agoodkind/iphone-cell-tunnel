@@ -82,13 +82,35 @@ extension AgentTunnelController {
   /// the app's polls animate the transition.
   private func handleSetRoutingEnabled(_ enabled: Bool) async -> AgentControlResponse {
     if enabled {
-      guard let activeID = configStore.activeID,
-        configStore.text(forID: activeID) != nil
-      else {
+      let hasConfig = configStore.activeID.flatMap { configStore.text(forID: $0) } != nil
+      // The request path always requires a resolvable config; the relay-hosted reconcile
+      // is the live switch path's job, so it passes relayHosted: false. Sharing the
+      // decision keeps the rejection code and message identical across both entry points.
+      let precondition = routingEnablePrecondition(
+        relayHosted: false,
+        hasResolvableActiveConfig: hasConfig
+      )
+      if let rejectionErrorCode = precondition.rejectionErrorCode {
         return failure(
-          errorCode: .configSelectionRequired,
-          message: "no active config selected"
+          errorCode: rejectionErrorCode,
+          message: noActiveConfigSelectedMessage
         )
+      }
+      // Start the pairing listener before the peer check, matching startTunnel and
+      // startRelay. On a fresh agent this brings the listener up so the iPhone can dial
+      // in; without it the peer check fails forever and the listener never starts.
+      // Idempotent: a no-op when the listener is already running.
+      do {
+        try await ensureControlListenerStarted()
+      } catch {
+        logger.error(
+          """
+          setRoutingEnabled ensure listener failed \
+          details=\(String(describing: error), privacy: .public) \
+          recovery=return-failure-response
+          """
+        )
+        return failure(from: error)
       }
       if await controlListener?.hasSelectedPeer() != true {
         return failure(
@@ -277,9 +299,16 @@ extension AgentTunnelController {
   }
 
   private func handleReset() async -> AgentControlResponse {
-    // Supersede any in-flight detached start at reset entry so it cannot complete and
-    // re-host the relay after the reset tears everything down.
+    // Supersede any in-flight detached start, then wait for it to finish before tearing
+    // down. A start that already entered startTunnel can otherwise re-host the relay
+    // after reset returns, since actor awaits let it interleave. Clearing routingEnabled
+    // first makes the superseded start's applyStartOutcome stop any session it brought
+    // up, and awaiting the task leaves a stable stopped state.
     routingGeneration += 1
+    routingEnabled = false
+    relayStartTask?.cancel()
+    await relayStartTask?.value
+    relayStartTask = nil
     do {
       let managers = try await loadAllManagers()
       for candidate in managers {
@@ -288,7 +317,6 @@ extension AgentTunnelController {
       }
       await stopControlListener()
       clearManager()
-      routingEnabled = false
       lastStartError = nil
       EgressSelectionStore.clear()
       clearConfigLibrary()

@@ -100,11 +100,13 @@ actor AgentTunnelController {
     self.configStore = configStore
   }
 
-  /// Whether routing is on, which now equals "is the relay session active": turning
-  /// routing on starts the relay session and turning it off tears it down. This is a
-  /// live in-memory value with no persistence and no default, so it resets to off on
-  /// agent start. The agent installs the program routes only while this is true and a
-  /// phone link is up.
+  /// The desired routing intent, not a guarantee that the relay session is active.
+  /// Turning routing on sets this true and starts the relay session; turning it off
+  /// clears it and tears the session down. It is set true before the detached start
+  /// completes, so it can be true while the session is still connecting; `relayHosted`
+  /// tracks whether the bridge is actually up. A live in-memory value with no persistence
+  /// and no default, so it resets to off on agent start. The agent installs the program
+  /// routes only while this is true and a phone link is up.
   var routingEnabled = false
 
   /// The message from a detached relay start that failed, surfaced into the status
