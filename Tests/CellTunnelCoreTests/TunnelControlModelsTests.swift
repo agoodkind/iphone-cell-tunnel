@@ -397,9 +397,28 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
     return TunnelEnvironmentReport()
   }
 
+  func startPairing() async -> TunnelDaemonStatusSnapshot {
+    await Task.yield()
+    events.append("startPairing")
+    return libraryStatus()
+  }
+
+  func startRelay() async -> TunnelDaemonStatusSnapshot {
+    await Task.yield()
+    events.append("startRelay")
+    return libraryStatus()
+  }
+
   func startTunnel(settings: TunnelStartSettings) async -> TunnelDaemonStatusSnapshot {
     await Task.yield()
     events.append("startTunnel")
+    _ = settings
+    return TunnelDaemonStatusSnapshot()
+  }
+
+  func reloadTunnel(settings: TunnelStartSettings) async -> TunnelDaemonStatusSnapshot {
+    await Task.yield()
+    events.append("reloadTunnel")
     _ = settings
     return TunnelDaemonStatusSnapshot()
   }
@@ -454,6 +473,13 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
     return selectedStatusSnapshot
   }
 
+  func setRoutingEnabled(_ enabled: Bool) async -> TunnelDaemonStatusSnapshot {
+    await Task.yield()
+    events.append("setRoutingEnabled")
+    _ = enabled
+    return libraryStatus()
+  }
+
   func importConfig(name: String, text: String) async -> TunnelDaemonStatusSnapshot {
     await Task.yield()
     events.append("importConfig")
@@ -467,6 +493,13 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
   func activateConfig(id: UUID) async -> TunnelDaemonStatusSnapshot {
     await Task.yield()
     events.append("activateConfig")
+    activeConfigID = id
+    return libraryStatus()
+  }
+
+  func setActiveConfig(id: UUID) async -> TunnelDaemonStatusSnapshot {
+    await Task.yield()
+    events.append("setActiveConfig")
     activeConfigID = id
     return libraryStatus()
   }

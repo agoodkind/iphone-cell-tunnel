@@ -14,16 +14,14 @@ import Foundation
 // MARK: - Constants
 
 private let logger = CellTunnelLog.logger(category: .daemon)
-private let providerConfigConfigIDKey = "configID"
 private let importedConfigFallbackName = "Imported config"
 
 // MARK: - Config library handling
 
 extension AgentTunnelController {
-  /// Validates, stores, activates, and starts a config from its text, then returns
-  /// the refreshed status carrying the updated library. Import is the boundary where
-  /// external text resolves to a library id (deduped by content); the start stamps
-  /// the profile with that id.
+  /// Validates, stores, and activates a config from its text, then returns the
+  /// refreshed status carrying the updated library. Import resolves external text
+  /// to a library id but leaves relay start to the explicit start action.
   func handleImportConfig(name: String, text: String) async -> AgentControlResponse {
     do {
       _ = try WireGuardConfigParser.parse(text)
@@ -39,7 +37,16 @@ extension AgentTunnelController {
       logger.error("agent import config store failed recovery=return-failure")
       return failure(errorCode: .internal, message: "store config failed")
     }
-    return await startTunnel(configText: saved.text, configID: saved.id)
+    return await handleStatus()
+  }
+
+  /// Marks a stored config active without starting the tunnel.
+  func handleSetActiveConfig(id: UUID) async -> AgentControlResponse {
+    guard configStore.text(forID: id) != nil else {
+      return failure(errorCode: .internal, message: "no config with id \(id.uuidString)")
+    }
+    configStore.setActive(id: id)
+    return await handleStatus()
   }
 
   /// Makes a stored config active and starts the tunnel with it. The id is known, so
@@ -139,7 +146,7 @@ extension AgentTunnelController {
         configDriftMessage = nil
         return
       }
-      let runningRaw = providerConfiguration[providerConfigConfigIDKey] as? String
+      let runningRaw = providerConfiguration[Self.providerConfigConfigIDKey] as? String
       let runningID = runningRaw.flatMap(UUID.init(uuidString:))
       if let runningRaw, !runningRaw.isEmpty, runningID == nil {
         let message = "running tunnel carries an unparseable config id"

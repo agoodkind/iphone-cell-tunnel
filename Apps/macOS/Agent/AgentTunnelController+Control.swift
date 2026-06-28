@@ -21,22 +21,13 @@ private let routeWithdrawGraceSeconds = 3
 // MARK: - Control link hosting
 
 extension AgentTunnelController {
-  /// The agent hosts the control link because a listener only receives inbound
-  /// from the iPhone in a normal process, not inside a NetworkExtension. It
-  /// parses the WireGuard server endpoint from the config and hands it to the
-  /// listener, which sends it to the iPhone when the iPhone dials in.
-  func startControlListener(wireGuardConfig: String) async throws {
-    guard let endpoint = Self.serverEndpoint(fromConfig: wireGuardConfig) else {
-      logger.error(
-        """
-        agent control listener start failed \
-        reason=no-parseable-endpoint recovery=throw-missing-server-endpoint
-        """
-      )
-      throw AgentTunnelControllerError.missingServerEndpoint
+  /// Starts the control listener the iPhone dials so the Mac can pair and show
+  /// the peer roster before any relay session is armed.
+  func ensureControlListenerStarted() async throws {
+    if controlListener != nil {
+      return
     }
-    await controlListener?.stop()
-    let listener = AgentControlListener(serverEndpoint: endpoint)
+    let listener = AgentControlListener()
 
     // The public-address exchange holds this host's and the iPhone's measured
     // public addresses; the snapshot reads both so the Mac shows `Device / Public`
@@ -54,13 +45,42 @@ extension AgentTunnelController {
     // Warm the cached device address so the first connection carries it, and a
     // late-completing probe re-sends to whatever connection is then current.
     Task { await self.refreshDeviceAddress() }
+    logger.notice("agent control listener started for pairing")
+  }
 
+  /// Arms the selected peer with the active WireGuard endpoint and starts the
+  /// relay bridge, leaving route installation to the existing routing intent.
+  func startRelay(wireGuardConfig: String) async throws {
+    guard let endpoint = Self.serverEndpoint(fromConfig: wireGuardConfig) else {
+      logger.error(
+        """
+        agent relay start failed \
+        reason=no-parseable-endpoint recovery=throw-missing-server-endpoint
+        """
+      )
+      throw AgentTunnelControllerError.missingServerEndpoint
+    }
+    try await ensureControlListenerStarted()
+    guard let controlListener else {
+      return
+    }
+
+    await controlListener.setServerEndpoint(endpoint)
     configureRelayBridgeHandlers()
     relayBridge.start(serviceName: stableHostName())
     onRelayActiveChange?(true)
+    do {
+      try await controlListener.armSelectedPeer()
+    } catch {
+      logger.error(
+        "agent relay arm failed details=\(String(describing: error), privacy: .public) recovery=stop-relay-and-rethrow"
+      )
+      await stopRelay()
+      throw error
+    }
     logger.notice(
       """
-      agent control listener started host=\(endpoint.host, privacy: .public) \
+      agent relay armed host=\(endpoint.host, privacy: .public) \
       port=\(endpoint.port, privacy: .public)
       """
     )
@@ -148,30 +168,37 @@ extension AgentTunnelController {
     }
   }
 
-  func stopControlListener() async {
-    await controlListener?.stop()
-    controlListener = nil
-    publicExchange = nil
-    egressMonitor?.stop()
-    egressMonitor = nil
-    publicRefreshTimer?.cancel()
-    publicRefreshTimer = nil
+  func stopRelay() async {
     routeWithdrawTimer?.cancel()
     routeWithdrawTimer = nil
     routeWithdrawGeneration += 1
+    phoneLinkUp = false
+    await controlListener?.clearServerEndpoint()
+    await controlListener?.sendRouteState(false)
     linkInfo.withLock { $0 = AgentLinkInfo() }
     localLinks.withLock { $0 = [] }
     peerLinks.withLock { $0 = nil }
     agentLinks.withLock { $0 = [] }
-    peerName.withLock { $0 = nil }
-    connectedPeers.withLock { $0 = [] }
-    egressPath.withLock { $0 = EgressPath() }
+    relayBridge.clearSession()
     relayBridge.onEgressInterfaceChange = nil
     relayBridge.onAvailableLinksChange = nil
     relayBridge.onLinkSetChange = nil
     relayBridge.stop()
     onRelayActiveChange?(false)
-    logger.notice("agent control link cleared on tunnel stop")
+    logger.notice("agent relay stopped; pairing listener left running")
+  }
+
+  func stopControlListener() async {
+    await stopRelay()
+    await controlListener?.stop()
+    controlListener = nil
+    publicExchange = nil
+    egressMonitor?.stop()
+    egressMonitor = nil
+    peerName.withLock { $0 = nil }
+    connectedPeers.withLock { $0 = [] }
+    egressPath.withLock { $0 = EgressPath() }
+    logger.notice("agent control listener stopped")
   }
 
   // MARK: - Public-address refresh

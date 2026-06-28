@@ -56,6 +56,24 @@ import Foundation
       return report
     }
 
+    public func startPairing() async throws -> TunnelDaemonStatusSnapshot {
+      logger.notice("agent client invoked rpc=start-pairing")
+      let response = try await send(
+        request: .startPairing,
+        operationName: "startPairing"
+      )
+      return try requireStatus(from: response, operationName: "startPairing")
+    }
+
+    public func startRelay() async throws -> TunnelDaemonStatusSnapshot {
+      logger.notice("agent client invoked rpc=start-relay")
+      let response = try await send(
+        request: .startRelay,
+        operationName: "startRelay"
+      )
+      return try requireStatus(from: response, operationName: "startRelay")
+    }
+
     public func startTunnel(
       settings: TunnelStartSettings
     ) async throws -> TunnelDaemonStatusSnapshot {
@@ -177,6 +195,16 @@ import Foundation
         operationName: "importConfig"
       )
       return try requireStatus(from: response, operationName: "importConfig")
+    }
+
+    public func setActiveConfig(id: UUID) async throws -> TunnelDaemonStatusSnapshot {
+      logger.notice(
+        "agent client invoked rpc=set-active-config id=\(id.uuidString, privacy: .public)")
+      let response = try await send(
+        request: .setActiveConfig(id: id),
+        operationName: "setActiveConfig"
+      )
+      return try requireStatus(from: response, operationName: "setActiveConfig")
     }
 
     /// Makes a stored config active and starts the tunnel with it.

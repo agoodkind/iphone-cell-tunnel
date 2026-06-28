@@ -42,6 +42,7 @@ public enum TunnelDiscoveryPhase: String, Codable, Equatable, Sendable {
 
 public enum TunnelControlErrorCode: String, Codable, Equatable, Sendable {
   case `internal` = "internal"
+  case configSelectionRequired = "configSelectionRequired"
   case discoveryUnavailable = "discoveryUnavailable"
   case invalidRelayEndpoint = "invalidRelayEndpoint"
   case missingWireGuardConfigPath = "missingWireGuardConfigPath"
