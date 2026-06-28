@@ -32,10 +32,10 @@ func runCleanReinstall(_ command: String) throws {
   printToolOutput("clean-reinstall: stopping any running agent")
   stopRunningAgentBestEffort()
 
-  printToolOutput("clean-reinstall: building Mac agent")
-  try buildProject(target: .mac, configuration: configuration)
-  printToolOutput("clean-reinstall: building iPhone app")
-  try buildProject(target: .iphoneDevice, configuration: configuration)
+  printToolOutput("clean-reinstall: building Mac agent and iPhone app")
+  // Build both under one call so a decoupled clean-reinstall runs a single
+  // GatedBuild.run that authorizes the Mac and iPhone compiles together.
+  try buildProjects(targets: [.mac, .iphoneDevice], configuration: configuration)
 
   printToolOutput("clean-reinstall: installing and launching the agent")
   try runInstallMac(

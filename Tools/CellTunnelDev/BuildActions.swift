@@ -19,8 +19,55 @@ func generateProject() throws {
   guard Toolchain.installDependencies(.tuist) == 0 else {
     throw ToolError.failure("toolchain install failed")
   }
-  try run("make", ["xcconfig-generate-project"])
+  // Under a live gate ancestor keep the make render path unchanged. With no ancestor
+  // (a decoupled build) render the generation templates in-process and run the
+  // generator directly, so the gated build spawns no swift-mk/make subprocess.
+  if GateProof.isCurrentlyGated() {
+    try run("make", ["xcconfig-generate-project"])
+  } else {
+    try renderGeneratedFiles()
+    guard Toolchain.generate(.tuist) == 0 else {
+      throw ToolError.failure("tuist generate failed")
+    }
+  }
   try recordProjectGenerationFingerprint()
+}
+
+/// Render the project-generation templates in-process from the resolved xcconfig
+/// values, the decoupled replacement for `make xcconfig-generate-project`. The render
+/// plans mirror the Makefile XCCONFIG_RENDER_PLANS: every `*.template` under each
+/// templates directory renders, with its `[[KEY]]` tokens substituted, to the
+/// same-named file minus `.template` under the output directory.
+private func renderGeneratedFiles() throws {
+  let values = XcconfigValues.read(paths: [
+    repoRoot.appendingPathComponent("Config/Constants.xcconfig").path,
+    repoRoot.appendingPathComponent("Config/local.xcconfig").path,
+  ])
+  let renderPlans = [
+    ("Templates/Swift", "Sources/CellTunnelCore/Generated"),
+    ("Templates/Plists", "Derived/Generated/CellTunnelAgent"),
+  ]
+  var plans: [GeneratedFiles.Plan] = []
+  for (templatesDirectory, outputDirectory) in renderPlans {
+    let templatesURL = repoRoot.appendingPathComponent(templatesDirectory)
+    let entries = try fileManager.contentsOfDirectory(
+      at: templatesURL, includingPropertiesForKeys: nil)
+    for templateURL in entries where templateURL.pathExtension == "template" {
+      let outputName = templateURL.deletingPathExtension().lastPathComponent
+      let outputURL =
+        repoRoot
+        .appendingPathComponent(outputDirectory)
+        .appendingPathComponent(outputName)
+      plans.append(
+        GeneratedFiles.Plan(
+          templatePath: templateURL.path,
+          outputPath: outputURL.path,
+          values: values))
+    }
+  }
+  guard GeneratedFiles.render(plans) else {
+    throw ToolError.failure("in-process template render failed")
+  }
 }
 
 private let projectGenerationSources: [URL] = [
@@ -103,7 +150,8 @@ func buildScheme(
   platformName: String,
   action: String = "build",
   xcodebuildOptions: [String] = [],
-  buildSettings: [String: String] = [:]
+  buildSettings: [String: String] = [:],
+  receipt: GateReceipt? = nil
 ) throws {
   // swift-mk owns build-time signing. This dev tool builds through Toolchain
   // without the make prelude, so apply the same XCODE_XCCONFIG_FILE override here.
@@ -140,9 +188,16 @@ func buildScheme(
     extraSettings: settings,
     extraArguments: xcodebuildOptions + xcodeBuildCacheArguments(.enabled)
   )
+  // A receipt routes the product compile through the capability path, which a
+  // decoupled build with no make ancestor uses: GatedBuild.run mints the receipt
+  // only after the hard gate passes, so Toolchain.build(_:receipt:) skips the
+  // GateProof ancestry check the make path keeps. Without a receipt the compile
+  // takes the GateProof make path, refused unless a live gate ancestor exists.
   let status: Int32
   if action == "analyze" {
     status = Toolchain.analyze(request)
+  } else if let receipt {
+    status = Toolchain.build(request, receipt: receipt)
   } else {
     status = Toolchain.build(request)
   }
@@ -154,7 +209,8 @@ func buildScheme(
 func buildPhoneDevice(configuration: String) throws {
   try buildPhoneDevice(
     configuration: configuration,
-    shouldGenerateProject: true
+    shouldGenerateProject: true,
+    receipt: nil
   )
 }
 
@@ -168,7 +224,8 @@ func buildPhoneDevice(configuration: String) throws {
 // same secret names.
 func buildPhoneDevice(
   configuration: String,
-  shouldGenerateProject: Bool
+  shouldGenerateProject: Bool,
+  receipt: GateReceipt? = nil
 ) throws {
   logger.notice(
     "building phone device configuration=\(configuration, privacy: .public)")
@@ -181,7 +238,8 @@ func buildPhoneDevice(
     destination: ProcessInfo.processInfo.environment["IOS_DEVICE_DESTINATION"]
       ?? "generic/platform=iOS",
     platformName: iOSDevicePlatformName,
-    xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments()
+    xcodebuildOptions: try ["-allowProvisioningUpdates"] + appStoreConnectAuthArguments(),
+    receipt: receipt
   )
 }
 
