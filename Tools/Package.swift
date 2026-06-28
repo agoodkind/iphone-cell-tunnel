@@ -59,7 +59,7 @@ let package = Package(
     // before bootstrap creates it, so it falls back to the checkout root above.
     cellTunnelDependency,
     swiftMakefileDependency,
-    .package(url: "https://github.com/swiftlang/swift-syntax.git", exact: "603.0.0"),
+    .package(url: "https://github.com/swiftlang/swift-syntax.git", exact: "603.0.2"),
     .package(url: "https://github.com/rarestype/swift-ip.git", from: "0.3.10"),
   ],
   targets: [
