@@ -66,10 +66,6 @@ final class PreviewRelayBackend: RelayControlBackend {
     await Task.yield()
   }
 
-  func renameConfig(id _: UUID, name _: String) async {
-    await Task.yield()
-  }
-
   func deleteConfig(id _: UUID) async {
     await Task.yield()
   }

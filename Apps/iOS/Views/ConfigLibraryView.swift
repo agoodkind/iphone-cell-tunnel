@@ -14,22 +14,28 @@ import UniformTypeIdentifiers
 // MARK: - Constants
 
 private let configLibraryTitle = "Configs"
-private let configLibraryImportTitle = "Import .conf"
+private let configLibraryImportTitle = "Import"
+private let configLibraryEmptyTitle =
+  "No configs yet. Import a WireGuard config to get started."
 private let configLibraryTileCornerRadius: CGFloat = 14
-private let configLibraryTileContentSpacing: CGFloat = 12
-private let configLibraryTileRowSpacing: CGFloat = 10
+private let configLibraryRowCornerRadius: CGFloat = 9
 private let configLibraryTilePadding: CGFloat = 16
+private let configLibraryHeaderSpacing: CGFloat = 12
+private let configLibraryListSpacing: CGFloat = 4
 private let configLibraryRowSpacing: CGFloat = 12
-private let configLibraryEmptyTitle = "No configs"
-private let configLibraryRenameTitle = "Rename Config"
-private let configLibraryNameTitle = "Name"
-private let configLibraryActivateTitle = "Activate"
-private let configLibraryRenameActionTitle = "Rename"
-private let configLibraryDeleteTitle = "Delete"
-private let configLibraryCancelTitle = "Cancel"
+private let configLibraryRowHorizontalPadding: CGFloat = 10
+private let configLibraryRowVerticalPadding: CGFloat = 9
+private let configLibraryEmptySpacing: CGFloat = 16
+private let configLibrarySelectedRowOpacity: Double = 0.1
+private let configLibraryActiveSymbol = "checkmark.circle.fill"
+private let configLibraryInactiveSymbol = "circle"
+private let configLibraryImportSymbol = "square.and.arrow.down"
+private let configLibraryEditSymbol = "pencil"
+private let configLibraryDeleteSymbol = "trash"
 private let configLibraryActiveAccessibilityLabel = "Active config"
+private let configLibraryInactiveAccessibilityLabel = "Inactive config"
 private let configLibraryEditAccessibilityLabel = "Edit config"
-private let configLibraryMoreAccessibilityLabel = "Config actions"
+private let configLibraryDeleteAccessibilityLabel = "Delete config"
 private let configLibraryContentTypes: [UTType] = [
   UTType(filenameExtension: "conf") ?? .data,
   .text,
@@ -38,44 +44,29 @@ private let configLibraryContentTypes: [UTType] = [
 
 // MARK: - ConfigLibraryView
 
-/// Lists stored WireGuard configs and presents import, activation, edit, rename,
-/// and delete actions from one rounded SwiftUI tile.
+/// Lists stored WireGuard configs in one rounded tile and presents import,
+/// activation, edit, and delete actions. The active config carries a filled
+/// checkmark and a faint tint background; tapping a row's name area activates it.
 struct ConfigLibraryView: View {
   @Environment(RelayController.self) private var controller
   @State private var isImportingConfig = false
   @State private var editingConfig: TunnelConfigSummary?
-  @State private var renamingConfig: TunnelConfigSummary?
-  @State private var isRenameAlertPresented = false
-  @State private var renameText = ""
 
   // MARK: - Body
 
   var body: some View {
-    VStack(alignment: .leading, spacing: configLibraryTileContentSpacing) {
-      Text(configLibraryTitle)
-        .font(.headline)
-      VStack(spacing: configLibraryTileRowSpacing) {
-        configRows
-        importButton
-      }
+    VStack(alignment: .leading, spacing: configLibraryHeaderSpacing) {
+      header
+      configRows
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(configLibraryTilePadding)
     .background(
       RoundedRectangle(cornerRadius: configLibraryTileCornerRadius, style: .continuous)
-        .fill(.regularMaterial)
+        .fill(Color(uiColor: .secondarySystemBackground))
     )
     .sheet(item: $editingConfig) { config in
       ConfigEditorView(config: config)
-    }
-    .alert(configLibraryRenameTitle, isPresented: $isRenameAlertPresented) {
-      TextField(configLibraryNameTitle, text: $renameText)
-      Button(configLibraryCancelTitle, role: .cancel) {
-        resetRenameState()
-      }
-      Button(configLibraryRenameActionTitle) {
-        commitRename()
-      }
     }
     .fileImporter(
       isPresented: $isImportingConfig,
@@ -86,107 +77,128 @@ struct ConfigLibraryView: View {
     }
   }
 
+  // MARK: - Header
+
+  private var header: some View {
+    HStack(alignment: .firstTextBaseline) {
+      Text(configLibraryTitle)
+        .font(.headline)
+      Spacer(minLength: configLibraryRowSpacing)
+      // The empty state carries its own primary Import button, so the header
+      // button shows only once configs exist to avoid a duplicate import icon.
+      if !controller.configLibrary.isEmpty {
+        importButton
+          .buttonStyle(.bordered)
+      }
+    }
+  }
+
   // MARK: - Rows
 
   @ViewBuilder private var configRows: some View {
     let configs = controller.configLibrary
     if configs.isEmpty {
-      Text(configLibraryEmptyTitle)
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-        .frame(maxWidth: .infinity, alignment: .leading)
+      emptyState
     } else {
-      ForEach(configs) { config in
-        configRow(config)
+      VStack(spacing: configLibraryListSpacing) {
+        ForEach(configs) { config in
+          configRow(config)
+        }
       }
     }
   }
 
   private func configRow(_ config: TunnelConfigSummary) -> some View {
-    HStack(alignment: .center, spacing: configLibraryRowSpacing) {
-      activeIndicator(for: config)
+    let isActive = config.id == controller.activeConfigID
+    return HStack(alignment: .center, spacing: configLibraryRowSpacing) {
+      Button {
+        controller.activateConfig(id: config.id)
+      } label: {
+        rowLabel(config, isActive: isActive)
+      }
+      .buttonStyle(.plain)
+      editButton(config)
+      deleteButton(config)
+    }
+    .padding(.horizontal, configLibraryRowHorizontalPadding)
+    .padding(.vertical, configLibraryRowVerticalPadding)
+    .background(rowBackground(isActive: isActive))
+  }
+
+  private func rowLabel(_ config: TunnelConfigSummary, isActive: Bool) -> some View {
+    HStack(spacing: configLibraryRowSpacing) {
+      activeIndicator(isActive: isActive)
       Text(config.name)
         .font(.subheadline)
         .lineLimit(1)
-      Spacer(minLength: configLibraryRowSpacing)
-      Button {
-        editingConfig = config
-      } label: {
-        Image(systemName: "pencil")
-      }
-      .buttonStyle(.borderless)
-      .accessibilityLabel(configLibraryEditAccessibilityLabel)
-      actionsMenu(for: config)
+        .truncationMode(.tail)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
+    .contentShape(.rect)
   }
 
-  @ViewBuilder private func activeIndicator(for config: TunnelConfigSummary) -> some View {
-    if config.id == controller.activeConfigID {
-      Image(systemName: "checkmark.circle.fill")
-        .foregroundStyle(.tint)
-        .accessibilityLabel(configLibraryActiveAccessibilityLabel)
+  private func activeIndicator(isActive: Bool) -> some View {
+    Image(systemName: isActive ? configLibraryActiveSymbol : configLibraryInactiveSymbol)
+      .foregroundStyle(isActive ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
+      .accessibilityLabel(
+        isActive
+          ? configLibraryActiveAccessibilityLabel
+          : configLibraryInactiveAccessibilityLabel
+      )
+  }
+
+  @ViewBuilder private func rowBackground(isActive: Bool) -> some View {
+    if isActive {
+      RoundedRectangle(cornerRadius: configLibraryRowCornerRadius, style: .continuous)
+        .fill(.tint.opacity(configLibrarySelectedRowOpacity))
     }
   }
+
+  private func editButton(_ config: TunnelConfigSummary) -> some View {
+    Button {
+      editingConfig = config
+    } label: {
+      Image(systemName: configLibraryEditSymbol)
+    }
+    .buttonStyle(.borderless)
+    .accessibilityLabel(configLibraryEditAccessibilityLabel)
+  }
+
+  private func deleteButton(_ config: TunnelConfigSummary) -> some View {
+    Button(role: .destructive) {
+      controller.deleteConfig(id: config.id)
+    } label: {
+      Image(systemName: configLibraryDeleteSymbol)
+    }
+    .buttonStyle(.borderless)
+    .accessibilityLabel(configLibraryDeleteAccessibilityLabel)
+  }
+
+  // MARK: - Import
 
   private var importButton: some View {
     Button {
       isImportingConfig = true
     } label: {
-      Label(configLibraryImportTitle, systemImage: "square.and.arrow.down")
+      Label(configLibraryImportTitle, systemImage: configLibraryImportSymbol)
     }
-    .buttonStyle(.bordered)
+  }
+
+  // MARK: - Empty state
+
+  private var emptyState: some View {
+    VStack(spacing: configLibraryEmptySpacing) {
+      Text(configLibraryEmptyTitle)
+        .font(.subheadline)
+        .foregroundStyle(.secondary)
+        .multilineTextAlignment(.center)
+      importButton
+        .buttonStyle(.borderedProminent)
+    }
+    .frame(maxWidth: .infinity)
   }
 
   // MARK: - Actions
-
-  private func actionsMenu(for config: TunnelConfigSummary) -> some View {
-    Menu {
-      Button {
-        controller.activateConfig(id: config.id)
-      } label: {
-        Label(configLibraryActivateTitle, systemImage: "checkmark.circle")
-      }
-      Button {
-        beginRename(config)
-      } label: {
-        Label(configLibraryRenameActionTitle, systemImage: "text.cursor")
-      }
-      Button(role: .destructive) {
-        controller.deleteConfig(id: config.id)
-      } label: {
-        Label(configLibraryDeleteTitle, systemImage: "trash")
-      }
-    } label: {
-      Image(systemName: "ellipsis.circle")
-        .accessibilityLabel(configLibraryMoreAccessibilityLabel)
-    }
-  }
-
-  private func beginRename(_ config: TunnelConfigSummary) {
-    renamingConfig = config
-    renameText = config.name
-    isRenameAlertPresented = true
-  }
-
-  private func commitRename() {
-    guard let config = renamingConfig else {
-      return
-    }
-    let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard !name.isEmpty else {
-      resetRenameState()
-      return
-    }
-    controller.renameConfig(id: config.id, name: name)
-    resetRenameState()
-  }
-
-  private func resetRenameState() {
-    renamingConfig = nil
-    renameText = ""
-    isRenameAlertPresented = false
-  }
 
   private func handleImport(_ result: Result<[URL], Error>) {
     switch result {

@@ -190,23 +190,6 @@
       }
     }
 
-    /// Asks the agent to rename a stored config.
-    func renameConfig(id: UUID, name: String) async {
-      do {
-        _ = try await client.renameConfig(id: id, name: name)
-        logger.notice(
-          "agent relay backend config rename forwarded id=\(id.uuidString, privacy: .public)")
-      } catch {
-        logger.error(
-          """
-          agent relay backend config rename forward failed \
-          id=\(id.uuidString, privacy: .public) \
-          details=\(String(describing: error), privacy: .public) recovery=keep-state
-          """
-        )
-      }
-    }
-
     /// Asks the agent to delete a stored config, which stops the tunnel first when it
     /// is the active one.
     func deleteConfig(id: UUID) async {

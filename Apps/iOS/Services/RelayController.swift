@@ -194,9 +194,6 @@ protocol RelayControlBackend {
   /// Saves edited WireGuard configuration text for a stored configuration.
   func saveConfigEdit(id: UUID, text: String) async
 
-  /// Renames a stored configuration in this backend's config library.
-  func renameConfig(id: UUID, name: String) async
-
   /// Deletes a stored configuration from this backend's config library.
   func deleteConfig(id: UUID) async
 }
@@ -686,12 +683,6 @@ extension RelayController {
 // MARK: - Config operations
 
 extension RelayController {
-  /// Renames a stored configuration.
-  func renameConfig(id: UUID, name: String) {
-    logger.notice("relay controller rename config requested")
-    Task { await backend.renameConfig(id: id, name: name) }
-  }
-
   /// Deletes a stored configuration.
   func deleteConfig(id: UUID) {
     logger.notice("relay controller delete config requested")
