@@ -74,9 +74,10 @@
         VStack(alignment: .leading, spacing: headerStackSpacing) {
           Text(screenTitle)
             .font(.largeTitle.bold())
-          // In the no-peer state the Peers tile carries "Searching for peers", so the
-          // Mac header omits the status word to avoid showing the phrase twice.
-          if model.status != .noPeersFound {
+          // In the no-peer states the Peers tile carries the status word ("Searching for
+          // peers" with no peers, "No peer selected" when none is chosen), so the Mac
+          // header omits it to avoid showing the same phrase twice.
+          if model.status != .noPeersFound, model.status != .noPeerSelected {
             Text(model.statusLabel)
               .font(.title3)
               .foregroundStyle(.secondary)
