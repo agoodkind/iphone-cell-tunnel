@@ -13,8 +13,12 @@ import SwiftUI
 
 private let configEditorCancelTitle = "Cancel"
 private let configEditorSaveTitle = "Save"
+private let configEditorEditTitle = "Edit"
+private let configEditorDoneTitle = "Done"
 private let configEditorRevealSymbol = "eye"
-private let configEditorRevealAccessibilityLabel = "Reveal secret and edit"
+private let configEditorHideSymbol = "eye.slash"
+private let configEditorRevealAccessibilityLabel = "Reveal secret value"
+private let configEditorHideAccessibilityLabel = "Hide secret value"
 private let configEditorMaskedAccessibilityLabel = "Hidden secret value"
 private let configEditorMaskBulletCount = 14
 private let configEditorMaskBullets = String(
@@ -30,11 +34,12 @@ private let configEditorMonospace: Font = .system(.body, design: .monospaced)
 // MARK: - ConfigEditorLineKind
 
 /// Classifies one config line so the read view can color it. Secret lines carry
-/// the label prefix (through `=`) so the value can be masked separately.
+/// the label prefix (through `=`) and the value so the value can be masked or
+/// revealed separately.
 private enum ConfigEditorLineKind {
   case comment
   case plain
-  case secret(label: String)
+  case secret(label: String, value: String)
   case sectionHeader
 }
 
@@ -53,20 +58,18 @@ private struct ConfigEditorLine: Identifiable {
 /// editor fetches it on demand from the summary's id rather than holding it. The
 /// default read view renders the config line by line with light syntax coloring
 /// and masks `PrivateKey` and `PresharedKey` values behind bullets, each with an
-/// inline reveal control. Revealing unlocks a plain monospace editor so the real
-/// key is never lost behind the mask. Save is disabled until the text has loaded
-/// so a failed fetch cannot overwrite the stored config with empty text.
+/// inline reveal control that shows that one value in place without exposing the
+/// others. A separate Edit toggle swaps the read view for a plain monospace
+/// editor. Save is disabled until the text has loaded so a failed fetch cannot
+/// overwrite the stored config with empty text.
 struct ConfigEditorView: View {
   let config: TunnelConfigSummary
   @Environment(RelayController.self) private var controller
   @Environment(\.dismiss) private var dismiss
   @State private var text = ""
   @State private var loaded = false
-  @State private var revealed = false
-
-  init(config: TunnelConfigSummary) {
-    self.config = config
-  }
+  @State private var editing = false
+  @State private var revealedLineIDs: Set<Int> = []
 
   // MARK: - Body
 
@@ -113,10 +116,14 @@ struct ConfigEditorView: View {
         .lineLimit(1)
         .truncationMode(.tail)
     }
+    ToolbarItem(placement: .primaryAction) {
+      Button(editing ? configEditorDoneTitle : configEditorEditTitle) {
+        editing.toggle()
+      }
+    }
     ToolbarItem(placement: .confirmationAction) {
       Button(configEditorSaveTitle) {
-        controller.saveConfigEdit(id: config.id, text: text)
-        dismiss()
+        saveAndDismiss()
       }
       .buttonStyle(.borderedProminent)
       .disabled(!loaded)
@@ -125,9 +132,9 @@ struct ConfigEditorView: View {
 
   // MARK: - Body content
 
-  /// Shows the masked read view by default and a plain editor once revealed.
+  /// Shows the masked read view by default and a plain editor while editing.
   @ViewBuilder private var editorBody: some View {
-    if revealed {
+    if editing {
       TextEditor(text: $text)
         .font(configEditorMonospace)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -160,8 +167,8 @@ struct ConfigEditorView: View {
       coloredLine(line.text, style: AnyShapeStyle(.secondary))
     case .plain:
       coloredLine(line.text, style: AnyShapeStyle(.primary))
-    case .secret(let label):
-      secretRow(label: label)
+    case let .secret(label, value):
+      secretRow(id: line.id, label: label, value: value)
     }
   }
 
@@ -173,28 +180,60 @@ struct ConfigEditorView: View {
       .textSelection(.enabled)
   }
 
-  private func secretRow(label: String) -> some View {
-    HStack(spacing: 0) {
+  /// Renders one secret line with its label prefix in primary, the value either
+  /// masked behind a fixed-width bullet run or shown in place, and an inline
+  /// toggle keyed to this line so other secrets stay hidden.
+  private func secretRow(id: Int, label: String, value: String) -> some View {
+    let isRevealed = revealedLineIDs.contains(id)
+    return HStack(spacing: 0) {
       Text("\(label) ")
         .foregroundStyle(.primary)
-      Text(configEditorMaskBullets)
-        .foregroundStyle(.secondary)
-        .accessibilityLabel(configEditorMaskedAccessibilityLabel)
+      secretValue(value, isRevealed: isRevealed)
       Spacer(minLength: configEditorRevealSpacing)
-      revealButton
+      revealButton(id: id, isRevealed: isRevealed)
     }
     .font(configEditorMonospace)
     .frame(maxWidth: .infinity, alignment: .leading)
   }
 
-  private var revealButton: some View {
+  @ViewBuilder
+  private func secretValue(_ value: String, isRevealed: Bool) -> some View {
+    if isRevealed {
+      Text(value)
+        .foregroundStyle(.primary)
+        .textSelection(.enabled)
+    } else {
+      Text(configEditorMaskBullets)
+        .foregroundStyle(.secondary)
+        .accessibilityLabel(configEditorMaskedAccessibilityLabel)
+    }
+  }
+
+  private func revealButton(id: Int, isRevealed: Bool) -> some View {
     Button {
-      revealed = true
+      toggleReveal(id: id)
     } label: {
-      Image(systemName: configEditorRevealSymbol)
+      Image(systemName: isRevealed ? configEditorHideSymbol : configEditorRevealSymbol)
     }
     .buttonStyle(.borderless)
-    .accessibilityLabel(configEditorRevealAccessibilityLabel)
+    .accessibilityLabel(
+      isRevealed ? configEditorHideAccessibilityLabel : configEditorRevealAccessibilityLabel
+    )
+  }
+
+  // MARK: - Actions
+
+  private func toggleReveal(id: Int) {
+    if revealedLineIDs.contains(id) {
+      revealedLineIDs.remove(id)
+    } else {
+      revealedLineIDs.insert(id)
+    }
+  }
+
+  private func saveAndDismiss() {
+    controller.saveConfigEdit(id: config.id, text: text)
+    dismiss()
   }
 
   // MARK: - Parsing
@@ -206,7 +245,8 @@ struct ConfigEditorView: View {
     }
   }
 
-  /// Maps a raw line to its display kind without exposing any secret value.
+  /// Maps a raw line to its display kind, splitting secret lines into the label
+  /// prefix and the value so the value can be masked.
   private static func classify(_ line: String) -> ConfigEditorLineKind {
     let trimmed = line.trimmingCharacters(in: .whitespaces)
     if trimmed.hasPrefix("[") {
@@ -215,15 +255,15 @@ struct ConfigEditorView: View {
     if trimmed.hasPrefix("#") {
       return .comment
     }
-    if let label = secretLabel(in: line) {
-      return .secret(label: label)
+    if let parts = secretParts(in: line) {
+      return .secret(label: parts.label, value: parts.value)
     }
     return .plain
   }
 
-  /// Returns the label prefix through `=` for a `PrivateKey`/`PresharedKey` line,
-  /// or nil when the line is not a masked secret.
-  private static func secretLabel(in line: String) -> String? {
+  /// Splits a `PrivateKey`/`PresharedKey` line into the label prefix through `=`
+  /// and the trailing value, or returns nil when the line is not a masked secret.
+  private static func secretParts(in line: String) -> (label: String, value: String)? {
     let trimmed = line.drop { $0 == " " || $0 == "\t" }
     let lowered = trimmed.lowercased()
     guard lowered.hasPrefix("privatekey") || lowered.hasPrefix("presharedkey") else {
@@ -232,6 +272,9 @@ struct ConfigEditorView: View {
     guard let equalsIndex = line.firstIndex(of: "=") else {
       return nil
     }
-    return String(line[...equalsIndex])
+    let label = String(line[...equalsIndex])
+    let valueStart = line.index(after: equalsIndex)
+    let value = String(line[valueStart...]).trimmingCharacters(in: .whitespaces)
+    return (label, value)
   }
 }
