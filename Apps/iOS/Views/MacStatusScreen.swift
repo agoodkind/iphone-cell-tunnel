@@ -16,14 +16,14 @@
   private let routeToggleTitle = "Route traffic"
   private let dataSectionTitle = "Data"
   private let currentSpeedSectionTitle = "Current Speed"
-  private let tileMinimumWidth: CGFloat = 300
   private let tileCornerRadius: CGFloat = 14
-  private let maxColumns = 3
+  // The top row and the status tiles below share this fixed two-column track so
+  // their gutters line up; a flexible per-column width keeps the columns equal.
+  private let columnCount = 2
   private let gridSpacing: CGFloat = 16
   private let contentPadding: CGFloat = 24
   private let headerStackSpacing: CGFloat = 4
   private let actionTopPadding: CGFloat = 4
-  private let contentInsetColumns: CGFloat = 2
   private let sectionWeightOverhead = 2
   private let tileContentSpacing: CGFloat = 12
   private let tileRowSpacing: CGFloat = 10
@@ -35,10 +35,11 @@
   // MARK: - MacStatusScreen
 
   /// The Mac status screen, a single dashboard. A status header carries the title, the
-  /// live status word, and the routing switch; below it a masonry of rounded tiles,
-  /// one per section, packs by column and reflows with the window width. A value that
-  /// has not arrived renders as a redacted skeleton bar. It reads the same
-  /// `RelayScreenModel` the iPhone list does.
+  /// live status word, and the routing switch; below it a two-column top row pairs the
+  /// Configs library with the Peers roster, and under that the status tiles pack into
+  /// the same two columns so every gutter lines up. A value that has not arrived renders
+  /// as a redacted skeleton bar. It reads the same `RelayScreenModel` the iPhone list
+  /// does.
   struct MacStatusScreen: View {
     @Environment(RelayController.self) private var controller
 
@@ -49,18 +50,14 @@
     // MARK: - Body
 
     var body: some View {
-      GeometryReader { proxy in
-        ScrollView {
-          VStack(alignment: .leading, spacing: contentPadding) {
-            header
-            rosterTile
-            masonry(
-              availableWidth: proxy.size.width - contentPadding * contentInsetColumns)
-            ConfigLibraryView()
-          }
-          .padding(contentPadding)
-          .frame(maxWidth: .infinity, alignment: .leading)
+      ScrollView {
+        VStack(alignment: .leading, spacing: contentPadding) {
+          header
+          topRow
+          statusTiles
         }
+        .padding(contentPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
       .animation(.default, value: model.status)
     }
@@ -134,18 +131,33 @@
         .fixedSize()
     }
 
-    // MARK: - Masonry
+    // MARK: - Top row
 
-    // Packs the tiles into balanced columns by row count, so a short tile does not
-    // leave a gap the way an even grid would.
-    private func masonry(availableWidth: CGFloat) -> some View {
-      let columnCount = max(
-        1,
-        min(
-          maxColumns,
-          Int((availableWidth + gridSpacing) / (tileMinimumWidth + gridSpacing))
-        )
-      )
+    // The Configs library on the left and the Peers roster on the right as two equal
+    // columns above the status tiles. Each column view renders its own rounded tile, so
+    // the dashboard adds no wrapper chrome; the per-column `maxWidth: .infinity` pins
+    // both to the same two-column track the status tiles use so their gutters align.
+    private var topRow: some View {
+      HStack(alignment: .top, spacing: gridSpacing) {
+        ConfigLibraryView()
+          .frame(maxWidth: .infinity)
+        RelayRosterView(
+          peers: model.connectedPeers,
+          subtitle: model.rosterSubtitle
+        ) { id in
+          model.selectEgressPeer(id: id)
+        }
+        .frame(maxWidth: .infinity)
+      }
+    }
+
+    // MARK: - Status tiles
+
+    // The section tiles packed into the same two equal columns as the top row, balanced
+    // by row count so a short tile does not leave a gap the way an even grid would. Each
+    // column carries `maxWidth: .infinity` so the two columns stay equal and a long row
+    // never widens one side past the top-row cards above it.
+    private var statusTiles: some View {
       let columns = distribute(tiles, into: columnCount)
       return HStack(alignment: .top, spacing: gridSpacing) {
         ForEach(Array(columns.enumerated()), id: \.offset) { _, column in
@@ -154,6 +166,7 @@
               tile(section)
             }
           }
+          .frame(maxWidth: .infinity)
         }
       }
     }
@@ -170,32 +183,6 @@
         weights[target] += section.rows.count + sectionWeightOverhead
       }
       return columns
-    }
-
-    // MARK: - Roster
-
-    // The dialed-in iPhones as an always-present rounded tile, the Mac egress
-    // selector. It lists zero, one, or several iPhones with the selected one checked,
-    // and shows the roster subtitle when none is selected.
-    private var rosterTile: some View {
-      VStack(alignment: .leading, spacing: tileContentSpacing) {
-        Text(RelayRosterView.title)
-          .font(.headline)
-        VStack(spacing: tileRowSpacing) {
-          RelayRosterView(
-            peers: model.connectedPeers,
-            subtitle: model.rosterSubtitle
-          ) { id in
-            model.selectEgressPeer(id: id)
-          }
-        }
-      }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(tilePadding)
-      .background(
-        RoundedRectangle(cornerRadius: tileCornerRadius, style: .continuous)
-          .fill(Color(uiColor: .secondarySystemBackground))
-      )
     }
 
     // MARK: - Tile

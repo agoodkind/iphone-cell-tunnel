@@ -136,12 +136,3 @@ struct RelayRosterView: View {
     }
   }
 }
-
-// MARK: - Section title
-
-extension RelayRosterView {
-  /// The group title the Mac dashboard renders above the roster.
-  static var title: String {
-    rosterSectionTitle
-  }
-}
