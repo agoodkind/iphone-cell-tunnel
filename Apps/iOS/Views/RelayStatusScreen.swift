@@ -51,24 +51,15 @@ struct RelayStatusScreen: View {
   }
 
   // The status section: the live status word as its own row, separate from the
-  // routing switch, so the status reports the current state rather than labeling the
-  // switch. The switch appears only in a routeable state, so routing cannot be
-  // requested with no link to carry it; the error message and the Retry action follow
-  // as rows when the status calls for them.
+  // single Route traffic switch, so the status reports the current state rather than
+  // labeling the switch. The switch is hidden with no peer, disabled with a
+  // choose-a-config hint when a peer is connected but no config is active, and live
+  // otherwise; the error message and the Retry action follow as rows when the status
+  // calls for them.
   @ViewBuilder private var statusSection: some View {
     Section {
-      Text(model.status.label)
-      if model.showsToggle {
-        HStack {
-          Text(routeTrafficLabel)
-          Spacer()
-          if model.isRouteRequestPending {
-            ProgressView()
-          }
-          Toggle(routeTrafficLabel, isOn: model.routeTrafficBinding)
-            .labelsHidden()
-        }
-      }
+      Text(model.statusLabel)
+      routeControlRows
       if let message = model.errorMessage {
         Text(message)
       }
@@ -77,6 +68,38 @@ struct RelayStatusScreen: View {
           model.startSession()
         }
       }
+    }
+  }
+
+  // The Route traffic switch row driven by the derived presentation: absent when
+  // hidden, a disabled switch with the hint beneath it when a config must be chosen,
+  // and a live switch with a connect spinner when enabled.
+  @ViewBuilder private var routeControlRows: some View {
+    switch model.routeControl.presentation {
+    case .hidden:
+      EmptyView()
+    case .disabled(let hint):
+      routeToggleRow(isEnabled: false)
+      Text(hint)
+        .font(.caption)
+        .foregroundStyle(.secondary)
+    case .enabled:
+      routeToggleRow(isEnabled: true)
+    }
+  }
+
+  /// The Route traffic switch row, live when `isEnabled` and showing a spinner while
+  /// the relay is connecting, so the iPhone presents the same single control as the Mac.
+  private func routeToggleRow(isEnabled: Bool) -> some View {
+    HStack {
+      Text(routeTrafficLabel)
+      Spacer()
+      if isEnabled, model.isConnecting {
+        ProgressView()
+      }
+      Toggle(routeTrafficLabel, isOn: model.routeTrafficBinding)
+        .labelsHidden()
+        .disabled(!isEnabled)
     }
   }
 

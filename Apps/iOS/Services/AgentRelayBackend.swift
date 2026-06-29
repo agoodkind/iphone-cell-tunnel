@@ -45,20 +45,6 @@
       }
     }
 
-    func startRelay() async {
-      do {
-        _ = try await client.startRelay()
-        logger.notice("agent relay backend relay start forwarded")
-      } catch {
-        logger.error(
-          """
-          agent relay backend relay start failed \
-          details=\(String(describing: error), privacy: .public) recovery=keep-state
-          """
-        )
-      }
-    }
-
     /// The Mac setup gating comes from the agent's status snapshot, so launch proceeds.
     func tunnelProvisioned() async -> Bool {
       await Task.yield()
