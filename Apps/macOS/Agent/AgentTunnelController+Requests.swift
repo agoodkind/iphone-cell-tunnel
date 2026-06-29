@@ -61,7 +61,7 @@ extension AgentTunnelController {
     case .stopRelayDiscovery:
       return snapshotResponse()
     case .stopTunnel:
-      return await handleStopTunnel()
+      return await handleSetRoutingEnabled(false)
     case .validateConfig(let text):
       return await handleValidateConfig(text: text)
     }
@@ -74,7 +74,51 @@ extension AgentTunnelController {
     return await handleStatus()
   }
 
+  /// Drives the relay session from the Route traffic switch. Turning routing on
+  /// validates the same preconditions `handleStartRelay` checks and returns the
+  /// matching error without starting anything when one is missing, then starts the
+  /// session detached so the reply does not block on the connect. Turning it off
+  /// withdraws routes and stops the session. The status snapshot returns immediately so
+  /// the app's polls animate the transition.
   private func handleSetRoutingEnabled(_ enabled: Bool) async -> AgentControlResponse {
+    if enabled {
+      let hasConfig = configStore.activeID.flatMap { configStore.text(forID: $0) } != nil
+      // The request path always requires a resolvable config; the relay-hosted reconcile
+      // is the live switch path's job, so it passes relayHosted: false. Sharing the
+      // decision keeps the rejection code and message identical across both entry points.
+      let precondition = routingEnablePrecondition(
+        relayHosted: false,
+        hasResolvableActiveConfig: hasConfig
+      )
+      if let rejectionErrorCode = precondition.rejectionErrorCode {
+        return failure(
+          errorCode: rejectionErrorCode,
+          message: noActiveConfigSelectedMessage
+        )
+      }
+      // Start the pairing listener before the peer check, matching startTunnel and
+      // startRelay. On a fresh agent this brings the listener up so the iPhone can dial
+      // in; without it the peer check fails forever and the listener never starts.
+      // Idempotent: a no-op when the listener is already running.
+      do {
+        try await ensureControlListenerStarted()
+      } catch {
+        logger.error(
+          """
+          setRoutingEnabled ensure listener failed \
+          details=\(String(describing: error), privacy: .public) \
+          recovery=return-failure-response
+          """
+        )
+        return failure(from: error)
+      }
+      if await controlListener?.hasSelectedPeer() != true {
+        return failure(
+          errorCode: .relaySelectionRequired,
+          message: "no selected peer connection"
+        )
+      }
+    }
     await setRoutingEnabled(enabled)
     return await handleStatus()
   }
@@ -162,22 +206,11 @@ extension AgentTunnelController {
     }
   }
 
+  /// The Start Relay control is an alias for turning routing on. It routes through the
+  /// single routing-enable path so the relay-hosted and routing-on states never diverge,
+  /// whichever entry point starts the relay.
   private func handleStartRelay() async -> AgentControlResponse {
-    guard let activeID = configStore.activeID,
-      let configText = configStore.text(forID: activeID)
-    else {
-      return failure(
-        errorCode: .configSelectionRequired,
-        message: "no active config selected"
-      )
-    }
-    if await controlListener?.hasSelectedPeer() != true {
-      return failure(
-        errorCode: .relaySelectionRequired,
-        message: "no selected peer connection"
-      )
-    }
-    return await startTunnel(configText: configText, configID: activeID)
+    await handleSetRoutingEnabled(true)
   }
 
   func handleStartTunnel(settings: TunnelStartSettings) async -> AgentControlResponse {
@@ -205,7 +238,9 @@ extension AgentTunnelController {
       )
       return failure(from: error)
     }
-    return await startTunnel(configText: saved.text, configID: saved.id)
+    // The config is now active, so start through the routing-enable path to keep the
+    // relay-hosted and routing states consistent across every start entry point.
+    return await handleSetRoutingEnabled(true)
   }
 
   /// Starts the tunnel for an already-resolved library entry, stamping the saved
@@ -264,6 +299,16 @@ extension AgentTunnelController {
   }
 
   private func handleReset() async -> AgentControlResponse {
+    // Supersede any in-flight detached start, then wait for it to finish before tearing
+    // down. A start that already entered startTunnel can otherwise re-host the relay
+    // after reset returns, since actor awaits let it interleave. Clearing routingEnabled
+    // first makes the superseded start's applyStartOutcome stop any session it brought
+    // up, and awaiting the task leaves a stable stopped state.
+    routingGeneration += 1
+    routingEnabled = false
+    relayStartTask?.cancel()
+    await relayStartTask?.value
+    relayStartTask = nil
     do {
       let managers = try await loadAllManagers()
       for candidate in managers {
@@ -272,8 +317,7 @@ extension AgentTunnelController {
       }
       await stopControlListener()
       clearManager()
-      RoutingIntentStore.clear()
-      routingEnabled = RoutingIntentStore.load()
+      lastStartError = nil
       EgressSelectionStore.clear()
       clearConfigLibrary()
       replaceStatusObserver(nil)
@@ -309,187 +353,5 @@ extension AgentTunnelController {
       return AgentControlResponse(status: augmented(status))
     }
     return AgentControlResponse(status: augmented(snapshot(from: manager)))
-  }
-}
-
-// MARK: - Tunnel manager helpers
-
-extension AgentTunnelController {
-  func loadOrCreateManager() async throws -> NETunnelProviderManager {
-    if let manager = currentManager() {
-      return manager
-    }
-    let managers = try await loadAllManagers()
-    let resolved = managers.first ?? NETunnelProviderManager()
-    setManager(resolved)
-    logger.notice("agent resolved tunnel manager count=\(managers.count, privacy: .public)")
-    return resolved
-  }
-
-  /// Writes the active config into the saved profile and stamps it with the library
-  /// id (as `uuidString`), so the profile is a downstream projection of the active
-  /// library entry that boot can verify by id.
-  private func applyConfiguration(
-    to manager: NETunnelProviderManager,
-    wireGuardConfig: String,
-    configID: UUID
-  ) {
-    let providerProtocol = NETunnelProviderProtocol()
-    providerProtocol.providerBundleIdentifier = Self.providerBundleIdentifier
-    providerProtocol.serverAddress = Self.tunnelServerAddressPlaceholder
-    var providerConfiguration = [
-      Self.providerConfigWireGuardKey: wireGuardConfig,
-      Self.providerConfigConfigIDKey: configID.uuidString,
-    ]
-    if let relayName = resolvedRelayServiceName() {
-      providerConfiguration[Self.providerConfigRelayServiceKey] = relayName
-    }
-    providerProtocol.providerConfiguration = providerConfiguration
-    manager.protocolConfiguration = providerProtocol
-    manager.localizedDescription = Self.tunnelLocalizedDescription
-    manager.isEnabled = true
-  }
-
-  private func save(manager: NETunnelProviderManager) async throws {
-    try await resumeVoidContinuation { completion in
-      manager.saveToPreferences(completionHandler: completion)
-    }
-  }
-
-  private func load(manager: NETunnelProviderManager) async throws {
-    try await resumeVoidContinuation { completion in
-      manager.loadFromPreferences(completionHandler: completion)
-    }
-  }
-
-  private func remove(manager: NETunnelProviderManager) async throws {
-    try await resumeVoidContinuation { completion in
-      manager.removeFromPreferences(completionHandler: completion)
-    }
-  }
-
-  private func startSession(on manager: NETunnelProviderManager) throws {
-    guard let session = manager.connection as? NETunnelProviderSession else {
-      throw AgentTunnelControllerError.sessionUnavailable
-    }
-    try session.startTunnel(options: nil)
-  }
-
-  private func stopSession(on manager: NETunnelProviderManager) {
-    guard let session = manager.connection as? NETunnelProviderSession else {
-      return
-    }
-    session.stopTunnel()
-  }
-
-  func isSessionActive(on manager: NETunnelProviderManager) -> Bool {
-    switch manager.connection.status {
-    case .connected, .connecting, .reasserting:
-      return true
-    default:
-      return false
-    }
-  }
-
-  private func observeStatus(on manager: NETunnelProviderManager) {
-    let connection = manager.connection
-    replaceStatusObserver(
-      NotificationCenter.default.addObserver(
-        forName: .NEVPNStatusDidChange,
-        object: connection,
-        queue: nil
-      ) { [weak self] _ in
-        let observed = connection.status
-        Task { await self?.recordStatus(observed) }
-      }
-    )
-  }
-
-  private func recordStatus(_ status: NEVPNStatus) {
-    logger.notice(
-      "agent observed vpn status=\(self.statusDescription(status), privacy: .public)"
-    )
-  }
-
-  func signalRouteState(_ installed: Bool) async {
-    guard let manager = currentManager() else {
-      await controlListener?.sendRouteState(installed)
-      return
-    }
-    do {
-      _ = try await forward(
-        request: .setRouteState(installed: installed),
-        on: manager,
-        operationName: "setRouteState"
-      )
-      logger.notice(
-        "agent signaled route state installed=\(installed, privacy: .public)"
-      )
-      await controlListener?.sendRouteState(installed)
-      await refreshDeviceAddress()
-    } catch {
-      logger.error(
-        """
-        agent route state signal failed installed=\(installed, privacy: .public) \
-        details=\(String(describing: error), privacy: .public) recovery=await-next-link-change
-        """
-      )
-    }
-  }
-
-  func forward(
-    request: ProviderControlRequest,
-    on manager: NETunnelProviderManager,
-    operationName: String
-  ) async throws -> ProviderControlResponse {
-    guard let session = manager.connection as? NETunnelProviderSession else {
-      throw AgentTunnelControllerError.sessionUnavailable
-    }
-    let payload = try JSONEncoder().encode(ProviderControlEnvelope(request: request))
-    let responseData = try await sendProviderMessage(
-      payload,
-      on: session,
-      operationName: operationName
-    )
-    return try JSONDecoder().decode(ProviderControlResponse.self, from: responseData)
-  }
-
-  private func sendProviderMessage(
-    _ payload: Data,
-    on session: NETunnelProviderSession,
-    operationName: String
-  ) async throws -> Data {
-    try await withCheckedThrowingContinuation { continuation in
-      let box = ProviderMessageContinuationBox(
-        continuation: continuation,
-        operationName: operationName
-      )
-      do {
-        try session.sendProviderMessage(payload) { response in
-          box.resume(with: response)
-        }
-      } catch {
-        logger.error(
-          """
-          \(operationName) provider message send failed \
-          details=\(String(describing: error), privacy: .public) \
-          recovery=resume-continuation-with-error
-          """
-        )
-        box.resumeOnce(throwing: error)
-      }
-      box.scheduleTimeout(Self.providerMessageTimeoutSeconds)
-    }
-  }
-
-  private func snapshot(from manager: NETunnelProviderManager) -> TunnelDaemonStatusSnapshot {
-    let status = manager.connection.status
-    let configured = manager.protocolConfiguration != nil
-    let configurationUnapproved = status == .invalid && configured
-    return TunnelDaemonStatusSnapshot(
-      running: isSessionActive(on: manager),
-      peerState: configured ? .wireGuardConfigured : .notSelected,
-      lastError: configurationUnapproved ? "vpn configuration not approved" : nil
-    )
   }
 }

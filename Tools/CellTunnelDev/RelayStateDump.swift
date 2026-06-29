@@ -14,10 +14,6 @@ import IP
 // MARK: - Constants
 
 private let relayStateLogger = CellTunnelLog.logger(category: .build)
-/// The defaults key the agent persists its routing intent under, the same key
-/// `RoutingIntentStore` writes. Read here by app id so the probe reports the
-/// durable value next to the agent's live one.
-private let routingIntentKey = "io.goodkind.celltunnel.routingEnabled"
 /// The netstat routing-table columns this parser reads: the destination and the
 /// interface, with the minimum column count a parsable row carries.
 private let routeDestinationColumn = 0
@@ -26,11 +22,12 @@ private let routeMinimumColumns = 4
 
 // MARK: - RelayStateDump
 
-/// Renders the full debug view of the relay from one status snapshot: the
-/// persisted and live routing intent, the reported and kernel route state, the
-/// control and tunnel sections, and a final drift verdict. `relay-status` prints
-/// this after the snapshot's own key=value lines, so one invocation shows
-/// everything and names any pair that disagrees.
+/// Renders the full debug view of the relay from one status snapshot: the live
+/// routing intent, the reported and kernel route state, the control and tunnel
+/// sections, and a final drift verdict. `relay-status` prints this after the
+/// snapshot's own key=value lines, so one invocation shows everything and names any
+/// pair that disagrees. Routing is no longer persisted, so there is no durable intent
+/// to compare against the live one.
 enum RelayStateDump {
   /// The assembled extra sections and whether any real drift was found.
   struct Rendering {
@@ -44,13 +41,8 @@ enum RelayStateDump {
     var lines: [String] = []
     var driftPairs: [String] = []
 
-    let persisted = persistedIntent()
     let live = snapshot.routingIntentEnabled
-    lines.append("intent.persisted=\(persisted?.rawValue ?? "unknown")")
     lines.append("intent.live=\(live?.rawValue ?? "unknown")")
-    if let persisted, let live, persisted != live {
-      driftPairs.append("intent.persisted!=intent.live")
-    }
 
     let kernelRouteCount = kernelTunnelRouteCount(
       tunnelIPv4: snapshot.ipv4Address, tunnelIPv6: snapshot.ipv6Address
@@ -76,25 +68,6 @@ enum RelayStateDump {
       lines.append("drift=\(driftPairs.joined(separator: ","))")
     }
     return Rendering(text: lines.joined(separator: "\n"), hasDrift: !driftPairs.isEmpty)
-  }
-
-  // MARK: - Persisted intent
-
-  // Reads the agent's persisted routing intent from its preferences domain. The
-  // key is absent until the user's first choice, which the store reads as on;
-  // a value of an unexpected type reads as nil so the dump prints unknown.
-  private static func persistedIntent() -> TunnelRoutingIntent? {
-    let value = CFPreferencesCopyAppValue(
-      routingIntentKey as CFString,
-      agentBundleIdentifier as CFString
-    )
-    guard let value else {
-      return .on
-    }
-    guard let number = value as? NSNumber else {
-      return nil
-    }
-    return TunnelRoutingIntent(enabled: number.boolValue)
   }
 
   // MARK: - Kernel routes

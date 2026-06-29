@@ -78,6 +78,7 @@ extension AgentTunnelController {
       await stopRelay()
       throw error
     }
+    relayHosted = true
     logger.notice(
       """
       agent relay armed host=\(endpoint.host, privacy: .public) \
@@ -173,6 +174,7 @@ extension AgentTunnelController {
     routeWithdrawTimer = nil
     routeWithdrawGeneration += 1
     phoneLinkUp = false
+    relayHosted = false
     await controlListener?.clearServerEndpoint()
     await controlListener?.sendRouteState(false)
     linkInfo.withLock { $0 = AgentLinkInfo() }
@@ -276,28 +278,153 @@ extension AgentTunnelController {
     merged.configLibrary = configStore.summaries()
     merged.activeConfigID = configStore.activeID
     merged.configDrift = configDriftMessage
+    // Surface a failed detached relay start so the app reverts the switch and shows
+    // the error. A provider-reported error already on the snapshot takes precedence.
+    if merged.lastError == nil {
+      merged.lastError = lastStartError
+    }
     return merged
   }
 
   // MARK: - Routing control
 
-  /// Records the user's routing choice, persists it, mirrors it to the phone, and
-  /// reconciles routes against the live link. Routing on with a link up installs
-  /// the program routes; routing off withdraws them. The intent persists through
-  /// `RoutingIntentStore` and defaults to on, so a fresh start routes without a
-  /// tap.
+  /// Drives the relay session lifetime from the Route traffic switch: turning routing
+  /// on starts the relay session and turning it off tears it down. Routing is a live
+  /// in-memory value with no persistence, so it resets to off on agent start. The
+  /// phone's control link calls this too, so the phone's switch shares the behavior.
   func setRoutingEnabled(_ enabled: Bool) async {
-    routingEnabled = enabled
-    RoutingIntentStore.save(enabled)
-    await controlListener?.sendRoutingIntent(enabled)
-    logger.notice(
-      "agent routing set enabled=\(enabled, privacy: .public) phoneLinkUp=\(self.phoneLinkUp, privacy: .public)"
-    )
-    if enabled, phoneLinkUp {
-      await signalRouteState(true)
-    } else if !enabled {
-      await signalRouteState(false)
+    if enabled {
+      await enableRouting()
+    } else {
+      await disableRouting()
     }
+  }
+
+  /// Turns routing on. It bumps the start generation, classifies the precondition
+  /// synchronously before any await, then marks intent and starts only on a branch that
+  /// will proceed. Resolving the config before marking intent means a `handlePhoneLink`
+  /// interleaving at the first await never sees `routingEnabled=true` for a request that
+  /// will fail, so the no-config bail installs no routes. Reconciling against
+  /// `relayHosted` rather than the macOS VPN session means a stale connected session left
+  /// by a crash never makes the switch read on without a hosted relay. The no-config bail
+  /// reverts the intent and sets `lastStartError` so the app surfaces the failure.
+  private func enableRouting() async {
+    routingGeneration += 1
+    let generation = routingGeneration
+
+    // Resolve the active config synchronously, before any await, so the precondition is
+    // decided against a stable read and no interleaving callback observes a half-applied
+    // intent.
+    let activeID = configStore.activeID
+    let configText = activeID.flatMap { configStore.text(forID: $0) }
+
+    switch routingEnablePrecondition(
+      relayHosted: relayHosted,
+      hasResolvableActiveConfig: configText != nil
+    ) {
+    case .relayHostedReady:
+      routingEnabled = true
+      lastStartError = nil
+      await controlListener?.sendRoutingIntent(true)
+      logger.notice(
+        "agent routing enabled phoneLinkUp=\(self.phoneLinkUp, privacy: .public)"
+      )
+      if phoneLinkUp {
+        await signalRouteState(true)
+      }
+    case .noActiveConfig:
+      routingEnabled = false
+      lastStartError = noActiveConfigSelectedMessage
+      await controlListener?.sendRoutingIntent(false)
+      logger.notice("agent routing enable found no active config recovery=skip-start")
+    case .activeConfigReady:
+      guard let activeID, let configText else {
+        return
+      }
+      routingEnabled = true
+      lastStartError = nil
+      await controlListener?.sendRoutingIntent(true)
+      logger.notice(
+        "agent routing enabled phoneLinkUp=\(self.phoneLinkUp, privacy: .public)"
+      )
+      startRelaySessionDetached(
+        configText: configText, configID: activeID, generation: generation)
+    }
+  }
+
+  /// Turns routing off. It bumps the start generation so an in-flight detached start is
+  /// superseded, withdraws the program routes, then stops the relay session and the
+  /// relay bridge through the existing stop path. Shared by the routing switch, the
+  /// stop request, and active-config deletion so every teardown clears the same state.
+  func disableRouting() async {
+    routingGeneration += 1
+    routingEnabled = false
+    lastStartError = nil
+    await controlListener?.sendRoutingIntent(false)
+    logger.notice("agent routing disabled recovery=stop-session-and-relay")
+    await signalRouteState(false)
+    _ = await handleStopTunnel()
+  }
+
+  /// Starts the relay session off the XPC reply path so the app's status polls animate
+  /// connecting to on rather than blocking on `waitForSessionConnected`. The captured
+  /// generation lets `applyStartOutcome` detect a start that a later enable or disable
+  /// superseded.
+  private func startRelaySessionDetached(
+    configText: String,
+    configID: UUID,
+    generation: Int
+  ) {
+    logger.notice(
+      "agent routing enable starting relay detached configID=\(configID.uuidString, privacy: .public)"
+    )
+    let previous = relayStartTask
+    relayStartTask = Task { [weak self] in
+      await previous?.value
+      await self?.runRelayStart(configText: configText, configID: configID, generation: generation)
+    }
+  }
+
+  /// Runs one serialized detached start. A start that a later toggle superseded while it
+  /// waited for the prior start to finish bows out here before doing any work, so two
+  /// `startTunnel` runs never overlap.
+  private func runRelayStart(configText: String, configID: UUID, generation: Int) async {
+    guard generation == routingGeneration else {
+      return
+    }
+    let response = await startTunnel(configText: configText, configID: configID)
+    await applyStartOutcome(response, generation: generation)
+  }
+
+  /// Records a detached start's outcome. A start that a later enable or disable
+  /// superseded does not record its result; when the desired state is now off it tears
+  /// down any session the stale start brought up after the disable ran. A current start
+  /// that failed reverts routing and stops the partial session, bridge, and routes so
+  /// status reads off plus the error. A current start that succeeded clears any prior
+  /// error.
+  private func applyStartOutcome(_ response: AgentControlResponse, generation: Int) async {
+    guard generation == routingGeneration else {
+      if !routingEnabled {
+        _ = await handleStopTunnel()
+      }
+      return
+    }
+    guard let failure = response.failure else {
+      lastStartError = nil
+      return
+    }
+    lastStartError = failure.message
+    routingEnabled = false
+    await controlListener?.sendRoutingIntent(false)
+    await signalRouteState(false)
+    _ = await handleStopTunnel()
+    logger.error(
+      """
+      agent detached relay start failed \
+      code=\(failure.errorCode.rawValue, privacy: .public) \
+      message=\(failure.message, privacy: .public) recovery=revert-routing-off-and-stop
+      """
+    )
   }
 
   /// Tracks the live phone link and reconciles routes. A link coming up installs
