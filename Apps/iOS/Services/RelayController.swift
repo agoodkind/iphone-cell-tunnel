@@ -269,6 +269,11 @@ final class RelayController {
   // Status polls left before an unconfirmed routing request reverts to the real
   // state; a positive value means a request is pending, counted down each poll.
   private var routeIntentPollsRemaining = 0
+  /// The active config id held across a new-config create and restore so the poll
+  /// cannot momentarily surface the agent's intermediate "new config is active" state
+  /// between `importConfig` and the restoring `activateConfig`. Non-nil only while a
+  /// create that preserves a prior active config is in flight.
+  private var pinnedActiveConfigID: UUID?
   /// Whether the background agent is installed, the gate to the install-agent setup
   /// tier. Always true on the iPhone, where there is no separate agent; on the Mac
   /// it tracks the install state.
@@ -492,7 +497,10 @@ final class RelayController {
     assign(\.relayServerIPv4Address, sample.relayServerIPv4Address)
     assign(\.relayServerIPv6Address, sample.relayServerIPv6Address)
     assign(\.configLibrary, sample.configLibrary)
-    assign(\.activeConfigID, sample.activeConfigID)
+    // While a create-and-restore is in flight, `pinnedActiveConfigID` holds the prior
+    // active id so a poll landing mid-sequence cannot flicker the checkmark onto the
+    // new config; it is nil otherwise, so the snapshot's id wins.
+    assign(\.activeConfigID, pinnedActiveConfigID ?? sample.activeConfigID)
     recomputeDeviceValues()
     let rate = throughput.update(with: sample.counters)
     assign(\.uploadMbps, rate.upload)
@@ -715,11 +723,18 @@ extension RelayController {
   func createConfig(name: String, text: String) {
     logger.notice("relay controller create config requested")
     let previousActiveID = activeConfigID
+    // Pin the prior active id only when there is one to preserve, so the poll holds
+    // the checkmark in place until the restore lands; with no prior active config the
+    // newly imported one stays active and no restore runs.
+    if previousActiveID != nil {
+      pinnedActiveConfigID = previousActiveID
+    }
     Task {
       await backend.importConfig(name: name, text: text)
       if let previousActiveID {
         await backend.activateConfig(id: previousActiveID)
       }
+      pinnedActiveConfigID = nil
     }
   }
 }
