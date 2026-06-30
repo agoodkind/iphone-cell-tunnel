@@ -98,33 +98,8 @@
       runtime.start()
     }
 
-    // MARK: - Config library
-
-    // The in-process simulator relay hosts no config library.
-    func loadConfigText(id _: UUID) async -> String? {
-      await Task.yield()
-      return nil
-    }
-
-    func importConfig(url _: URL, name _: String) async {
-      await Task.yield()
-    }
-
-    func activateConfig(id _: UUID) async {
-      await Task.yield()
-    }
-
-    func saveConfigEdit(id _: UUID, text _: String) async {
-      await Task.yield()
-    }
-
-    func renameConfig(id _: UUID, name _: String) async {
-      await Task.yield()
-    }
-
-    func deleteConfig(id _: UUID) async {
-      await Task.yield()
-    }
+    // The in-process simulator relay hosts no config library, so it takes the shared
+    // no-op config-op defaults from RelayControlBackend.
   }
 
 #endif

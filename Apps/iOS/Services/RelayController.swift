@@ -194,11 +194,14 @@ protocol RelayControlBackend {
   /// Saves edited WireGuard configuration text for a stored configuration.
   func saveConfigEdit(id: UUID, text: String) async
 
+  /// Deletes a stored configuration from this backend's config library.
+  func deleteConfig(id: UUID) async
+
   /// Renames a stored configuration in this backend's config library.
   func renameConfig(id: UUID, name: String) async
 
-  /// Deletes a stored configuration from this backend's config library.
-  func deleteConfig(id: UUID) async
+  /// Creates and stores a configuration from raw text; the backend validates it.
+  func importConfig(name: String, text: String) async
 }
 
 // MARK: - RelayControlBackend defaults
@@ -266,6 +269,11 @@ final class RelayController {
   // Status polls left before an unconfirmed routing request reverts to the real
   // state; a positive value means a request is pending, counted down each poll.
   private var routeIntentPollsRemaining = 0
+  /// The active config id held across a new-config create and restore so the poll
+  /// cannot momentarily surface the agent's intermediate "new config is active" state
+  /// between `importConfig` and the restoring `activateConfig`. Non-nil only while a
+  /// create that preserves a prior active config is in flight.
+  private var pinnedActiveConfigID: UUID?
   /// Whether the background agent is installed, the gate to the install-agent setup
   /// tier. Always true on the iPhone, where there is no separate agent; on the Mac
   /// it tracks the install state.
@@ -489,7 +497,10 @@ final class RelayController {
     assign(\.relayServerIPv4Address, sample.relayServerIPv4Address)
     assign(\.relayServerIPv6Address, sample.relayServerIPv6Address)
     assign(\.configLibrary, sample.configLibrary)
-    assign(\.activeConfigID, sample.activeConfigID)
+    // While a create-and-restore is in flight, `pinnedActiveConfigID` holds the prior
+    // active id so a poll landing mid-sequence cannot flicker the checkmark onto the
+    // new config; it is nil otherwise, so the snapshot's id wins.
+    assign(\.activeConfigID, pinnedActiveConfigID ?? sample.activeConfigID)
     recomputeDeviceValues()
     let rate = throughput.update(with: sample.counters)
     assign(\.uploadMbps, rate.upload)
@@ -623,9 +634,11 @@ final class RelayController {
     Task { await backend.importConfig(url: url, name: name) }
   }
 
-  /// Makes a stored configuration active and applies it.
+  /// Makes a stored configuration active and applies it. The active id is set optimistically
+  /// so the selection moves on the same frame as the tap; the next status poll reconciles it.
   func activateConfig(id: UUID) {
     logger.notice("relay controller activate config requested")
+    activeConfigID = id
     Task { await backend.activateConfig(id: id) }
   }
 
@@ -657,10 +670,16 @@ extension RelayController {
     backend.usesEgressRoster
   }
 
-  /// Selects which dialed-in iPhone the Mac routes egress through. The next status
-  /// snapshot reflects the new selection in the roster.
+  /// Selects which dialed-in iPhone the Mac routes egress through. The roster is updated
+  /// optimistically so the checkmark moves on the same frame as the tap; the next status
+  /// snapshot reconciles the selection.
   func selectEgressPeer(id: String) async {
     logger.notice("relay controller select egress peer id=\(id, privacy: .public)")
+    connectedPeers = connectedPeers.map { peer in
+      var updated = peer
+      updated.isSelected = peer.id == id
+      return updated
+    }
     await backend.selectEgressPeer(id: id)
   }
 
@@ -686,15 +705,36 @@ extension RelayController {
 // MARK: - Config operations
 
 extension RelayController {
-  /// Renames a stored configuration.
+  /// Deletes a stored configuration.
+  func deleteConfig(id: UUID) {
+    logger.notice("relay controller delete config requested")
+    Task { await backend.deleteConfig(id: id) }
+  }
+
+  /// Renames a stored configuration without touching tunnel state.
   func renameConfig(id: UUID, name: String) {
     logger.notice("relay controller rename config requested")
     Task { await backend.renameConfig(id: id, name: name) }
   }
 
-  /// Deletes a stored configuration.
-  func deleteConfig(id: UUID) {
-    logger.notice("relay controller delete config requested")
-    Task { await backend.deleteConfig(id: id) }
+  /// Creates a stored configuration from raw text without leaving it active, for the
+  /// new-config flow. The agent activates a config on import, so the previously active
+  /// config is restored afterward to keep New from stealing the current selection.
+  func createConfig(name: String, text: String) {
+    logger.notice("relay controller create config requested")
+    let previousActiveID = activeConfigID
+    // Pin the prior active id only when there is one to preserve, so the poll holds
+    // the checkmark in place until the restore lands; with no prior active config the
+    // newly imported one stays active and no restore runs.
+    if previousActiveID != nil {
+      pinnedActiveConfigID = previousActiveID
+    }
+    Task {
+      await backend.importConfig(name: name, text: text)
+      if let previousActiveID {
+        await backend.activateConfig(id: previousActiveID)
+      }
+      pinnedActiveConfigID = nil
+    }
   }
 }

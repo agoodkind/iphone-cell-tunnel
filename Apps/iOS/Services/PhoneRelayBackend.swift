@@ -307,33 +307,10 @@
       await start()
     }
 
-    // MARK: - Config library
+    // MARK: - Provider messaging
 
-    // The iPhone hosts no config library; its tunnel carries no WireGuard config.
-    func loadConfigText(id _: UUID) async -> String? {
-      await Task.yield()
-      return nil
-    }
-
-    func importConfig(url _: URL, name _: String) async {
-      await Task.yield()
-    }
-
-    func activateConfig(id _: UUID) async {
-      await Task.yield()
-    }
-
-    func saveConfigEdit(id _: UUID, text _: String) async {
-      await Task.yield()
-    }
-
-    func renameConfig(id _: UUID, name _: String) async {
-      await Task.yield()
-    }
-
-    func deleteConfig(id _: UUID) async {
-      await Task.yield()
-    }
+    // The iPhone hosts no config library, so it takes the shared no-op config-op defaults
+    // from RelayControlBackend; its tunnel carries no WireGuard config.
 
     private func sendStatusRequest(
       on session: NETunnelProviderSession

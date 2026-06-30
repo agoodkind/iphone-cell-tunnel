@@ -16,18 +16,16 @@
   private let routeToggleTitle = "Route traffic"
   private let dataSectionTitle = "Data"
   private let currentSpeedSectionTitle = "Current Speed"
-  private let tileMinimumWidth: CGFloat = 300
-  private let tileCornerRadius: CGFloat = 14
-  private let maxColumns = 3
+  // The top row and the status tiles below share this fixed two-column track so
+  // their gutters line up; a flexible per-column width keeps the columns equal.
+  private let columnCount = 2
   private let gridSpacing: CGFloat = 16
   private let contentPadding: CGFloat = 24
   private let headerStackSpacing: CGFloat = 4
   private let actionTopPadding: CGFloat = 4
-  private let contentInsetColumns: CGFloat = 2
   private let sectionWeightOverhead = 2
   private let tileContentSpacing: CGFloat = 12
   private let tileRowSpacing: CGFloat = 10
-  private let tilePadding: CGFloat = 16
   // Gap between the routing switch and the in-flight spinner shown on its trailing
   // side while a routing request awaits the agent's confirmation.
   private let routeSpinnerSpacing: CGFloat = 8
@@ -35,10 +33,11 @@
   // MARK: - MacStatusScreen
 
   /// The Mac status screen, a single dashboard. A status header carries the title, the
-  /// live status word, and the routing switch; below it a masonry of rounded tiles,
-  /// one per section, packs by column and reflows with the window width. A value that
-  /// has not arrived renders as a redacted skeleton bar. It reads the same
-  /// `RelayScreenModel` the iPhone list does.
+  /// live status word, and the routing switch; below it a two-column top row pairs the
+  /// Configs library with the Peers roster, and under that the status tiles pack into
+  /// the same two columns so every gutter lines up. A value that has not arrived renders
+  /// as a redacted skeleton bar. It reads the same `RelayScreenModel` the iPhone list
+  /// does.
   struct MacStatusScreen: View {
     @Environment(RelayController.self) private var controller
 
@@ -49,18 +48,13 @@
     // MARK: - Body
 
     var body: some View {
-      GeometryReader { proxy in
-        ScrollView {
-          VStack(alignment: .leading, spacing: contentPadding) {
-            header
-            rosterTile
-            masonry(
-              availableWidth: proxy.size.width - contentPadding * contentInsetColumns)
-            ConfigLibraryView()
-          }
-          .padding(contentPadding)
-          .frame(maxWidth: .infinity, alignment: .leading)
+      ScrollView {
+        VStack(alignment: .leading, spacing: contentPadding) {
+          header
+          masonry
         }
+        .padding(contentPadding)
+        .frame(maxWidth: .infinity, alignment: .leading)
       }
       .animation(.default, value: model.status)
     }
@@ -77,9 +71,10 @@
         VStack(alignment: .leading, spacing: headerStackSpacing) {
           Text(screenTitle)
             .font(.largeTitle.bold())
-          // In the no-peer state the Peers tile carries "Searching for peers", so the
-          // Mac header omits the status word to avoid showing the phrase twice.
-          if model.status != .noPeersFound {
+          // In the no-peer states the Peers tile carries the status word ("Searching for
+          // peers" with no peers, "No peer selected" when none is chosen), so the Mac
+          // header omits it to avoid showing the same phrase twice.
+          if model.status != .noPeersFound, model.status != .noPeerSelected {
             Text(model.statusLabel)
               .font(.title3)
               .foregroundStyle(.secondary)
@@ -136,66 +131,79 @@
 
     // MARK: - Masonry
 
-    // Packs the tiles into balanced columns by row count, so a short tile does not
-    // leave a gap the way an even grid would.
-    private func masonry(availableWidth: CGFloat) -> some View {
-      let columnCount = max(
-        1,
-        min(
-          maxColumns,
-          Int((availableWidth + gridSpacing) / (tileMinimumWidth + gridSpacing))
-        )
+    // The Configs library and the Peers roster lead the two columns, then the status tiles
+    // distribute into whichever column is shorter, so every card packs tightly with no gap
+    // under a short card. Configs seeds the left column and Peers the right, so their
+    // positions stay stable while the status tiles balance the column heights.
+    private var masonry: some View {
+      let columns = distribute(
+        tiles,
+        into: columnCount,
+        seedWeights: [configsWeight, peersWeight]
       )
-      let columns = distribute(tiles, into: columnCount)
       return HStack(alignment: .top, spacing: gridSpacing) {
-        ForEach(Array(columns.enumerated()), id: \.offset) { _, column in
+        ForEach(Array(columns.enumerated()), id: \.offset) { index, column in
           VStack(spacing: gridSpacing) {
+            leadCard(forColumn: index)
             ForEach(column) { section in
               tile(section)
             }
           }
+          .frame(maxWidth: .infinity)
         }
       }
+    }
+
+    // The lead card atop each column: the Configs library on the left, the Peers roster on
+    // the right.
+    @ViewBuilder private func leadCard(forColumn index: Int) -> some View {
+      if index == 0 {
+        ConfigLibraryView()
+      } else {
+        RelayRosterView(
+          peers: model.connectedPeers,
+          subtitle: model.rosterSubtitle
+        ) { id in
+          model.selectEgressPeer(id: id)
+        }
+      }
+    }
+
+    // The Configs and Peers cards seed their columns' heights so the status tiles balance
+    // against them. Each weight is the row count plus the section overhead the status tiles
+    // use, with the Configs actions row counted once.
+    private var configsWeight: Int {
+      controller.configLibrary.count + sectionWeightOverhead + 1
+    }
+
+    private var peersWeight: Int {
+      max(model.connectedPeers.count, 1) + sectionWeightOverhead
     }
 
     private func distribute(
       _ sections: [ConnectionSection],
-      into count: Int
+      into count: Int,
+      seedWeights: [Int]
     ) -> [[ConnectionSection]] {
       var columns = Array(repeating: [ConnectionSection](), count: count)
-      var weights = Array(repeating: 0, count: count)
+      var weights = seedWeights
       for section in sections {
         let target = weights.indices.min { weights[$0] < weights[$1] } ?? 0
         columns[target].append(section)
-        weights[target] += section.rows.count + sectionWeightOverhead
+        weights[target] += weight(of: section)
       }
       return columns
     }
 
-    // MARK: - Roster
-
-    // The dialed-in iPhones as an always-present rounded tile, the Mac egress
-    // selector. It lists zero, one, or several iPhones with the selected one checked,
-    // and shows the roster subtitle when none is selected.
-    private var rosterTile: some View {
-      VStack(alignment: .leading, spacing: tileContentSpacing) {
-        Text(RelayRosterView.title)
-          .font(.headline)
-        VStack(spacing: tileRowSpacing) {
-          RelayRosterView(
-            peers: model.connectedPeers,
-            subtitle: model.rosterSubtitle
-          ) { id in
-            model.selectEgressPeer(id: id)
-          }
-        }
+    // Estimates a section's rendered height in line units so the masonry balances the tall
+    // multi-line address tiles against the short ones. Each row counts as one line plus a
+    // line for every extra line in its value, with the section overhead for the title.
+    private func weight(of section: ConnectionSection) -> Int {
+      var lines = sectionWeightOverhead
+      for row in section.rows {
+        lines += 1 + row.value.filter { $0 == "\n" }.count
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(tilePadding)
-      .background(
-        RoundedRectangle(cornerRadius: tileCornerRadius, style: .continuous)
-          .fill(Color(uiColor: .secondarySystemBackground))
-      )
+      return lines
     }
 
     // MARK: - Tile
@@ -214,12 +222,7 @@
         }
         .font(.subheadline)
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(tilePadding)
-      .background(
-        RoundedRectangle(cornerRadius: tileCornerRadius, style: .continuous)
-          .fill(Color(uiColor: .secondarySystemBackground))
-      )
+      .dashboardTile()
     }
 
     // The connection sections lead, then the lifetime data and the live speed, so the
