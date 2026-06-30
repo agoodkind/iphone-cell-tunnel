@@ -162,72 +162,59 @@
       }
     }
 
-    /// Asks the agent to rename a stored config, metadata only, leaving tunnel state.
-    func renameConfig(id: UUID, name: String) async {
+    /// Forwards one id-keyed config mutation to the agent and logs the shared
+    /// `config <verb> forwarded` and `config <verb> forward failed` outcome, keeping local
+    /// state on failure so a dropped XPC call does not desync the library.
+    private func forwardConfigMutation(
+      _ verb: String,
+      id: UUID,
+      _ work: () async throws -> Void
+    ) async {
       do {
-        _ = try await client.renameConfig(id: id, name: name)
+        try await work()
         logger.notice(
-          "agent relay backend config rename forwarded id=\(id.uuidString, privacy: .public)")
+          """
+          agent relay backend config \(verb, privacy: .public) forwarded \
+          id=\(id.uuidString, privacy: .public)
+          """
+        )
       } catch {
         logger.error(
           """
-          agent relay backend config rename forward failed \
+          agent relay backend config \(verb, privacy: .public) forward failed \
           id=\(id.uuidString, privacy: .public) \
           details=\(String(describing: error), privacy: .public) recovery=keep-state
           """
         )
+      }
+    }
+
+    /// Asks the agent to rename a stored config, metadata only, leaving tunnel state.
+    func renameConfig(id: UUID, name: String) async {
+      await forwardConfigMutation("rename", id: id) {
+        _ = try await client.renameConfig(id: id, name: name)
       }
     }
 
     /// Asks the agent to mark a stored config active without starting relay.
     func activateConfig(id: UUID) async {
-      do {
+      await forwardConfigMutation("activate", id: id) {
         _ = try await client.setActiveConfig(id: id)
-        logger.notice(
-          "agent relay backend config activate forwarded id=\(id.uuidString, privacy: .public)")
-      } catch {
-        logger.error(
-          """
-          agent relay backend config activate forward failed \
-          id=\(id.uuidString, privacy: .public) \
-          details=\(String(describing: error), privacy: .public) recovery=keep-state
-          """
-        )
       }
     }
 
     /// Asks the agent to save edited config text and reload when that config is active.
     func saveConfigEdit(id: UUID, text: String) async {
-      do {
+      await forwardConfigMutation("edit", id: id) {
         _ = try await client.saveConfigEdit(id: id, text: text)
-        logger.notice(
-          "agent relay backend config edit forwarded id=\(id.uuidString, privacy: .public)")
-      } catch {
-        logger.error(
-          """
-          agent relay backend config edit forward failed \
-          id=\(id.uuidString, privacy: .public) \
-          details=\(String(describing: error), privacy: .public) recovery=keep-state
-          """
-        )
       }
     }
 
     /// Asks the agent to delete a stored config, which stops the tunnel first when it
     /// is the active one.
     func deleteConfig(id: UUID) async {
-      do {
+      await forwardConfigMutation("delete", id: id) {
         _ = try await client.deleteConfig(id: id)
-        logger.notice(
-          "agent relay backend config delete forwarded id=\(id.uuidString, privacy: .public)")
-      } catch {
-        logger.error(
-          """
-          agent relay backend config delete forward failed \
-          id=\(id.uuidString, privacy: .public) \
-          details=\(String(describing: error), privacy: .public) recovery=keep-state
-          """
-        )
       }
     }
 

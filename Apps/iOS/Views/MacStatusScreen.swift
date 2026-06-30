@@ -16,7 +16,6 @@
   private let routeToggleTitle = "Route traffic"
   private let dataSectionTitle = "Data"
   private let currentSpeedSectionTitle = "Current Speed"
-  private let tileCornerRadius: CGFloat = 14
   // The top row and the status tiles below share this fixed two-column track so
   // their gutters line up; a flexible per-column width keeps the columns equal.
   private let columnCount = 2
@@ -27,7 +26,6 @@
   private let sectionWeightOverhead = 2
   private let tileContentSpacing: CGFloat = 12
   private let tileRowSpacing: CGFloat = 10
-  private let tilePadding: CGFloat = 16
   // Gap between the routing switch and the in-flight spinner shown on its trailing
   // side while a routing request awaits the agent's confirmation.
   private let routeSpinnerSpacing: CGFloat = 8
@@ -224,12 +222,7 @@
         }
         .font(.subheadline)
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
-      .padding(tilePadding)
-      .background(
-        RoundedRectangle(cornerRadius: tileCornerRadius, style: .continuous)
-          .fill(Color(uiColor: .secondarySystemBackground))
-      )
+      .dashboardTile()
     }
 
     // The connection sections lead, then the lifetime data and the live speed, so the

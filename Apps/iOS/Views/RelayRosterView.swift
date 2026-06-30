@@ -13,14 +13,8 @@ import SwiftUI
 
 private let rosterSectionTitle = "Peers"
 private let rosterCountSuffix = "available"
-private let rosterActiveSymbol = "checkmark"
-private let rosterTileCornerRadius: CGFloat = 14
-private let rosterTilePadding: CGFloat = 16
 private let rosterSectionSpacing: CGFloat = 12
 private let rosterHeaderSpacing: CGFloat = 10
-private let rosterRowSpacing: CGFloat = 10
-private let rosterRowVerticalPadding: CGFloat = 8
-private let rosterIconWidth: CGFloat = 16
 private let rosterSelectedAccessibilityLabel = "Routing peer"
 
 // MARK: - RelayRosterView
@@ -45,12 +39,7 @@ struct RelayRosterView: View {
       header
       content
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(rosterTilePadding)
-    .background(
-      RoundedRectangle(cornerRadius: rosterTileCornerRadius, style: .continuous)
-        .fill(Color(uiColor: .secondarySystemBackground))
-    )
+    .dashboardTile()
   }
 
   // MARK: - Header
@@ -95,23 +84,12 @@ struct RelayRosterView: View {
   }
 
   private func peerRow(_ peer: ConnectedPeer) -> some View {
-    HStack(spacing: rosterRowSpacing) {
-      Image(systemName: rosterActiveSymbol)
-        .foregroundStyle(.tint)
-        .opacity(peer.isSelected ? 1 : 0)
-        .accessibilityLabel(rosterSelectedAccessibilityLabel)
-        .accessibilityHidden(!peer.isSelected)
-        .frame(width: rosterIconWidth)
-      Text(peer.name.isEmpty ? peer.id : peer.name)
-        .font(.subheadline)
-        .lineLimit(1)
-        .truncationMode(.tail)
-      Spacer(minLength: rosterRowSpacing)
-    }
-    .padding(.vertical, rosterRowVerticalPadding)
-    .contentShape(.rect)
-    .onTapGesture {
-      onSelect(peer.id)
-    }
+    SelectableRow(
+      isSelected: peer.isSelected,
+      title: peer.name.isEmpty ? peer.id : peer.name,
+      selectionAccessibilityLabel: rosterSelectedAccessibilityLabel,
+      onTap: { onSelect(peer.id) },
+      trailing: { EmptyView() }
+    )
   }
 }

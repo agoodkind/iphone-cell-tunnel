@@ -26,17 +26,11 @@ private let configLibraryRenameConfirmTitle = "Rename"
 private let configLibraryCancelTitle = "Cancel"
 private let configLibraryEmptyMessage =
   "No configs yet. Add a new one or import a WireGuard config."
-private let configLibraryActiveSymbol = "checkmark"
 private let configLibraryActionsSymbol = "ellipsis.circle"
 private let configLibraryActiveAccessibilityLabel = "Active config"
-private let configLibraryTileCornerRadius: CGFloat = 14
-private let configLibraryTilePadding: CGFloat = 16
 private let configLibrarySectionSpacing: CGFloat = 12
 private let configLibraryHeaderSpacing: CGFloat = 10
-private let configLibraryRowSpacing: CGFloat = 10
-private let configLibraryRowVerticalPadding: CGFloat = 8
 private let configLibraryActionSpacing: CGFloat = 8
-private let configLibraryIconWidth: CGFloat = 16
 private let configLibraryDividerOutset: CGFloat = 8
 private let configLibraryContentTypes: [UTType] = [
   UTType(filenameExtension: "conf") ?? .data,
@@ -97,12 +91,7 @@ struct ConfigLibraryView: View {
         .font(.headline)
       content
     }
-    .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(configLibraryTilePadding)
-    .background(
-      RoundedRectangle(cornerRadius: configLibraryTileCornerRadius, style: .continuous)
-        .fill(Color(uiColor: .secondarySystemBackground))
-    )
+    .dashboardTile()
   }
 
   // MARK: - Rows
@@ -128,26 +117,13 @@ struct ConfigLibraryView: View {
   }
 
   private func configRow(_ config: TunnelConfigSummary) -> some View {
-    let isActive = config.id == controller.activeConfigID
-    return HStack(spacing: configLibraryRowSpacing) {
-      Image(systemName: configLibraryActiveSymbol)
-        .foregroundStyle(.tint)
-        .opacity(isActive ? 1 : 0)
-        .accessibilityLabel(configLibraryActiveAccessibilityLabel)
-        .accessibilityHidden(!isActive)
-        .frame(width: configLibraryIconWidth)
-      Text(config.name)
-        .font(.subheadline)
-        .lineLimit(1)
-        .truncationMode(.tail)
-      Spacer(minLength: configLibraryRowSpacing)
-      rowMenu(config)
-    }
-    .padding(.vertical, configLibraryRowVerticalPadding)
-    .contentShape(.rect)
-    .onTapGesture {
-      controller.activateConfig(id: config.id)
-    }
+    SelectableRow(
+      isSelected: config.id == controller.activeConfigID,
+      title: config.name,
+      selectionAccessibilityLabel: configLibraryActiveAccessibilityLabel,
+      onTap: { controller.activateConfig(id: config.id) },
+      trailing: { rowMenu(config) }
+    )
   }
 
   // The trailing native menu using the system ellipsis-circle symbol. Delete carries the
