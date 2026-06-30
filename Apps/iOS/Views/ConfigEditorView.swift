@@ -115,12 +115,17 @@ struct ConfigEditorView: View {
       .navigationBarTitleDisplayMode(.inline)
       .task {
         if let config {
-          text = await controller.loadConfigText(id: config.id) ?? ""
+          // Gate `loaded` on a real fetch so a nil load leaves Save disabled and
+          // cannot overwrite the stored config with empty text.
+          if let loadedText = await controller.loadConfigText(id: config.id) {
+            text = loadedText
+            loaded = true
+          }
         } else {
           text = Self.newConfigTemplate()
           editing = true
+          loaded = true
         }
-        loaded = true
         heavyReady = true
       }
       .toolbar {
@@ -152,6 +157,11 @@ struct ConfigEditorView: View {
     if config != nil {
       ToolbarItem(placement: .primaryAction) {
         Button(editing ? configEditorDoneTitle : configEditorEditTitle) {
+          // Entering edit can reorder or renumber lines, so drop the revealed-line set
+          // first; otherwise a stale line id would reveal a different secret on return.
+          if !editing {
+            revealedLineIDs.removeAll()
+          }
           editing.toggle()
         }
       }
