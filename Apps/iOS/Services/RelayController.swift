@@ -626,15 +626,11 @@ final class RelayController {
     Task { await backend.importConfig(url: url, name: name) }
   }
 
-  /// Creates a stored configuration from raw text, for the new-config flow.
-  func importConfig(name: String, text: String) {
-    logger.notice("relay controller create config requested")
-    Task { await backend.importConfig(name: name, text: text) }
-  }
-
-  /// Makes a stored configuration active and applies it.
+  /// Makes a stored configuration active and applies it. The active id is set optimistically
+  /// so the selection moves on the same frame as the tap; the next status poll reconciles it.
   func activateConfig(id: UUID) {
     logger.notice("relay controller activate config requested")
+    activeConfigID = id
     Task { await backend.activateConfig(id: id) }
   }
 
@@ -666,10 +662,16 @@ extension RelayController {
     backend.usesEgressRoster
   }
 
-  /// Selects which dialed-in iPhone the Mac routes egress through. The next status
-  /// snapshot reflects the new selection in the roster.
+  /// Selects which dialed-in iPhone the Mac routes egress through. The roster is updated
+  /// optimistically so the checkmark moves on the same frame as the tap; the next status
+  /// snapshot reconciles the selection.
   func selectEgressPeer(id: String) async {
     logger.notice("relay controller select egress peer id=\(id, privacy: .public)")
+    connectedPeers = connectedPeers.map { peer in
+      var updated = peer
+      updated.isSelected = peer.id == id
+      return updated
+    }
     await backend.selectEgressPeer(id: id)
   }
 
@@ -705,5 +707,19 @@ extension RelayController {
   func renameConfig(id: UUID, name: String) {
     logger.notice("relay controller rename config requested")
     Task { await backend.renameConfig(id: id, name: name) }
+  }
+
+  /// Creates a stored configuration from raw text without leaving it active, for the
+  /// new-config flow. The agent activates a config on import, so the previously active
+  /// config is restored afterward to keep New from stealing the current selection.
+  func createConfig(name: String, text: String) {
+    logger.notice("relay controller create config requested")
+    let previousActiveID = activeConfigID
+    Task {
+      await backend.importConfig(name: name, text: text)
+      if let previousActiveID {
+        await backend.activateConfig(id: previousActiveID)
+      }
+    }
   }
 }

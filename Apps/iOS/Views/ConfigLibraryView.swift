@@ -26,7 +26,6 @@ private let configLibraryRenameConfirmTitle = "Rename"
 private let configLibraryCancelTitle = "Cancel"
 private let configLibraryEmptyMessage =
   "No configs yet. Add a new one or import a WireGuard config."
-private let configLibraryNewConfigName = "New Config"
 private let configLibraryActiveSymbol = "checkmark"
 private let configLibraryActionsSymbol = "ellipsis.circle"
 private let configLibraryActiveAccessibilityLabel = "Active config"
@@ -38,7 +37,7 @@ private let configLibraryRowSpacing: CGFloat = 10
 private let configLibraryRowVerticalPadding: CGFloat = 8
 private let configLibraryActionSpacing: CGFloat = 8
 private let configLibraryIconWidth: CGFloat = 16
-private let configLibraryKeyByteCount = 32
+private let configLibraryDividerOutset: CGFloat = 8
 private let configLibraryContentTypes: [UTType] = [
   UTType(filenameExtension: "conf") ?? .data,
   .text,
@@ -51,11 +50,13 @@ private let configLibraryContentTypes: [UTType] = [
 /// `secondarySystemBackground` card the status tiles use, with the `Configs` title inside
 /// it. The configs are stacked rows separated by dividers; each row is a leading checkmark
 /// on the active config, the name, and a trailing native `Menu` of Edit, Rename, and a
-/// destructive Delete. Tapping a row activates that config. Import and New sit at the foot
-/// as standard buttons.
+/// destructive Delete. Tapping a row activates that config. Import and New sit below the
+/// card, outside the grey tile. New opens the editor on a blank config and creates it on
+/// save without stealing the active selection.
 struct ConfigLibraryView: View {
   @Environment(RelayController.self) private var controller
   @State private var isImportingConfig = false
+  @State private var isCreatingConfig = false
   @State private var editingConfig: TunnelConfigSummary?
   @State private var isRenaming = false
   @State private var renamingID: UUID?
@@ -65,19 +66,15 @@ struct ConfigLibraryView: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: configLibrarySectionSpacing) {
-      Text(configLibraryTitle)
-        .font(.headline)
-      content
+      card
       actions
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .padding(configLibraryTilePadding)
-    .background(
-      RoundedRectangle(cornerRadius: configLibraryTileCornerRadius, style: .continuous)
-        .fill(Color(uiColor: .secondarySystemBackground))
-    )
     .sheet(item: $editingConfig) { config in
       ConfigEditorView(config: config)
+    }
+    .sheet(isPresented: $isCreatingConfig) {
+      ConfigEditorView(config: nil)
     }
     .fileImporter(
       isPresented: $isImportingConfig,
@@ -89,6 +86,23 @@ struct ConfigLibraryView: View {
     .alert(configLibraryRenameSheetTitle, isPresented: $isRenaming) {
       renameAlertContent
     }
+  }
+
+  // MARK: - Card
+
+  // The grey tile holds the title and the config rows, matching the status tiles.
+  private var card: some View {
+    VStack(alignment: .leading, spacing: configLibraryHeaderSpacing) {
+      Text(configLibraryTitle)
+        .font(.headline)
+      content
+    }
+    .frame(maxWidth: .infinity, alignment: .leading)
+    .padding(configLibraryTilePadding)
+    .background(
+      RoundedRectangle(cornerRadius: configLibraryTileCornerRadius, style: .continuous)
+        .fill(Color(uiColor: .secondarySystemBackground))
+    )
   }
 
   // MARK: - Rows
@@ -105,6 +119,7 @@ struct ConfigLibraryView: View {
         ForEach(Array(configs.enumerated()), id: \.element.id) { index, config in
           if index > 0 {
             Divider()
+              .padding(.horizontal, -configLibraryDividerOutset)
           }
           configRow(config)
         }
@@ -122,6 +137,7 @@ struct ConfigLibraryView: View {
         .accessibilityHidden(!isActive)
         .frame(width: configLibraryIconWidth)
       Text(config.name)
+        .font(.subheadline)
         .lineLimit(1)
         .truncationMode(.tail)
       Spacer(minLength: configLibraryRowSpacing)
@@ -161,6 +177,8 @@ struct ConfigLibraryView: View {
 
   // MARK: - Actions
 
+  // Import and New sit below the card, outside the grey tile, like the System Settings
+  // Other button. New opens a blank editor; the config is created on save.
   private var actions: some View {
     HStack(spacing: configLibraryActionSpacing) {
       Spacer(minLength: 0)
@@ -169,7 +187,7 @@ struct ConfigLibraryView: View {
       }
       .buttonStyle(.bordered)
       Button(configLibraryNewTitle) {
-        createNewConfig()
+        isCreatingConfig = true
       }
       .buttonStyle(.bordered)
     }
@@ -201,7 +219,7 @@ struct ConfigLibraryView: View {
     controller.renameConfig(id: id, name: name)
   }
 
-  // MARK: - Import and create
+  // MARK: - Import
 
   private func handleImport(_ result: Result<[URL], Error>) {
     switch result {
@@ -214,34 +232,5 @@ struct ConfigLibraryView: View {
     case .failure:
       break
     }
-  }
-
-  // Seeds a parseable, unique placeholder config and hands it to the create path. The
-  // agent validates on import and rejects unparseable text, and dedups by normalized
-  // text, so the placeholder carries a fresh random key to pass validation and stay
-  // distinct across repeated New actions. The user opens Edit to fill in real values.
-  private func createNewConfig() {
-    let key = Self.randomWireGuardKeyBase64()
-    let template = """
-      [Interface]
-      PrivateKey = \(key)
-      Address = 10.0.0.2/32
-
-      [Peer]
-      PublicKey = \(key)
-      Endpoint = example.com:51820
-      AllowedIPs = 0.0.0.0/0
-      """
-    controller.importConfig(name: configLibraryNewConfigName, text: template)
-  }
-
-  /// A fresh 32-byte base64 value shaped like a WireGuard key, unique per call so the
-  /// placeholder both parses and defeats the agent's text dedup.
-  private static func randomWireGuardKeyBase64() -> String {
-    var bytes = [UInt8](repeating: 0, count: configLibraryKeyByteCount)
-    for index in bytes.indices {
-      bytes[index] = UInt8.random(in: UInt8.min...UInt8.max)
-    }
-    return Data(bytes).base64EncodedString()
   }
 }

@@ -7,6 +7,7 @@
 //
 
 import CellTunnelCore
+import Foundation
 import SwiftUI
 
 // MARK: - Constants
@@ -25,11 +26,29 @@ private let configEditorMaskBullets = String(
   repeating: "\u{2022}",
   count: configEditorMaskBulletCount
 )
-private let configEditorTitleSpacing: CGFloat = 16
+private let configEditorNameSectionTitle = "Name"
+private let configEditorConfigSectionTitle = "Configuration"
+private let configEditorMinWidth: CGFloat = 460
+private let configEditorMinHeight: CGFloat = 520
+private let configEditorTextMinHeight: CGFloat = 240
 private let configEditorLineSpacing: CGFloat = 2
 private let configEditorRevealSpacing: CGFloat = 8
 private let configEditorEmptyLinePlaceholder = " "
 private let configEditorMonospace: Font = .system(.body, design: .monospaced)
+private let configEditorNamePlaceholder = "Config Name"
+private let configEditorNewTitle = "New Config"
+private let configEditorNewConfigName = "New Config"
+private let configEditorKeyByteCount = 32
+private let configEditorNewTemplate = """
+  [Interface]
+  PrivateKey = %@
+  Address = 10.0.0.2/32
+
+  [Peer]
+  PublicKey = %@
+  Endpoint = example.com:51820
+  AllowedIPs = 0.0.0.0/0
+  """
 
 // MARK: - ConfigEditorLineKind
 
@@ -63,42 +82,62 @@ private struct ConfigEditorLine: Identifiable {
 /// editor. Save is disabled until the text has loaded so a failed fetch cannot
 /// overwrite the stored config with empty text.
 struct ConfigEditorView: View {
-  let config: TunnelConfigSummary
+  /// The config being edited, or nil when composing a new config.
+  let config: TunnelConfigSummary?
   @Environment(RelayController.self) private var controller
   @Environment(\.dismiss) private var dismiss
   @State private var text = ""
   @State private var loaded = false
   @State private var editing = false
+  @State private var newName = ""
+  @State private var heavyReady = false
   @State private var revealedLineIDs: Set<Int> = []
 
   // MARK: - Body
 
   var body: some View {
     NavigationStack {
-      VStack(alignment: .leading, spacing: configEditorTitleSpacing) {
-        title
-        editorBody
+      Form {
+        Section(configEditorNameSectionTitle) {
+          if config == nil {
+            TextField(configEditorNamePlaceholder, text: $newName)
+          } else {
+            Text(config?.name ?? "")
+              .foregroundStyle(.secondary)
+          }
+        }
+        Section(configEditorConfigSectionTitle) {
+          editorBody
+        }
       }
-      .padding()
-      .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      .formStyle(.grouped)
+      .navigationTitle(principalTitle)
+      .navigationBarTitleDisplayMode(.inline)
       .task {
-        text = await controller.loadConfigText(id: config.id) ?? ""
+        if let config {
+          text = await controller.loadConfigText(id: config.id) ?? ""
+        } else {
+          text = Self.newConfigTemplate()
+          editing = true
+        }
         loaded = true
+        heavyReady = true
       }
       .toolbar {
         toolbarContent
       }
     }
+    .frame(minWidth: configEditorMinWidth, minHeight: configEditorMinHeight)
   }
 
   // MARK: - Title
 
-  private var title: some View {
-    Text(config.name)
-      .font(.largeTitle)
-      .bold()
-      .lineLimit(1)
-      .truncationMode(.tail)
+  /// The principal toolbar label: the config name when editing, or the typed new name.
+  private var principalTitle: String {
+    if let config {
+      return config.name
+    }
+    return newName.isEmpty ? configEditorNewTitle : newName
   }
 
   // MARK: - Toolbar
@@ -108,17 +147,13 @@ struct ConfigEditorView: View {
       Button(configEditorCancelTitle) {
         dismiss()
       }
+      .fixedSize()
     }
-    ToolbarItem(placement: .principal) {
-      Text(config.name)
-        .font(.subheadline)
-        .foregroundStyle(.secondary)
-        .lineLimit(1)
-        .truncationMode(.tail)
-    }
-    ToolbarItem(placement: .primaryAction) {
-      Button(editing ? configEditorDoneTitle : configEditorEditTitle) {
-        editing.toggle()
+    if config != nil {
+      ToolbarItem(placement: .primaryAction) {
+        Button(editing ? configEditorDoneTitle : configEditorEditTitle) {
+          editing.toggle()
+        }
       }
     }
     ToolbarItem(placement: .confirmationAction) {
@@ -135,23 +170,32 @@ struct ConfigEditorView: View {
   /// Shows the masked read view by default and a plain editor while editing.
   @ViewBuilder private var editorBody: some View {
     if editing {
-      TextEditor(text: $text)
-        .font(configEditorMonospace)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      if heavyReady {
+        TextEditor(text: $text)
+          .font(configEditorMonospace)
+          .frame(minHeight: configEditorTextMinHeight)
+      } else {
+        Text(text)
+          .font(configEditorMonospace)
+          .foregroundStyle(.secondary)
+          .frame(
+            maxWidth: .infinity,
+            minHeight: configEditorTextMinHeight,
+            alignment: .topLeading
+          )
+      }
     } else {
       maskedReadView
     }
   }
 
   private var maskedReadView: some View {
-    ScrollView {
-      LazyVStack(alignment: .leading, spacing: configEditorLineSpacing) {
-        ForEach(parsedLines) { line in
-          lineRow(line)
-        }
+    VStack(alignment: .leading, spacing: configEditorLineSpacing) {
+      ForEach(parsedLines) { line in
+        lineRow(line)
       }
-      .frame(maxWidth: .infinity, alignment: .leading)
     }
+    .frame(maxWidth: .infinity, alignment: .leading)
   }
 
   // MARK: - Line rows
@@ -232,8 +276,33 @@ struct ConfigEditorView: View {
   }
 
   private func saveAndDismiss() {
-    controller.saveConfigEdit(id: config.id, text: text)
+    if let config {
+      controller.saveConfigEdit(id: config.id, text: text)
+    } else {
+      let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+      controller.createConfig(
+        name: name.isEmpty ? configEditorNewConfigName : name,
+        text: text
+      )
+    }
     dismiss()
+  }
+
+  /// A starter WireGuard config for a new entry, carrying a generated key so it parses,
+  /// with placeholder values the user replaces.
+  private static func newConfigTemplate() -> String {
+    let key = randomWireGuardKeyBase64()
+    return String(format: configEditorNewTemplate, key, key)
+  }
+
+  /// A fresh 32-byte base64 value shaped like a WireGuard key, unique per call so the
+  /// starter config parses and stays distinct across repeated New actions.
+  private static func randomWireGuardKeyBase64() -> String {
+    var bytes = [UInt8](repeating: 0, count: configEditorKeyByteCount)
+    for index in bytes.indices {
+      bytes[index] = UInt8.random(in: UInt8.min...UInt8.max)
+    }
+    return Data(bytes).base64EncodedString()
   }
 
   // MARK: - Parsing

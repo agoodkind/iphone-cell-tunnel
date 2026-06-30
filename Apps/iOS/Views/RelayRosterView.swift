@@ -103,6 +103,7 @@ struct RelayRosterView: View {
         .accessibilityHidden(!peer.isSelected)
         .frame(width: rosterIconWidth)
       Text(peer.name.isEmpty ? peer.id : peer.name)
+        .font(.subheadline)
         .lineLimit(1)
         .truncationMode(.tail)
       Spacer(minLength: rosterRowSpacing)

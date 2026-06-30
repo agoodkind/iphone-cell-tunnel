@@ -192,9 +192,20 @@
       for section in sections {
         let target = weights.indices.min { weights[$0] < weights[$1] } ?? 0
         columns[target].append(section)
-        weights[target] += section.rows.count + sectionWeightOverhead
+        weights[target] += weight(of: section)
       }
       return columns
+    }
+
+    // Estimates a section's rendered height in line units so the masonry balances the tall
+    // multi-line address tiles against the short ones. Each row counts as one line plus a
+    // line for every extra line in its value, with the section overhead for the title.
+    private func weight(of section: ConnectionSection) -> Int {
+      var lines = sectionWeightOverhead
+      for row in section.rows {
+        lines += 1 + row.value.filter { $0 == "\n" }.count
+      }
+      return lines
     }
 
     // MARK: - Tile
