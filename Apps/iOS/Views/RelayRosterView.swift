@@ -13,29 +13,26 @@ import SwiftUI
 
 private let rosterSectionTitle = "Peers"
 private let rosterCountSuffix = "available"
-private let selectedPeerSymbol = "checkmark"
+private let rosterActiveSymbol = "checkmark"
 private let rosterTileCornerRadius: CGFloat = 14
-private let rosterRowCornerRadius: CGFloat = 9
 private let rosterTilePadding: CGFloat = 16
-private let rosterHeaderSpacing: CGFloat = 12
-private let rosterListSpacing: CGFloat = 4
-private let rosterRowSpacing: CGFloat = 12
-private let rosterRowHorizontalPadding: CGFloat = 10
-private let rosterRowVerticalPadding: CGFloat = 9
-private let rosterSelectedRowOpacity: Double = 0.1
-private let selectedPeerAccessibilityLabel = "Selected peer"
+private let rosterSectionSpacing: CGFloat = 12
+private let rosterHeaderSpacing: CGFloat = 10
+private let rosterRowSpacing: CGFloat = 10
+private let rosterRowVerticalPadding: CGFloat = 8
+private let rosterIconWidth: CGFloat = 16
+private let rosterSelectedAccessibilityLabel = "Routing peer"
 
 // MARK: - RelayRosterView
 
-/// The roster of dialed-in iPhones as a selectable tile on the Mac, the egress
-/// selector, styled to match the Configs column. The header carries the `Peers`
-/// title and a secondary count once peers exist; each row is just the peer name and
-/// a trailing checkmark in the tint when it is selected, with a faint tint background
-/// behind the selected row. Tapping a row selects it for egress. The subtitle, sourced
-/// from `RelayScreenModel.rosterSubtitle`, reads `Searching for peers` with an empty
-/// roster and `No peer selected` when peers await a choice; a selected peer passes a
-/// nil subtitle, so the checked row alone shows the choice. Deliberately minimal: no
-/// avatars, no per-peer metadata, no status sublines. SF Symbols only.
+/// Presents the dialed-in iPhones inside the shared masonry tile, the same rounded
+/// `secondarySystemBackground` card the status tiles use, with the `Peers` title inside it.
+/// The peers are stacked rows separated by dividers; each row is a leading checkmark on the
+/// routing iPhone and the name. Tapping a row routes egress through it. The view is
+/// select-only: no remove, no per-row menu. The header carries the title and a count once
+/// peers exist. The subtitle, sourced from `RelayScreenModel.rosterSubtitle`, reads
+/// `Searching for peers` with an empty roster and `No peer selected` when peers await a
+/// choice; a selected peer passes a nil subtitle, so the checked row alone shows the choice.
 struct RelayRosterView: View {
   let peers: [ConnectedPeer]
   let subtitle: String?
@@ -44,9 +41,9 @@ struct RelayRosterView: View {
   // MARK: - Body
 
   var body: some View {
-    VStack(alignment: .leading, spacing: rosterHeaderSpacing) {
+    VStack(alignment: .leading, spacing: rosterSectionSpacing) {
       header
-      peerContent
+      content
     }
     .frame(maxWidth: .infinity, alignment: .leading)
     .padding(rosterTilePadding)
@@ -62,9 +59,7 @@ struct RelayRosterView: View {
     HStack(alignment: .firstTextBaseline) {
       Text(rosterSectionTitle)
         .font(.headline)
-      Spacer(minLength: rosterRowSpacing)
-      // The count is a quiet secondary tally shown only once peers exist, so an
-      // empty roster carries the subtitle alone.
+      Spacer(minLength: rosterHeaderSpacing)
       if !peers.isEmpty {
         Text(countLabel)
           .font(.subheadline)
@@ -79,22 +74,20 @@ struct RelayRosterView: View {
     "\(peers.count) \(rosterCountSuffix)"
   }
 
-  // MARK: - Rows
+  // MARK: - Content
 
-  // The subtitle leads when it applies, centered as secondary text, then the rows
-  // follow when any peer is present. An empty roster shows the subtitle alone; a
-  // selected peer drops the subtitle and shows only the checked rows.
-  @ViewBuilder private var peerContent: some View {
+  @ViewBuilder private var content: some View {
     if let subtitle {
       Text(subtitle)
         .font(.subheadline)
         .foregroundStyle(.secondary)
-        .multilineTextAlignment(.center)
-        .frame(maxWidth: .infinity)
     }
     if !peers.isEmpty {
-      VStack(spacing: rosterListSpacing) {
-        ForEach(peers) { peer in
+      VStack(spacing: 0) {
+        ForEach(Array(peers.enumerated()), id: \.element.id) { index, peer in
+          if index > 0 {
+            Divider()
+          }
           peerRow(peer)
         }
       }
@@ -102,37 +95,22 @@ struct RelayRosterView: View {
   }
 
   private func peerRow(_ peer: ConnectedPeer) -> some View {
-    Button {
-      onSelect(peer.id)
-    } label: {
-      rowLabel(peer)
-    }
-    .buttonStyle(.plain)
-    .background(rowBackground(isSelected: peer.isSelected))
-  }
-
-  private func rowLabel(_ peer: ConnectedPeer) -> some View {
     HStack(spacing: rosterRowSpacing) {
+      Image(systemName: rosterActiveSymbol)
+        .foregroundStyle(.tint)
+        .opacity(peer.isSelected ? 1 : 0)
+        .accessibilityLabel(rosterSelectedAccessibilityLabel)
+        .accessibilityHidden(!peer.isSelected)
+        .frame(width: rosterIconWidth)
       Text(peer.name.isEmpty ? peer.id : peer.name)
-        .font(.subheadline)
         .lineLimit(1)
         .truncationMode(.tail)
-        .frame(maxWidth: .infinity, alignment: .leading)
-      if peer.isSelected {
-        Image(systemName: selectedPeerSymbol)
-          .foregroundStyle(.tint)
-          .accessibilityLabel(selectedPeerAccessibilityLabel)
-      }
+      Spacer(minLength: rosterRowSpacing)
     }
-    .padding(.horizontal, rosterRowHorizontalPadding)
     .padding(.vertical, rosterRowVerticalPadding)
     .contentShape(.rect)
-  }
-
-  @ViewBuilder private func rowBackground(isSelected: Bool) -> some View {
-    if isSelected {
-      RoundedRectangle(cornerRadius: rosterRowCornerRadius, style: .continuous)
-        .fill(.tint.opacity(rosterSelectedRowOpacity))
+    .onTapGesture {
+      onSelect(peer.id)
     }
   }
 }

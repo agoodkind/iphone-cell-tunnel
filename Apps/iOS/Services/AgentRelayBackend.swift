@@ -143,13 +143,36 @@
         return
       }
 
+      await importConfig(name: name, text: text)
+    }
+
+    /// Creates a config from raw text via the agent, which validates, stores, and
+    /// activates it. The new-config flow and the file import share this path.
+    func importConfig(name: String, text: String) async {
       do {
         _ = try await client.importConfig(name: name, text: text)
-        logger.notice("agent relay backend config import forwarded")
+        logger.notice("agent relay backend config create forwarded")
       } catch {
         logger.error(
           """
-          agent relay backend config import forward failed \
+          agent relay backend config create forward failed \
+          details=\(String(describing: error), privacy: .public) recovery=keep-state
+          """
+        )
+      }
+    }
+
+    /// Asks the agent to rename a stored config, metadata only, leaving tunnel state.
+    func renameConfig(id: UUID, name: String) async {
+      do {
+        _ = try await client.renameConfig(id: id, name: name)
+        logger.notice(
+          "agent relay backend config rename forwarded id=\(id.uuidString, privacy: .public)")
+      } catch {
+        logger.error(
+          """
+          agent relay backend config rename forward failed \
+          id=\(id.uuidString, privacy: .public) \
           details=\(String(describing: error), privacy: .public) recovery=keep-state
           """
         )

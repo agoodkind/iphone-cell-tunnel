@@ -121,6 +121,14 @@
     func deleteConfig(id _: UUID) async {
       await Task.yield()
     }
+
+    func renameConfig(id _: UUID, name _: String) async {
+      await Task.yield()
+    }
+
+    func importConfig(name _: String, text _: String) async {
+      await Task.yield()
+    }
   }
 
 #endif

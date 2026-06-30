@@ -53,8 +53,7 @@
       ScrollView {
         VStack(alignment: .leading, spacing: contentPadding) {
           header
-          topRow
-          statusTiles
+          masonry
         }
         .padding(contentPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -132,37 +131,22 @@
         .fixedSize()
     }
 
-    // MARK: - Top row
+    // MARK: - Masonry
 
-    // The Configs library on the left and the Peers roster on the right as two equal
-    // columns above the status tiles. Each column view renders its own rounded tile, so
-    // the dashboard adds no wrapper chrome; the per-column `maxWidth: .infinity` pins
-    // both to the same two-column track the status tiles use so their gutters align.
-    private var topRow: some View {
-      HStack(alignment: .top, spacing: gridSpacing) {
-        ConfigLibraryView()
-          .frame(maxWidth: .infinity)
-        RelayRosterView(
-          peers: model.connectedPeers,
-          subtitle: model.rosterSubtitle
-        ) { id in
-          model.selectEgressPeer(id: id)
-        }
-        .frame(maxWidth: .infinity)
-      }
-    }
-
-    // MARK: - Status tiles
-
-    // The section tiles packed into the same two equal columns as the top row, balanced
-    // by row count so a short tile does not leave a gap the way an even grid would. Each
-    // column carries `maxWidth: .infinity` so the two columns stay equal and a long row
-    // never widens one side past the top-row cards above it.
-    private var statusTiles: some View {
-      let columns = distribute(tiles, into: columnCount)
+    // The Configs library and the Peers roster lead the two columns, then the status tiles
+    // distribute into whichever column is shorter, so every card packs tightly with no gap
+    // under a short card. Configs seeds the left column and Peers the right, so their
+    // positions stay stable while the status tiles balance the column heights.
+    private var masonry: some View {
+      let columns = distribute(
+        tiles,
+        into: columnCount,
+        seedWeights: [configsWeight, peersWeight]
+      )
       return HStack(alignment: .top, spacing: gridSpacing) {
-        ForEach(Array(columns.enumerated()), id: \.offset) { _, column in
+        ForEach(Array(columns.enumerated()), id: \.offset) { index, column in
           VStack(spacing: gridSpacing) {
+            leadCard(forColumn: index)
             ForEach(column) { section in
               tile(section)
             }
@@ -172,12 +156,39 @@
       }
     }
 
+    // The lead card atop each column: the Configs library on the left, the Peers roster on
+    // the right.
+    @ViewBuilder private func leadCard(forColumn index: Int) -> some View {
+      if index == 0 {
+        ConfigLibraryView()
+      } else {
+        RelayRosterView(
+          peers: model.connectedPeers,
+          subtitle: model.rosterSubtitle
+        ) { id in
+          model.selectEgressPeer(id: id)
+        }
+      }
+    }
+
+    // The Configs and Peers cards seed their columns' heights so the status tiles balance
+    // against them. Each weight is the row count plus the section overhead the status tiles
+    // use, with the Configs actions row counted once.
+    private var configsWeight: Int {
+      controller.configLibrary.count + sectionWeightOverhead + 1
+    }
+
+    private var peersWeight: Int {
+      max(model.connectedPeers.count, 1) + sectionWeightOverhead
+    }
+
     private func distribute(
       _ sections: [ConnectionSection],
-      into count: Int
+      into count: Int,
+      seedWeights: [Int]
     ) -> [[ConnectionSection]] {
       var columns = Array(repeating: [ConnectionSection](), count: count)
-      var weights = Array(repeating: 0, count: count)
+      var weights = seedWeights
       for section in sections {
         let target = weights.indices.min { weights[$0] < weights[$1] } ?? 0
         columns[target].append(section)

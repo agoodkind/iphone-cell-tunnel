@@ -331,6 +331,14 @@
       await Task.yield()
     }
 
+    func renameConfig(id _: UUID, name _: String) async {
+      await Task.yield()
+    }
+
+    func importConfig(name _: String, text _: String) async {
+      await Task.yield()
+    }
+
     private func sendStatusRequest(
       on session: NETunnelProviderSession
     ) async throws -> ProviderControlResponse {

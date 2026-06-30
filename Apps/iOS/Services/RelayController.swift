@@ -196,6 +196,12 @@ protocol RelayControlBackend {
 
   /// Deletes a stored configuration from this backend's config library.
   func deleteConfig(id: UUID) async
+
+  /// Renames a stored configuration in this backend's config library.
+  func renameConfig(id: UUID, name: String) async
+
+  /// Creates and stores a configuration from raw text; the backend validates it.
+  func importConfig(name: String, text: String) async
 }
 
 // MARK: - RelayControlBackend defaults
@@ -620,6 +626,12 @@ final class RelayController {
     Task { await backend.importConfig(url: url, name: name) }
   }
 
+  /// Creates a stored configuration from raw text, for the new-config flow.
+  func importConfig(name: String, text: String) {
+    logger.notice("relay controller create config requested")
+    Task { await backend.importConfig(name: name, text: text) }
+  }
+
   /// Makes a stored configuration active and applies it.
   func activateConfig(id: UUID) {
     logger.notice("relay controller activate config requested")
@@ -687,5 +699,11 @@ extension RelayController {
   func deleteConfig(id: UUID) {
     logger.notice("relay controller delete config requested")
     Task { await backend.deleteConfig(id: id) }
+  }
+
+  /// Renames a stored configuration without touching tunnel state.
+  func renameConfig(id: UUID, name: String) {
+    logger.notice("relay controller rename config requested")
+    Task { await backend.renameConfig(id: id, name: name) }
   }
 }
