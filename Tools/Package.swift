@@ -50,8 +50,7 @@ let package = Package(
     .macOS(.v15)
   ],
   products: [
-    .executable(name: "CellTunnelDev", targets: ["CellTunnelDev"]),
-    .executable(name: "LoggingAudit", targets: ["LoggingAudit"]),
+    .executable(name: "CellTunnelDev", targets: ["CellTunnelDev"])
   ],
   dependencies: [
     // swift-mk creates this symlink to the repo root with the correct basename, so
@@ -59,7 +58,6 @@ let package = Package(
     // before bootstrap creates it, so it falls back to the checkout root above.
     cellTunnelDependency,
     swiftMakefileDependency,
-    .package(url: "https://github.com/swiftlang/swift-syntax.git", exact: "603.0.0"),
     .package(url: "https://github.com/rarestype/swift-ip.git", from: "0.3.10"),
   ],
   targets: [
@@ -72,14 +70,6 @@ let package = Package(
         .product(name: "SwiftMkCore", package: "swift-makefile"),
       ],
       path: "CellTunnelDev"
-    ),
-    .executableTarget(
-      name: "LoggingAudit",
-      dependencies: [
-        .product(name: "SwiftParser", package: "swift-syntax"),
-        .product(name: "SwiftSyntax", package: "swift-syntax"),
-      ],
-      path: "LoggingAudit"
-    ),
+    )
   ]
 )

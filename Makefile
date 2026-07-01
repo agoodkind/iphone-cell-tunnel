@@ -57,7 +57,6 @@ SWIFT_DEADCODE_BUILD_CMD := rm -rf "$(SWIFT_MK_DERIVED_DATA)" && $(CELL_TUNNEL_D
 SWIFT_CLEAN_CMD ?= $(CELL_TUNNEL_DEV) clean
 SWIFT_DEPLOY_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) activate $(TARGET) $(CONFIG),printf 'deploy: TARGET=$(ACTIVATION_TARGET_USAGE) is required\n'; exit 1)
 SWIFT_ANALYZE_CMD ?= $(CELL_TUNNEL_DEV) analyze
-SWIFT_LOG_AUDIT_CMD ?= $(CELL_TUNNEL_DEV) log-audit
 
 # Tuist forwards only TUIST_* variables into manifest evaluation, so Project.swift
 # cannot read PROVISIONING_PROFILE_SPECIFIER directly. swift-mk's reusable CI sets
@@ -91,7 +90,7 @@ else ifeq ($(TARGET),daemon)
 SWIFT_MK_VERIFY_SIGNING_PATHS := Products/$(CONFIG)/CellTunnelAgent.app
 endif
 
-SWIFT_SOURCE_ROOTS := Apps Sources Tests Tools/CellTunnelCtl Tools/CellTunnelDev Tools/LoggingAudit
+SWIFT_SOURCE_ROOTS := Apps Sources Tests Tools/CellTunnelCtl Tools/CellTunnelDev
 SWIFT_OWNED_SWIFT_FILES := $(shell find $(SWIFT_SOURCE_ROOTS) -path '*/.build/*' -prune -o -name '*.swift' -print)
 SWIFT_PACKAGE_MANIFESTS := Package.swift Project.swift Tuist.swift Tuist/Package.swift Tools/Package.swift Tools/cell-tunnel-dev.swift
 SWIFT_MK_EXCLUDE_PATHS := ^Derived/Generated/,^Tools/.build/
