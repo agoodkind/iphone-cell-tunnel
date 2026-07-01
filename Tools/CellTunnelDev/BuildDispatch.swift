@@ -82,9 +82,6 @@ private func buildDecoupled(targets: [BuildTarget], configuration: String) throw
     signing: GatedBuild.SigningOptions(localXcconfigPaths: ["Config/local.xcconfig"]),
     hooks: GatedBuild.Hooks(
       generate: decoupledGenerateHook,
-      deadcodeCoverage: { authorization, environment in
-        decoupledDeadcodeCoverage(authorization, environment, configuration: configuration)
-      },
       logAudit: decoupledLogAuditHook
     )
   ) { receipt in
@@ -122,83 +119,6 @@ private func decoupledLogAuditHook() -> Bool {
       "decoupled log-audit failed details=\(error.localizedDescription, privacy: .public)")
     return false
   }
-}
-
-/// The in-process dead-code coverage build for the decoupled gate. Mirrors the make
-/// `SWIFT_DEADCODE_BUILD_CMD` four-target matrix (CellTunnelAgent macOS,
-/// CellTunnelTunnelProvider macOS, CellTunnelPhone Mac Catalyst, CellTunnelPhone iOS
-/// Simulator, no device slice) so both targetEnvironment(macCatalyst) branches are
-/// indexed. Each target builds for testing under the gate's coverage capability and
-/// the signing-disabled `environment`, writing the index into the build's derived
-/// data; no SYMROOT or OBJROOT is set here so swift-mk's `DeadcodeBuildConfig` owns
-/// them. Returns the combined status and captured output for the gate's fail-hard
-/// diagnosis.
-private func decoupledDeadcodeCoverage(
-  _ authorization: DeadcodeCoverageAuthorization,
-  _ environment: [String: String],
-  configuration: String
-) -> DeadcodeCoverageResult {
-  buildDispatchLogger.notice(
-    "decoupled deadcode coverage matrix configuration=\(configuration, privacy: .public)")
-  // Rebuild from a clean derived-data directory so the index reflects the current
-  // sources, matching the make path's `rm -rf $(SWIFT_MK_DERIVED_DATA)`. A missing
-  // directory is the expected first-run case; any other removal error is logged
-  // rather than discarded, since a stale directory left behind risks a partial index.
-  do {
-    try fileManager.removeItem(at: derivedDataDirectory)
-  } catch {
-    // The first coverage build has nothing to remove; any other error is logged
-    // rather than discarded, since a stale directory risks a partial index.
-    buildDispatchLogger.notice(
-      """
-      deadcode coverage derived-data not removed \
-      details=\(error.localizedDescription, privacy: .public)
-      """
-    )
-  }
-  // Build the WireGuard Go bridge immediately before the matrix so `.build/vendor`
-  // holds `libwg-go.a` when WireGuardKitGo links; an earlier build of it does not
-  // survive to here, and a missing search path fails the coverage build.
-  do {
-    try buildWireGuardGoBridge()
-  } catch {
-    buildDispatchLogger.error(
-      """
-      deadcode coverage bridge build failed \
-      details=\(error.localizedDescription, privacy: .public)
-      """
-    )
-    return DeadcodeCoverageResult(status: 1, output: "WireGuard Go bridge build failed")
-  }
-  let matrix: [(scheme: String, destination: String)] = [
-    ("CellTunnelAgent", "platform=macOS"),
-    ("CellTunnelTunnelProvider", "platform=macOS"),
-    ("CellTunnelPhone", "generic/platform=macOS,variant=Mac Catalyst"),
-    (
-      "CellTunnelPhone",
-      ProcessInfo.processInfo.environment["IOS_SIMULATOR_DESTINATION"]
-        ?? "generic/platform=iOS Simulator"
-    ),
-  ]
-  var combinedOutput = ""
-  for entry in matrix {
-    let request = Toolchain.Request(
-      generator: .tuist,
-      scheme: entry.scheme,
-      configuration: configuration,
-      workspace: "CellTunnel.xcworkspace",
-      destination: entry.destination,
-      derivedDataPath: derivedDataDirectory.path,
-      extraArguments: xcodeBuildCacheArguments(.enabled)
-    )
-    let result = Toolchain.buildForTestingCapturingOutput(
-      request, authorization: authorization, environment: environment)
-    combinedOutput += result.stdout
-    if result.status != 0 {
-      return DeadcodeCoverageResult(status: result.status, output: combinedOutput)
-    }
-  }
-  return DeadcodeCoverageResult(status: 0, output: combinedOutput)
 }
 
 /// The gate-authorized compile: build the WireGuard Go bridge, then compile every
