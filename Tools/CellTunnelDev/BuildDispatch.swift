@@ -83,7 +83,7 @@ private func buildDecoupled(targets: [BuildTarget], configuration: String) throw
   // ancestor, set them here, mirroring the Makefile's SWIFT_XCODE_* declarations.
   setenv("SWIFT_MK_XCODE_BUILD", "1", 1)
   setenv("SWIFT_XCODE_WORKSPACE", "CellTunnel.xcworkspace", 1)
-  setenv("SWIFT_XCODE_GENERATOR", "tuist", 1)
+  setenv("SWIFT_XCODE_GENERATOR", Toolchain.Generator.tuist.rawValue, 1)
   setenv("SWIFT_XCODE_COVERAGE_CONFIGURATION", configuration, 1)
   setenv("SWIFT_XCODE_PREBUILD_CMD", "swift Tools/cell-tunnel-dev.swift prebuild", 1)
   let request = GatedBuild.Request(
