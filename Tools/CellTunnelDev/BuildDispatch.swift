@@ -77,6 +77,15 @@ private func buildDecoupled(targets: [BuildTarget], configuration: String) throw
   // The dead-code gate reads the index store from SWIFT_MK_DERIVED_DATA; the make
   // layer exports it, so the decoupled path sets the same path the build writes to.
   setenv("SWIFT_MK_DERIVED_DATA", derivedDataDirectory.path, 1)
+  // The decoupled gate runs swift-mk's dead-code coverage-completeness check, which
+  // needs the engine's Xcode coverage build to index the app sources (Apps/ targets are
+  // not SwiftPM targets). The make path gets these from swift.mk's exports; with no make
+  // ancestor, set them here, mirroring the Makefile's SWIFT_XCODE_* declarations.
+  setenv("SWIFT_MK_XCODE_BUILD", "1", 1)
+  setenv("SWIFT_XCODE_WORKSPACE", "CellTunnel.xcworkspace", 1)
+  setenv("SWIFT_XCODE_GENERATOR", "tuist", 1)
+  setenv("SWIFT_XCODE_COVERAGE_CONFIGURATION", configuration, 1)
+  setenv("SWIFT_XCODE_PREBUILD_CMD", "swift Tools/cell-tunnel-dev.swift prebuild", 1)
   let request = GatedBuild.Request(
     entry: "cell-tunnel-dev build \(names)",
     signing: GatedBuild.SigningOptions(localXcconfigPaths: ["Config/local.xcconfig"]),
