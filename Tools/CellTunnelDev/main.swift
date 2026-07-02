@@ -190,6 +190,9 @@ func runCoreCommand(_ command: String) throws -> Bool {
   case "generate":
     try generateProject()
     return true
+  case "prebuild":
+    try buildWireGuardGoBridge()
+    return true
   case "build":
     let (target, configuration) = try parseBuildTarget()
     try buildProject(target: target, configuration: configuration)
