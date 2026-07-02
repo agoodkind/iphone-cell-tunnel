@@ -118,21 +118,24 @@ private func projectGenerationSourceFingerprint() throws -> String {
   return parts.joined(separator: "|")
 }
 
-func buildSwiftProduct(_ productName: String) throws {
-  try run("swift", swiftBuildArguments(["--product", productName]))
+func buildSwiftProduct(_ productName: String, receipt: GateReceipt? = nil) throws {
+  // Route the celltunnelctl compile through the engine SwiftPM chokepoint so it takes
+  // the per-worktree build lock and the engine's cache arguments. A receipt authorizes
+  // the decoupled path (no make ancestor); without one the make-path GateProof check
+  // runs, which refuses a compile outside a live gate.
+  let request = SwiftPM.Request(packagePath: repoRoot.path, product: productName)
+  let status = receipt.map { SwiftPM.build(request, receipt: $0) } ?? SwiftPM.build(request)
+  guard status == 0 else {
+    throw ToolError.failure("swift build --product \(productName) failed (status \(status))")
+  }
 }
 
 func installSwiftExecutable(productName: String, outputName: String) throws {
-  let binPathResult = try capture(
-    "swift",
-    swiftBuildArguments(["--show-bin-path"]),
-    echoOutput: false
-  )
-  guard binPathResult.status == 0 else {
+  // Resolve the package's built-products directory through the engine. `binPath` is a
+  // no-artifact query, so it needs no gate, but it still takes the build lock.
+  guard let binPath = SwiftPM.binPath(SwiftPM.Request(packagePath: repoRoot.path)) else {
     throw ToolError.failure("swift build --show-bin-path failed")
   }
-
-  let binPath = binPathResult.output.trimmingCharacters(in: .whitespacesAndNewlines)
   let source = URL(fileURLWithPath: binPath).appendingPathComponent(productName)
   let destination = productsDirectory.appendingPathComponent(outputName)
   guard fileManager.fileExists(atPath: source.path) else {
@@ -354,7 +357,13 @@ func selectedPhoneDeviceIdentifier() throws -> String {
   return phone.identifier
 }
 func testProject() throws {
-  try run("swift", swiftTestArguments())
+  // The engine make-path SwiftPM.test runs the GateProof check itself, so this routes
+  // the test run through the chokepoint (lock, cache, gate) instead of spawning `swift`.
+  let status = SwiftPM.test(
+    SwiftPM.TestRequest(package: SwiftPM.Request(packagePath: repoRoot.path)))
+  guard status == 0 else {
+    throw ToolError.failure("swift test failed (status \(status))")
+  }
 }
 
 // Lint and format are delegated to SwiftMkCore, which is the library that
@@ -372,13 +381,6 @@ func formatProject() throws {
   if !Lint.runFmt(context: PathContext.current()) {
     throw ToolError.failure("fmt failed")
   }
-}
-
-func auditLogging() throws {
-  try run(
-    "swift",
-    ["run", "--package-path", toolsPackageDirectory.path, "LoggingAudit"]
-  )
 }
 
 func analyzeProject() throws {

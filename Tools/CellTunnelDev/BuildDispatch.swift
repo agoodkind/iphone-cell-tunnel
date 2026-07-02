@@ -73,7 +73,6 @@ private func buildDecoupled(targets: [BuildTarget], configuration: String) throw
     configuration=\(configuration, privacy: .public)
     """
   )
-  try buildCLI()
   // The dead-code gate reads the index store from SWIFT_MK_DERIVED_DATA; the make
   // layer exports it, so the decoupled path sets the same path the build writes to.
   setenv("SWIFT_MK_DERIVED_DATA", derivedDataDirectory.path, 1)
@@ -82,10 +81,7 @@ private func buildDecoupled(targets: [BuildTarget], configuration: String) throw
     signing: GatedBuild.SigningOptions(localXcconfigPaths: ["Config/local.xcconfig"]),
     hooks: GatedBuild.Hooks(
       generate: decoupledGenerateHook,
-      deadcodeCoverage: { authorization, environment in
-        decoupledDeadcodeCoverage(authorization, environment, configuration: configuration)
-      },
-      logAudit: decoupledLogAuditHook
+      deadcodeCoverage: decoupledDeadcodeCoverageHook(configuration: configuration)
     )
   ) { receipt in
     decoupledCompile(targets: targets, configuration: configuration, receipt: receipt)
@@ -112,15 +108,11 @@ private func decoupledGenerateHook() -> Bool {
   }
 }
 
-/// Run the logging audit as the gate's log-audit hook.
-private func decoupledLogAuditHook() -> Bool {
-  do {
-    try auditLogging()
-    return true
-  } catch {
-    buildDispatchLogger.error(
-      "decoupled log-audit failed details=\(error.localizedDescription, privacy: .public)")
-    return false
+/// The gate's dead-code coverage hook, bound to `configuration`. Returned as a named
+/// value rather than an inline trailing closure so the `Hooks` call site reads clean.
+private func decoupledDeadcodeCoverageHook(configuration: String) -> DeadcodeCoverageBuild {
+  { authorization, environment in
+    decoupledDeadcodeCoverage(authorization, environment, configuration: configuration)
   }
 }
 
@@ -201,14 +193,17 @@ private func decoupledDeadcodeCoverage(
   return DeadcodeCoverageResult(status: 0, output: combinedOutput)
 }
 
-/// The gate-authorized compile: build the WireGuard Go bridge, then compile every
-/// scheme for every target with the minted receipt. The bridge is rebuilt here because
+/// The gate-authorized compile: build the celltunnelctl CLI, then the WireGuard Go
+/// bridge, then compile every scheme for every target with the minted receipt. The CLI
+/// build moved here from before `GatedBuild.run` so celltunnelctl compiles under the
+/// receipt (lock and gate) rather than ungated. The bridge is rebuilt here because
 /// `.build/vendor` does not survive from the gate's coverage phase, and WireGuardKitGo
 /// links `libwg-go.a` from it. Returns the first nonzero status.
 private func decoupledCompile(
   targets: [BuildTarget], configuration: String, receipt: GateReceipt
 ) -> Int32 {
   do {
+    try buildCLI(receipt: receipt)
     try buildWireGuardGoBridge()
     for target in targets {
       try buildTargets(target: target, configuration: configuration, receipt: receipt)
@@ -256,17 +251,16 @@ func buildTargets(target: BuildTarget, configuration: String, receipt: GateRecei
 }
 
 private func runBuildPrologue() throws {
-  buildDispatchLogger.notice("build prologue starting generate, audit, wireguard go bridge")
+  buildDispatchLogger.notice("build prologue starting generate, wireguard go bridge")
   try generateProject()
-  try auditLogging()
   // Build the WireGuard Go bridge before any xcodebuild target. Every build
   // target routes through this prologue, so no target path can skip it, and the
   // library exists before WireGuardKit's WireGuardKitGo target links it.
   try buildWireGuardGoBridge()
 }
 
-private func buildCLI() throws {
-  try buildSwiftProduct("celltunnelctl")
+private func buildCLI(receipt: GateReceipt? = nil) throws {
+  try buildSwiftProduct("celltunnelctl", receipt: receipt)
   try fileManager.createDirectory(at: productsDirectory, withIntermediateDirectories: true)
   try installSwiftExecutable(productName: "celltunnelctl", outputName: "celltunnelctl")
 }
