@@ -18,6 +18,7 @@ concurrency:
 # The caller must grant every permission the called workflow's jobs request.
 permissions:
   contents: read
+  actions: read
 
 jobs:
   swift:
