@@ -23,7 +23,7 @@ func printHelp() {
     commands:
       help        Show this help text.
       generate    Install Tuist dependencies and generate CellTunnel.xcworkspace.
-      build       Run lint, audit, then build the named target.
+      build       Run lint, then build the named target.
                   Targets: daemon|mac|iphone-simulator|iphone-device|all
                   Bare `build` with no target prints this and exits non-zero.
       activate    Install, register, and launch the requested target from built products.
@@ -34,8 +34,6 @@ func printHelp() {
       test        Run SwiftPM tests.
       lint        Run Swift lint gates.
       format      Format Swift sources.
-      log-audit   Run the SwiftSyntax logging audit.
-      audit       Run lint and log-audit.
       analyze     Run Xcode analyze, SwiftLint analyze, and Periphery.
       build-phone-device
                   Build CellTunnelPhone for a connected physical iPhone.
@@ -231,13 +229,6 @@ func runCoreCommand(_ command: String) throws -> Bool {
 
 func runAuditCommand(_ command: String) throws -> Bool {
   switch command {
-  case "log-audit":
-    try auditLogging()
-    return true
-  case "audit":
-    try lintProject()
-    try auditLogging()
-    return true
   case "analyze":
     try analyzeProject()
     return true

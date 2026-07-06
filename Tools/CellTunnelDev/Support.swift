@@ -18,7 +18,6 @@ var fileManager: FileManager {
 }
 
 let repoRoot = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).standardizedFileURL
-let toolsPackageDirectory = repoRoot.appendingPathComponent("Tools")
 let productsDirectory = repoRoot.appendingPathComponent("Products")
 let buildDirectory = repoRoot.appendingPathComponent("build")
 let derivedDataDirectory = buildDirectory.appendingPathComponent("DerivedData")
@@ -36,20 +35,6 @@ let activationTargetUsage = ActivationTarget.allCases.map(\.rawValue).joined(sep
 func environmentArguments(_ key: String) -> [String] {
   let environmentValue = ProcessInfo.processInfo.environment[key] ?? ""
   return environmentValue.split(whereSeparator: \.isWhitespace).map(String.init)
-}
-
-func swiftBuildArguments(_ additionalArguments: [String]) -> [String] {
-  var arguments = ["build"]
-  arguments.append(contentsOf: environmentArguments("SWIFT_MK_SWIFTPM_CACHE_ARGS"))
-  arguments.append(contentsOf: additionalArguments)
-  return arguments
-}
-
-func swiftTestArguments(_ additionalArguments: [String] = []) -> [String] {
-  var arguments = ["test"]
-  arguments.append(contentsOf: environmentArguments("SWIFT_MK_SWIFTPM_CACHE_ARGS"))
-  arguments.append(contentsOf: additionalArguments)
-  return arguments
 }
 
 func xcodeBuildCacheArguments(_ mode: XcodeBuildCacheMode) -> [String] {
