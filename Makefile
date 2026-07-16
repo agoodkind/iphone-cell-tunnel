@@ -103,6 +103,15 @@ PERIPHERY_ARGS ?= scan --config $(SWIFT_MK_PERIPHERY_CONFIG) --strict --report-e
 
 include bootstrap.mk
 
+# The pinned swift-mk freshness gate still lists $(SWIFT_MK_BIN) as a normal
+# prerequisite of .make/.build/last-success. On a clean checkout, make can try to
+# satisfy that file before the order-only swift-mk-bin edge runs, which fails CI
+# with "No rule to make target .../.make/swift-mk". Route the file prerequisite
+# back through swift-mk-bin here so the consumer stays buildable until the pinned
+# engine revision is advanced.
+$(SWIFT_MK_BIN): | swift-mk-bin
+	@test -x "$@" || { printf 'swift-mk: expected %s after swift-mk-bin\n' "$@"; exit 1; }
+
 .DEFAULT_GOAL := check
 
 .PHONY: format iphone-install install-mac smoke logs
