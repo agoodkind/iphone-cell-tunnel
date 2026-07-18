@@ -45,7 +45,7 @@ private func renderGeneratedFiles() throws {
   ])
   let renderPlans = [
     ("Templates/Swift", "Sources/CellTunnelCore/Generated"),
-    ("Templates/Plists", "Derived/Generated/CellTunnelAgent"),
+    ("Templates/Plists", "Generated/CellTunnelAgent"),
   ]
   var plans: [GeneratedFiles.Plan] = []
   for (templatesDirectory, outputDirectory) in renderPlans {
