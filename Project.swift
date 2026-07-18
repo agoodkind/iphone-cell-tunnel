@@ -118,7 +118,7 @@ let xcconfigEnvKeys =
 
 let renderConfigGeneratedScript = TargetScript.pre(
   script: #"""
-    "$SRCROOT/.make/swift-mk" render-batch \
+    "${SWIFT_MK_BIN:-$SRCROOT/.make/swift-mk}" render-batch \
         --templates-dir "$SRCROOT/Templates/Swift" \
         --output-dir "$SRCROOT/Sources/CellTunnelCore/Generated" \
         --env TARGET_NAME \#(xcconfigEnvKeys)
@@ -134,7 +134,7 @@ let renderConfigGeneratedScript = TargetScript.pre(
 
 let renderAgentLaunchdScript = TargetScript.pre(
   script: #"""
-    "$SRCROOT/.make/swift-mk" render-batch \
+    "${SWIFT_MK_BIN:-$SRCROOT/.make/swift-mk}" render-batch \
         --templates-dir "$SRCROOT/Templates/Plists" \
         --output-dir "$SRCROOT/Derived/Generated/CellTunnelAgent" \
         --env TARGET_NAME \#(xcconfigEnvKeys)
