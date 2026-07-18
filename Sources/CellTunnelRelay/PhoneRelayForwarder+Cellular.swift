@@ -243,6 +243,19 @@ extension PhoneRelayForwarder {
     // The binder decides whether to pin the cellular radio or egress over the
     // host network, so the data plane does not read the build target.
     interfaceBinder.configureServerParameters(parameters)
+    // Honor the endpoint's declared address family so the socket dials that
+    // family, instead of letting Network framework resolve the hostname as
+    // dual-stack and pick a family the configuration did not intend.
+    if let ipOptions = parameters.defaultProtocolStack.internetProtocol
+      as? NWProtocolIP.Options
+    {
+      switch endpoint.addressFamily {
+      case .ipv4:
+        ipOptions.version = .v4
+      case .ipv6:
+        ipOptions.version = .v6
+      }
+    }
     logger.notice(
       "cellular relay egress via=\(self.interfaceBinder.egressDescription, privacy: .public)"
     )
