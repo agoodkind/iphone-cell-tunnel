@@ -20,7 +20,7 @@ SWIFT_MK_MODULES := swift-build.mk xcconfig.mk
 # Plan format: templates_dir:output_dir[:target_name]
 XCCONFIG_RENDER_PLANS := \
 	Templates/Swift:Sources/CellTunnelCore/Generated:CellTunnelCore \
-	Templates/Plists:Derived/Generated/CellTunnelAgent:CellTunnelAgent
+	Templates/Plists:Generated/CellTunnelAgent:CellTunnelAgent
 XCCONFIG_EXPORTED_VARS := \
 	BUNDLE_ID_PREFIX \
 	APP_GROUP_ID \
@@ -91,26 +91,17 @@ endif
 SWIFT_SOURCE_ROOTS := Apps Sources Tests Tools/CellTunnelCtl Tools/CellTunnelDev
 SWIFT_OWNED_SWIFT_FILES := $(shell find $(SWIFT_SOURCE_ROOTS) -path '*/.build/*' -prune -o -name '*.swift' -print)
 SWIFT_PACKAGE_MANIFESTS := Package.swift Project.swift Tuist.swift Tuist/Package.swift Tools/Package.swift Tools/cell-tunnel-dev.swift
-SWIFT_MK_EXCLUDE_PATHS := ^Derived/Generated/,^Tools/.build/
+SWIFT_MK_EXCLUDE_PATHS := ^Generated/,^Tools/.build/
 
 SWIFT_FORMAT_TARGETS ?= $(SWIFT_OWNED_SWIFT_FILES) $(SWIFT_PACKAGE_MANIFESTS)
 SWIFTLINT_TARGETS ?= $(SWIFT_FORMAT_TARGETS)
 SWIFTLINT_EXCLUDE_PATHS ?= $(SWIFT_MK_EXCLUDE_PATHS)
 SWIFTCHECK_EXTRA_TARGETS ?= $(SWIFT_FORMAT_TARGETS)
 SWIFTCHECK_EXTRA_EXCLUDE_PATHS ?= $(SWIFT_MK_EXCLUDE_PATHS)
-PERIPHERY_EXCLUDE_PATHS ?= ^Derived/Generated/
-PERIPHERY_ARGS ?= scan --config $(SWIFT_MK_PERIPHERY_CONFIG) --strict --report-exclude Derived/Generated/**
+PERIPHERY_EXCLUDE_PATHS ?= ^Generated/
+PERIPHERY_ARGS ?= scan --config $(SWIFT_MK_PERIPHERY_CONFIG) --strict --report-exclude Generated/**
 
 include bootstrap.mk
-
-# The pinned swift-mk freshness gate still lists $(SWIFT_MK_BIN) as a normal
-# prerequisite of .make/.build/last-success. On a clean checkout, make can try to
-# satisfy that file before the order-only swift-mk-bin edge runs, which fails CI
-# with "No rule to make target .../.make/swift-mk". Route the file prerequisite
-# back through swift-mk-bin here so the consumer stays buildable until the pinned
-# engine revision is advanced.
-$(SWIFT_MK_BIN): | swift-mk-bin
-	@test -x "$@" || { printf 'swift-mk: expected %s after swift-mk-bin\n' "$@"; exit 1; }
 
 .DEFAULT_GOAL := check
 

@@ -6,10 +6,9 @@
 
 SWIFT_MK_DEV_DIR ?=
 SWIFT_MK := .make/swift.mk
-SWIFT_MK_PINNED_REF ?= caf23e2018cefd335ec5521402ccd41653399a34
-SWIFT_MK_BASE_URL ?= https://raw.githubusercontent.com/agoodkind/swift-makefile/$(SWIFT_MK_PINNED_REF)
+SWIFT_MK_BASE_URL ?= https://raw.githubusercontent.com/agoodkind/swift-makefile/main
 SWIFT_MK_API_REPO ?= agoodkind/swift-makefile
-SWIFT_MK_API_REF ?= $(SWIFT_MK_PINNED_REF)
+SWIFT_MK_API_REF ?= main
 
 # Fetch a single file from the local swift-makefile checkout (SWIFT_MK_DEV_DIR) or
 # GitHub. Used to obtain swift.mk; swift.mk fetches everything else itself.

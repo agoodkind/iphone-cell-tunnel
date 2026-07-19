@@ -2,6 +2,7 @@
 .build/
 build/
 Derived/
+Generated/
 DerivedData/
 dist/
 Products/

@@ -104,50 +104,6 @@ let appDependencies: [TargetDependency] = [
 let tunnelProviderDependencies: [TargetDependency] =
   appDependencies + [.external(name: "WireGuardKit")]
 
-// Pre-build scripts re-render the xcconfig-driven templates each build, so
-// the rendered files survive a `tuist generate` (which clears
-// Derived/Generated/). xcodebuild exports xcconfig values as env, so the
-// same [[KEY]] substitutions used by `make xcconfig-generate-config` apply
-// here too.
-let xcconfigEnvKeys =
-  "AGENT_BUNDLE_ID PROVIDER_BUNDLE_ID PHONE_BUNDLE_ID "
-  + "AGENT_MACH_SERVICE_NAME "
-  + "AGENT_LAUNCH_AGENT_PLIST_NAME "
-  + "AGENT_EXECUTABLE_NAME AGENT_APP_BUNDLE_NAME "
-  + "APP_GROUP_ID BUNDLE_ID_PREFIX"
-
-let renderConfigGeneratedScript = TargetScript.pre(
-  script: #"""
-    "${SWIFT_MK_BIN:-$SRCROOT/.make/swift-mk}" render-batch \
-        --templates-dir "$SRCROOT/Templates/Swift" \
-        --output-dir "$SRCROOT/Sources/CellTunnelCore/Generated" \
-        --env TARGET_NAME \#(xcconfigEnvKeys)
-    """#,
-  name: "Render CellTunnelCore Config.generated.swift",
-  inputPaths: [
-    "$(SRCROOT)/Templates/Swift/Config.generated.swift.template"
-  ],
-  outputPaths: [
-    "$(SRCROOT)/Sources/CellTunnelCore/Generated/Config.generated.swift"
-  ]
-)
-
-let renderAgentLaunchdScript = TargetScript.pre(
-  script: #"""
-    "${SWIFT_MK_BIN:-$SRCROOT/.make/swift-mk}" render-batch \
-        --templates-dir "$SRCROOT/Templates/Plists" \
-        --output-dir "$SRCROOT/Derived/Generated/CellTunnelAgent" \
-        --env TARGET_NAME \#(xcconfigEnvKeys)
-    """#,
-  name: "Render CellTunnelAgent agent-launchd.plist",
-  inputPaths: [
-    "$(SRCROOT)/Templates/Plists/agent-launchd.plist.template"
-  ],
-  outputPaths: [
-    "$(SRCROOT)/Derived/Generated/CellTunnelAgent/agent-launchd.plist"
-  ]
-)
-
 let project = Project(
   name: projectName,
   organizationName: organizationName,
@@ -163,7 +119,6 @@ let project = Project(
       sources: [
         "Sources/CellTunnelCore/**"
       ],
-      scripts: [renderConfigGeneratedScript],
       dependencies: [.target(name: "CellTunnelLog")],
       settings: .settings(base: moduleVerifierSettings)
     ),
@@ -232,13 +187,12 @@ let project = Project(
           files: [
             .glob(
               pattern:
-                "Derived/Generated/CellTunnelAgent/agent-launchd.plist"
+                "Generated/CellTunnelAgent/agent-launchd.plist"
             )
           ]
         )
       ],
       entitlements: .file(path: "Apps/macOS/Entitlements/Agent.entitlements"),
-      scripts: [renderAgentLaunchdScript],
       dependencies: appDependencies + [
         .target(name: "CellTunnelTunnelProvider"),
         .external(name: "WireGuardKit"),
