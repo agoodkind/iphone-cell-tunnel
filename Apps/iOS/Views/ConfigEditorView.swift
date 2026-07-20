@@ -31,6 +31,7 @@ private let configEditorConfigSectionTitle = "Configuration"
 private let configEditorMinWidth: CGFloat = 460
 private let configEditorMinHeight: CGFloat = 520
 private let configEditorTextMinHeight: CGFloat = 240
+private let configEditorContentInset: CGFloat = 20
 private let configEditorLineSpacing: CGFloat = 2
 private let configEditorRevealSpacing: CGFloat = 8
 private let configEditorEmptyLinePlaceholder = " "
@@ -108,6 +109,14 @@ struct ConfigEditorView: View {
         }
         Section(configEditorConfigSectionTitle) {
           editorBody
+            .listRowInsets(
+              EdgeInsets(
+                top: configEditorContentInset,
+                leading: configEditorContentInset,
+                bottom: configEditorContentInset,
+                trailing: configEditorContentInset
+              )
+            )
         }
       }
       .formStyle(.grouped)
@@ -183,6 +192,7 @@ struct ConfigEditorView: View {
       if heavyReady {
         TextEditor(text: $text)
           .font(configEditorMonospace)
+          .contentMargins(0, for: .scrollContent)
           .frame(minHeight: configEditorTextMinHeight)
       } else {
         Text(text)
