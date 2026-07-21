@@ -442,9 +442,9 @@ final class RelayController {
         }
         if let sample = await backend.sample() {
           apply(sample)
-          refreshInstallState(agentReachable: true)
+          await refreshInstallState(agentReachable: true)
         } else {
-          refreshInstallState(agentReachable: false)
+          await refreshInstallState(agentReachable: false)
         }
         guard !Task.isCancelled else {
           return
@@ -520,8 +520,10 @@ final class RelayController {
 
   // Refreshes the agent install state each poll, so the install-agent setup tier
   // appears on a Mac with no agent and clears once the agent answers or is enabled.
-  private func refreshInstallState(agentReachable: Bool) {
-    installState.refresh(agentReachable: agentReachable)
+  // The install read runs off the main actor, so the poll awaits it and the main
+  // thread stays free to present modals mid-poll.
+  private func refreshInstallState(agentReachable: Bool) async {
+    await installState.refresh(agentReachable: agentReachable)
     isAgentInstalled = installState.isAgentInstalled
     isAgentApprovalPending = installState.isApprovalPending
   }
@@ -599,7 +601,7 @@ final class RelayController {
   /// iPhone has no separate agent, so the install state holds it as always present.
   func installAgent() {
     logger.notice("relay controller install agent requested")
-    installState.registerAgent()
+    Task { await installState.registerAgent() }
   }
 
   /// Opens Login Items so the user can approve a registered-but-pending agent.
