@@ -23,7 +23,7 @@
   /// The Mac and the command-line tool share one control client, `AgentClient`,
   /// which connects to the agent's mach service with the libxpc session API.
   @MainActor
-  final class AgentRelayBackend: RelayControlBackend {
+  final class AgentRelayBackend: RelayControlBackend, ConfigLibraryBackend {
     private let client = AgentClient()
 
     // MARK: - Lifecycle

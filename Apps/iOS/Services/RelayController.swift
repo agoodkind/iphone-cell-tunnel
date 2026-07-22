@@ -143,7 +143,9 @@ final class RelayController {
   let backend: any RelayControlBackend
   let installState: InstallationState
 
-  #if !targetEnvironment(macCatalyst)
+  #if targetEnvironment(macCatalyst)
+    let configLibraryBackend: any ConfigLibraryBackend
+  #else
     private let phoneProvisioningBackend: any PhoneTunnelProvisioningBackend
   #endif
 
@@ -232,23 +234,24 @@ final class RelayController {
   var relayServerIPv4Address: String?
   var relayServerIPv6Address: String?
 
-  /// The agent's config library mirrored from the status poll, the rows the Configs
-  /// card lists, so the card reads the same source as the Relay tile and the two
-  /// never diverge. Empty on the iPhone, which hosts no library.
-  var configLibrary: [TunnelConfigSummary] = []
-  /// The active config's id, mirrored from the same poll, the entry the card marks
-  /// active and the running tunnel uses.
-  var activeConfigID: UUID?
-
   #if targetEnvironment(macCatalyst)
+    /// The agent's config library mirrored from the status poll, the rows the Configs
+    /// card lists, so the card reads the same source as the Relay tile and the two
+    /// never diverge.
+    var configLibrary: [TunnelConfigSummary] = []
+    /// The active config's id, mirrored from the same poll, the entry the card marks
+    /// active and the running tunnel uses.
+    var activeConfigID: UUID?
+
     init(
-      backend: any RelayControlBackend,
+      backend: some RelayControlBackend & ConfigLibraryBackend,
       throughput: ThroughputCalculator,
       lifetimeStore: LifetimeDataStore,
       installState: InstallationState = InstallationState(),
       deviceProbe: DeviceEgressProbe? = nil
     ) {
       self.backend = backend
+      configLibraryBackend = backend
       self.throughput = throughput
       self.lifetimeStore = lifetimeStore
       self.installState = installState
@@ -440,11 +443,13 @@ final class RelayController {
     assign(\.relayHost, sample.relayHost)
     assign(\.relayServerIPv4Address, sample.relayServerIPv4Address)
     assign(\.relayServerIPv6Address, sample.relayServerIPv6Address)
-    assign(\.configLibrary, sample.configLibrary)
-    // While a create-and-restore is in flight, `pinnedActiveConfigID` holds the prior
-    // active id so a poll landing mid-sequence cannot flicker the checkmark onto the
-    // new config; it is nil otherwise, so the snapshot's id wins.
-    assign(\.activeConfigID, pinnedActiveConfigID ?? sample.activeConfigID)
+    #if targetEnvironment(macCatalyst)
+      assign(\.configLibrary, sample.configLibrary)
+      // While a create-and-restore is in flight, `pinnedActiveConfigID` holds the prior
+      // active id so a poll landing mid-sequence cannot flicker the checkmark onto the
+      // new config; it is nil otherwise, so the snapshot's id wins.
+      assign(\.activeConfigID, pinnedActiveConfigID ?? sample.activeConfigID)
+    #endif
     recomputeDeviceValues()
     let rate = throughput.update(with: sample.counters)
     assign(\.uploadMbps, rate.upload)
@@ -543,61 +548,6 @@ extension RelayController {
       logger.notice(
         "relay controller route request unconfirmed; reverting switch to real state")
     }
-  }
-
-  // MARK: - Setup actions
-
-  /// Registers the background agent, the install-agent setup action. Mac only; the
-  /// iPhone has no separate agent, so the install state holds it as always present.
-  func installAgent() {
-    logger.notice("relay controller install agent requested")
-    Task { await installState.registerAgent() }
-  }
-
-  /// Opens Login Items so the user can approve a registered-but-pending agent.
-  func openLoginItems() {
-    logger.notice("relay controller open login items requested")
-    installState.openLoginItems()
-  }
-
-  /// Installs the tunnel profile from an imported configuration, the install-tunnel
-  /// setup action. The backend hands it to the platform's start path.
-  func installTunnel(configURL: URL) async {
-    logger.notice("relay controller install tunnel requested")
-    await backend.installTunnel(configURL: configURL)
-  }
-
-  // MARK: - Config library
-
-  // The library list and active id are published properties mirrored from the
-  // status poll (`configLibrary`, `activeConfigID`), so the card reads the same
-  // source as the Relay tile. Mutations go to the backend and the next poll
-  // reflects them.
-
-  /// Loads a stored config's secret text on demand, for the editor only.
-  func loadConfigText(id: UUID) async -> String? {
-    logger.notice("relay controller load config text requested")
-    return await backend.loadConfigText(id: id)
-  }
-
-  /// Imports a picked configuration file, then validates, stores, and applies it.
-  func importConfig(url: URL, name: String) {
-    logger.notice("relay controller import config requested")
-    Task { await backend.importConfig(url: url, name: name) }
-  }
-
-  /// Makes a stored configuration active and applies it. The active id is set optimistically
-  /// so the selection moves on the same frame as the tap; the next status poll reconciles it.
-  func activateConfig(id: UUID) {
-    logger.notice("relay controller activate config requested")
-    activeConfigID = id
-    Task { await backend.activateConfig(id: id) }
-  }
-
-  /// Saves edited configuration text and reloads it when it is the active config.
-  func saveConfigEdit(id: UUID, text: String) {
-    logger.notice("relay controller save config edit requested")
-    Task { await backend.saveConfigEdit(id: id, text: text) }
   }
 
   /// Spaces polls without `Task.sleep` by resuming off a dispatch queue after the
