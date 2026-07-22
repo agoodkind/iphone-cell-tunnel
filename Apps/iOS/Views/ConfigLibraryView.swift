@@ -130,13 +130,16 @@
         Button(configLibraryEditTitle) {
           presentation.presentEdit(config)
         }
+        .cellTunnelAccessibilityIdentifier(.editConfig)
         Button(configLibraryRenameTitle) {
           startRename(config)
         }
+        .cellTunnelAccessibilityIdentifier(.renameConfig)
         Divider()
         Button(configLibraryDeleteTitle, role: .destructive) {
           controller.deleteConfig(id: config.id)
         }
+        .cellTunnelAccessibilityIdentifier(.deleteConfig)
       } label: {
         Image(systemName: configLibraryActionsSymbol)
           .font(.title3)
@@ -146,6 +149,9 @@
       .buttonStyle(.plain)
       .tint(.secondary)
       .accessibilityLabel(configLibraryActionsAccessibilityLabel)
+      .accessibilityIdentifier(
+        "\(CellTunnelAccessibilityIdentifier.configActions.rawValue)-\(config.id.uuidString)"
+      )
     }
 
     // MARK: - Actions
@@ -160,6 +166,7 @@
         }
         .buttonStyle(.bordered)
         .disabled(activeImportRequestID != nil)
+        .cellTunnelAccessibilityIdentifier(.importConfig)
         .fileImporter(
           isPresented: importPresentationBinding,
           allowedContentTypes: configLibraryContentTypes,
@@ -171,6 +178,7 @@
           presentation.presentCreate()
         }
         .buttonStyle(.bordered)
+        .cellTunnelAccessibilityIdentifier(.newConfig)
       }
     }
 

@@ -56,6 +56,7 @@
         .padding(contentPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
       }
+      .cellTunnelAccessibilityIdentifier(.macStatusScroll)
       .animation(.default, value: model.status)
     }
 
@@ -127,6 +128,7 @@
       Toggle(routeToggleTitle, isOn: model.routeTrafficBinding)
         .toggleStyle(.switch)
         .fixedSize()
+        .cellTunnelAccessibilityIdentifier(.routeTraffic)
     }
 
     // MARK: - Masonry

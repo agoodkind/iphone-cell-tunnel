@@ -100,6 +100,7 @@ struct RelayStatusScreen: View {
       Toggle(routeTrafficLabel, isOn: model.routeTrafficBinding)
         .labelsHidden()
         .disabled(!isEnabled)
+        .cellTunnelAccessibilityIdentifier(.routeTraffic)
     }
   }
 

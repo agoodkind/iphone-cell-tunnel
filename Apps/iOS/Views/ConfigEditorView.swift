@@ -77,6 +77,7 @@
           }
       }
       .frame(minWidth: configEditorMinWidth, minHeight: configEditorMinHeight)
+      .cellTunnelAccessibilityIdentifier(.configEditor)
     }
 
     // MARK: - Content
