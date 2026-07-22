@@ -140,11 +140,11 @@ struct RelayStatusSample: Sendable {
 @MainActor
 @Observable
 final class RelayController {
-  let backend: any RelayControlBackend
-  let installState: InstallationState
+  private let backend: any RelayControlBackend
 
   #if targetEnvironment(macCatalyst)
     let configLibraryBackend: any ConfigLibraryBackend
+    let installState: InstallationState
   #else
     private let phoneProvisioningBackend: any PhoneTunnelProvisioningBackend
   #endif
@@ -186,20 +186,27 @@ final class RelayController {
   // Status polls left before an unconfirmed routing request reverts to the real
   // state; a positive value means a request is pending, counted down each poll.
   private var routeIntentPollsRemaining = 0
-  /// The active config id held across a new-config create and restore so the poll
-  /// cannot momentarily surface the agent's intermediate "new config is active" state
-  /// between `importConfig` and the restoring `activateConfig`. Non-nil only while a
-  /// create that preserves a prior active config is in flight.
-  var pinnedActiveConfigID: UUID?
-  /// Whether the background agent is installed, the gate to the install-agent setup
-  /// tier. Always true on the iPhone, where there is no separate agent; on the Mac
-  /// it tracks the install state.
-  var isAgentInstalled = true
+
+  #if targetEnvironment(macCatalyst)
+    /// The active config id held across a new-config create and restore so the poll
+    /// cannot momentarily surface the agent's intermediate "new config is active" state
+    /// between `importConfig` and the restoring `activateConfig`. Non-nil only while a
+    /// create that preserves a prior active config is in flight.
+    var pinnedActiveConfigID: UUID?
+    /// Whether the background agent is installed, the gate to the install-agent setup
+    /// tier on Mac Catalyst.
+    var isAgentInstalled = true
+  #endif
+
   /// Whether a tunnel profile is saved, the gate to the install-tunnel setup tier.
   var isTunnelInstalled = false
-  /// Whether the agent install is registered but awaiting the user's Login Items
-  /// approval, surfaced so the setup screen can route them to System Settings.
-  var isAgentApprovalPending = false
+
+  #if targetEnvironment(macCatalyst)
+    /// Whether the agent install is registered but awaiting the user's Login Items
+    /// approval, surfaced so the setup screen can route them to System Settings.
+    var isAgentApprovalPending = false
+  #endif
+
   /// The peers discovery currently sees, the selected peer's id, and the discovery
   /// phase, the inputs to the peers list and the no-peer states.
   var discoveredPeers: [TunnelRelayService] = []
@@ -268,7 +275,6 @@ final class RelayController {
       phoneProvisioningBackend = backend
       self.throughput = throughput
       self.lifetimeStore = lifetimeStore
-      installState = InstallationState()
       self.deviceProbe = deviceProbe
     }
   #endif

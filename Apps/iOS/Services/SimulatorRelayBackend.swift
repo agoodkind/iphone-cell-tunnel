@@ -26,7 +26,7 @@
   /// simulator composition root: it builds the host-network graph, where each
   /// connection egresses over the host network instead of a pinned interface.
   @MainActor
-  final class SimulatorRelayBackend: RelayControlBackend {
+  final class SimulatorRelayBackend: RelayControlBackend, PhoneTunnelProvisioningBackend {
     private let runtime = RelayRuntime(
       composition: .hostNetwork(
         deviceName: UIDevice.current.name,
@@ -98,8 +98,6 @@
       runtime.start()
     }
 
-    // The in-process simulator relay hosts no config library, so it takes the shared
-    // no-op config-op defaults from RelayControlBackend.
   }
 
 #endif
