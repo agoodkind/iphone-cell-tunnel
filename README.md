@@ -4,16 +4,17 @@ Cell Tunnel routes a Mac's internet traffic through an iPhone's native cellular 
 
 ## Build
 
-Builds run lint first via CellTunnelDev. `make help` lists engine targets, then CellTunnelDev's help.
+`make help` lists engine targets, then CellTunnelDev's help. Project Make goals
+forward the same argv the tool already documents:
 
 ```sh
-make build-mac
-make build-catalyst
-make build-iphone
-make build-iphone-sim
+make ct/build/mac
+make ct/build/mac-catalyst
+make ct/build/iphone-device
+make ct/build/iphone-simulator
 ```
 
-`CONFIG` defaults to `Debug`. Pass `CONFIG=Release` when needed.
+Pass extra flags with `ARGS`, for example `make ct/install-mac ARGS='--config Release'`.
 
 ## Signing
 
@@ -33,25 +34,26 @@ The macOS targets sign from `Config/local.xcconfig` (`DEVELOPMENT_TEAM`,
 Install the Mac side, then install and launch the iPhone app:
 
 ```sh
-make install-mac
-make iphone-install
+make ct/install-mac
+make ct/activate/iphone
 ```
 
 Run the Catalyst app from a built product:
 
 ```sh
-make run-catalyst
+make ct/build/mac-catalyst
+make ct/activate/mac-catalyst
 ```
 
 Bring the tunnel up from a WireGuard config. The Mac VPN connects immediately, and the routes install once the iPhone dials in over the link:
 
 ```sh
-make relay-up WG_CONFIG=<path>
-make relay-status
-make relay-down
+make ct/relay-up ARGS='--config <path>'
+make ct/relay-status
+make ct/relay-down
 ```
 
-Anything not listed in `make help` stays on the underlying tool: `swift Tools/cell-tunnel-dev.swift <command>` (run with no args for the full list).
+`make ct/<args...>` is the same as `swift Tools/cell-tunnel-dev.swift <args...>`. Run the tool with no args for the full command list.
 
 The agent owns one config library, so a config you start is stored once and reused. Manage it from the Mac app's Configs card or with `celltunnelctl configs`:
 
