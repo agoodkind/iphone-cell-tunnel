@@ -4,8 +4,8 @@ Cell Tunnel routes a Mac's internet traffic through an iPhone's native cellular 
 
 ## Build
 
-`make help` lists engine targets, then CellTunnelDev's help. Named project
-targets route into that tool:
+`make help` lists engine targets, then the named Cell Tunnel targets. Those
+targets route into CellTunnelDev:
 
 ```sh
 make build-mac
