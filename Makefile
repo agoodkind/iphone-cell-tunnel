@@ -105,19 +105,69 @@ include bootstrap.mk
 
 .DEFAULT_GOAL := check
 
-# Forward CellTunnelDev argv with no Make-side renaming. Path segments after
-# `ct/` become the tool arguments (same words the tool already documents).
-#   make ct/build/mac-catalyst
-#   make ct/relay-status
-#   make ct/relay-up ARGS='--config path.conf'
-#   make ct/install-mac ARGS='--config Debug'
-.PHONY: smoke logs
+# Named project targets route into CellTunnelDev. help:: appends that tool's help.
+.PHONY: format iphone-install install-mac smoke logs \
+	build-mac build-catalyst build-iphone build-iphone-sim build-daemon \
+	run-catalyst run-iphone run-iphone-sim \
+	relay-up relay-reload relay-status relay-down \
+	mac-logs iphone-logs
 
 help::
 	@$(CELL_TUNNEL_DEV) help
 
-ct/%:
-	@$(CELL_TUNNEL_DEV) $(subst /, ,$*) $(ARGS)
+build-mac:
+	@$(CELL_TUNNEL_DEV) build mac $(CONFIG)
+
+build-catalyst:
+	@$(CELL_TUNNEL_DEV) build mac-catalyst $(CONFIG)
+
+build-iphone:
+	@$(CELL_TUNNEL_DEV) build iphone-device $(CONFIG)
+
+build-iphone-sim:
+	@$(CELL_TUNNEL_DEV) build iphone-simulator $(CONFIG)
+
+build-daemon:
+	@$(CELL_TUNNEL_DEV) build daemon $(CONFIG)
+
+run-catalyst:
+	@$(CELL_TUNNEL_DEV) build mac-catalyst $(CONFIG)
+	@$(CELL_TUNNEL_DEV) activate mac-catalyst $(CONFIG)
+
+run-iphone:
+	@$(CELL_TUNNEL_DEV) build iphone-device $(CONFIG)
+	@$(CELL_TUNNEL_DEV) activate iphone $(CONFIG)
+
+run-iphone-sim:
+	@$(CELL_TUNNEL_DEV) build iphone-simulator $(CONFIG)
+	@$(CELL_TUNNEL_DEV) activate iphone-simulator $(CONFIG)
+
+format:
+	@$(CELL_TUNNEL_DEV) format
+
+iphone-install:
+	@$(CELL_TUNNEL_DEV) activate iphone $(CONFIG)
+
+install-mac:
+	@$(CELL_TUNNEL_DEV) install-mac --config $(CONFIG)
+
+relay-up:
+	@$(CELL_TUNNEL_DEV) relay-up --config "$(WG_CONFIG)"
+
+relay-reload:
+	@$(CELL_TUNNEL_DEV) relay-reload --config "$(WG_CONFIG)"
+
+relay-status:
+	@$(CELL_TUNNEL_DEV) relay-status
+
+relay-down:
+	@$(CELL_TUNNEL_DEV) relay-down
+
+mac-logs:
+	@$(CELL_TUNNEL_DEV) mac-logs
+
+iphone-logs:
+	@$(CELL_TUNNEL_DEV) iphone-logs
 
 smoke:
 	@printf 'make smoke: run these in order against the smoke config\n'
