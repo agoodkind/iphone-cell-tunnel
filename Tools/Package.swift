@@ -70,6 +70,11 @@ let package = Package(
         .product(name: "SwiftMkCore", package: "swift-makefile"),
       ],
       path: "CellTunnelDev"
-    )
+    ),
+    .testTarget(
+      name: "CellTunnelDevTests",
+      dependencies: ["CellTunnelDev"],
+      path: "CellTunnelDevTests"
+    ),
   ]
 )

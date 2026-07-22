@@ -15,6 +15,7 @@ enum CellTunnelAccessibilityIdentifier: String {
   case configEditor = "cell-tunnel.config-editor"
   case deleteConfig = "cell-tunnel.delete-config"
   case editConfig = "cell-tunnel.edit-config"
+  case fixtureScrollRecovery = "cell-tunnel.fixture-scroll-recovery"
   case importConfig = "cell-tunnel.import-config"
   case macStatusScroll = "cell-tunnel.mac-status-scroll"
   case newConfig = "cell-tunnel.new-config"
