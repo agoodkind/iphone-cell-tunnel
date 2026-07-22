@@ -38,6 +38,26 @@ private let configLibraryContentTypes: [UTType] = [
   .plainText,
 ]
 
+// MARK: - ActiveConfigSheet
+
+/// The single sheet the config library presents, either editing an existing config or
+/// composing a new one. Driving both through one `sheet(item:)` keeps the view from
+/// stacking two competing sheet presentations, which wedges modal presentation on Mac
+/// Catalyst and freezes the window.
+private enum ActiveConfigSheet: Identifiable {
+  case create
+  case edit(TunnelConfigSummary)
+
+  var id: String {
+    switch self {
+    case .create:
+      return "create"
+    case .edit(let config):
+      return "edit-\(config.id.uuidString)"
+    }
+  }
+}
+
 // MARK: - ConfigLibraryView
 
 /// Presents the stored WireGuard configs inside the shared masonry tile, the same rounded
@@ -50,32 +70,30 @@ private let configLibraryContentTypes: [UTType] = [
 struct ConfigLibraryView: View {
   @Environment(RelayController.self) private var controller
   @State private var isImportingConfig = false
-  @State private var isCreatingConfig = false
-  @State private var editingConfig: TunnelConfigSummary?
+  @State private var activeSheet: ActiveConfigSheet?
   @State private var isRenaming = false
   @State private var renamingID: UUID?
   @State private var renameText = ""
 
   // MARK: - Body
 
+  // Each modal presentation lives on its own view so the library never stacks a sheet, a
+  // file importer, and an alert on one node; on Mac Catalyst that stack wedges the window
+  // when the file importer opens. The editor and new-config flows share one `sheet(item:)`,
+  // and the file importer sits on the Import button in `actions`.
   var body: some View {
     VStack(alignment: .leading, spacing: configLibrarySectionSpacing) {
       card
       actions
     }
     .frame(maxWidth: .infinity, alignment: .leading)
-    .sheet(item: $editingConfig) { config in
-      ConfigEditorView(config: config)
-    }
-    .sheet(isPresented: $isCreatingConfig) {
-      ConfigEditorView(config: nil)
-    }
-    .fileImporter(
-      isPresented: $isImportingConfig,
-      allowedContentTypes: configLibraryContentTypes,
-      allowsMultipleSelection: false
-    ) { result in
-      handleImport(result)
+    .sheet(item: $activeSheet) { sheet in
+      switch sheet {
+      case .edit(let config):
+        ConfigEditorView(config: config)
+      case .create:
+        ConfigEditorView(config: nil)
+      }
     }
     .alert(configLibraryRenameSheetTitle, isPresented: $isRenaming) {
       renameAlertContent
@@ -131,7 +149,7 @@ struct ConfigLibraryView: View {
   private func rowMenu(_ config: TunnelConfigSummary) -> some View {
     Menu {
       Button(configLibraryEditTitle) {
-        editingConfig = config
+        activeSheet = .edit(config)
       }
       Button(configLibraryRenameTitle) {
         startRename(config)
@@ -162,8 +180,15 @@ struct ConfigLibraryView: View {
         isImportingConfig = true
       }
       .buttonStyle(.bordered)
+      .fileImporter(
+        isPresented: $isImportingConfig,
+        allowedContentTypes: configLibraryContentTypes,
+        allowsMultipleSelection: false
+      ) { result in
+        handleImport(result)
+      }
       Button(configLibraryNewTitle) {
-        isCreatingConfig = true
+        activeSheet = .create
       }
       .buttonStyle(.bordered)
     }
