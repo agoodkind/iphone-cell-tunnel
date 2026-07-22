@@ -32,7 +32,7 @@
   /// extension. The data plane lives in the extension, so this type owns no
   /// forwarder; it reflects the polled snapshot into a `RelayStatusSample`.
   @MainActor
-  final class PhoneRelayBackend: RelayControlBackend {
+  final class PhoneRelayBackend: RelayControlBackend, PhoneTunnelProvisioningBackend {
     private var manager: NETunnelProviderManager?
     private var lastSample: RelayStatusSample?
     private var configurationChangeObserver: NSObjectProtocol?
@@ -112,6 +112,19 @@
         )
         return fallbackSample(connectionStatus: session.status)
       }
+    }
+
+    // MARK: - Tunnel install
+
+    // The iPhone tunnel carries no WireGuard config, so installing it saves and
+    // starts the provider manager through the existing start path.
+    func installTunnel(configURL _: URL) async {
+      if isSimulator {
+        await simulatorProbe.installTunnel(configURL: URL(fileURLWithPath: "/"))
+        return
+      }
+      logger.notice("phone relay backend install tunnel: starting session")
+      await start()
     }
 
     private func makeSample(
@@ -294,23 +307,7 @@
       await Task.yield()
     }
 
-    // MARK: - Tunnel install
-
-    // The iPhone tunnel carries no WireGuard config, so installing it saves and
-    // starts the provider manager through the existing start path.
-    func installTunnel(configURL _: URL) async {
-      if isSimulator {
-        await simulatorProbe.installTunnel(configURL: URL(fileURLWithPath: "/"))
-        return
-      }
-      logger.notice("phone relay backend install tunnel: starting session")
-      await start()
-    }
-
     // MARK: - Provider messaging
-
-    // The iPhone hosts no config library, so it takes the shared no-op config-op defaults
-    // from RelayControlBackend; its tunnel carries no WireGuard config.
 
     private func sendStatusRequest(
       on session: NETunnelProviderSession

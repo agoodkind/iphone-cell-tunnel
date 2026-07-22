@@ -46,7 +46,8 @@ final class PreviewRelayBackend: RelayControlBackend {
   func installTunnel(configURL _: URL) async {
     await Task.yield()
   }
-
-  // The preview backend hosts no config library, so it takes the shared no-op config-op
-  // defaults from RelayControlBackend.
 }
+
+#if !targetEnvironment(macCatalyst)
+  extension PreviewRelayBackend: PhoneTunnelProvisioningBackend {}
+#endif

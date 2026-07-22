@@ -141,7 +141,12 @@ struct RelayStatusSample: Sendable {
 @Observable
 final class RelayController {
   let backend: any RelayControlBackend
-  private let installState: InstallationState
+  let installState: InstallationState
+
+  #if !targetEnvironment(macCatalyst)
+    private let phoneProvisioningBackend: any PhoneTunnelProvisioningBackend
+  #endif
+
   private let deviceProbe: DeviceEgressProbe?
   private var pollTask: Task<Void, Never>?
   private var throughput: ThroughputCalculator
@@ -226,6 +231,7 @@ final class RelayController {
   var relayHost: String?
   var relayServerIPv4Address: String?
   var relayServerIPv6Address: String?
+
   /// The agent's config library mirrored from the status poll, the rows the Configs
   /// card lists, so the card reads the same source as the Relay tile and the two
   /// never diverge. Empty on the iPhone, which hosts no library.
@@ -234,19 +240,35 @@ final class RelayController {
   /// active and the running tunnel uses.
   var activeConfigID: UUID?
 
-  init(
-    backend: any RelayControlBackend,
-    throughput: ThroughputCalculator,
-    lifetimeStore: LifetimeDataStore,
-    installState: InstallationState = InstallationState(),
-    deviceProbe: DeviceEgressProbe? = nil
-  ) {
-    self.backend = backend
-    self.throughput = throughput
-    self.lifetimeStore = lifetimeStore
-    self.installState = installState
-    self.deviceProbe = deviceProbe
-  }
+  #if targetEnvironment(macCatalyst)
+    init(
+      backend: any RelayControlBackend,
+      throughput: ThroughputCalculator,
+      lifetimeStore: LifetimeDataStore,
+      installState: InstallationState = InstallationState(),
+      deviceProbe: DeviceEgressProbe? = nil
+    ) {
+      self.backend = backend
+      self.throughput = throughput
+      self.lifetimeStore = lifetimeStore
+      self.installState = installState
+      self.deviceProbe = deviceProbe
+    }
+  #else
+    init(
+      backend: some RelayControlBackend & PhoneTunnelProvisioningBackend,
+      throughput: ThroughputCalculator,
+      lifetimeStore: LifetimeDataStore,
+      deviceProbe: DeviceEgressProbe? = nil
+    ) {
+      self.backend = backend
+      phoneProvisioningBackend = backend
+      self.throughput = throughput
+      self.lifetimeStore = lifetimeStore
+      installState = InstallationState()
+      self.deviceProbe = deviceProbe
+    }
+  #endif
 
   // MARK: - Lifecycle
 
@@ -259,10 +281,10 @@ final class RelayController {
     startPolling()
   }
 
-  /// Starts the relay only when a saved tunnel configuration is already approved.
+  /// Starts the relay only when the platform's own required setup is complete.
   func prepare() async {
     logger.notice("relay controller prepare requested")
-    let provisioned = await backend.tunnelProvisioned()
+    let provisioned = await platformTunnelProvisioned()
     if provisioned {
       await start()
     } else {
@@ -274,7 +296,7 @@ final class RelayController {
   /// Refreshes saved tunnel presence and starts the relay when provisioned and idle.
   func refreshProvisioned() async {
     logger.notice("relay controller provisioned refresh requested")
-    let provisioned = await backend.tunnelProvisioned()
+    let provisioned = await platformTunnelProvisioned()
     if !provisioned {
       isTunnelInstalled = false
       logger.notice("relay controller provisioned refresh found no saved tunnel")
@@ -283,6 +305,14 @@ final class RelayController {
     if pollTask == nil {
       await start()
     }
+  }
+
+  private func platformTunnelProvisioned() async -> Bool {
+    #if targetEnvironment(macCatalyst)
+      return await backend.tunnelProvisioned()
+    #else
+      return await phoneProvisioningBackend.tunnelProvisioned()
+    #endif
   }
 
   // Wires the app's egress probe to the device-value recompute and starts it for
@@ -352,9 +382,13 @@ final class RelayController {
         }
         if let sample = await backend.sample() {
           apply(sample)
-          await refreshInstallState(agentReachable: true)
+          #if targetEnvironment(macCatalyst)
+            await refreshInstallState(agentReachable: true)
+          #endif
         } else {
-          await refreshInstallState(agentReachable: false)
+          #if targetEnvironment(macCatalyst)
+            await refreshInstallState(agentReachable: false)
+          #endif
         }
         guard !Task.isCancelled else {
           return
@@ -428,26 +462,32 @@ final class RelayController {
     }
   }
 
-  // Refreshes the agent install state each poll, so the install-agent setup tier
-  // appears on a Mac with no agent and clears once the agent answers or is enabled.
-  // The install read runs off the main actor, so the poll awaits it and the main
-  // thread stays free to present modals mid-poll.
-  private func refreshInstallState(agentReachable: Bool) async {
-    await installState.refresh(agentReachable: agentReachable)
-    isAgentInstalled = installState.isAgentInstalled
-    isAgentApprovalPending = installState.isApprovalPending
-  }
-
-  // MARK: - Routing control
-
-  /// Whether an active config exists to relay through, the gate that decides a
-  /// connected peer can route at all. The Mac reads the agent's active config id;
-  /// the iPhone, whose tunnel carries its own config, mirrors its saved-tunnel flag.
-  var hasActiveConfig: Bool {
-    if usesEgressRoster {
-      return activeConfigID != nil
+  #if targetEnvironment(macCatalyst)
+    // Refreshes the agent install state each poll, so the install-agent setup tier
+    // appears on a Mac with no agent and clears once the agent answers or is enabled.
+    // The install read runs off the main actor, so the poll awaits it and the main
+    // thread stays free to present modals mid-poll.
+    private func refreshInstallState(agentReachable: Bool) async {
+      await installState.refresh(agentReachable: agentReachable)
+      isAgentInstalled = installState.isAgentInstalled
+      isAgentApprovalPending = installState.isApprovalPending
     }
-    return isTunnelInstalled
+  #endif
+
+}
+
+// MARK: - Routing control
+
+extension RelayController {
+
+  /// Whether the current platform has an active relay configuration. Mac Catalyst
+  /// reads the agent library selection, while the iPhone reads its approved VPN state.
+  var hasActiveConfig: Bool {
+    #if targetEnvironment(macCatalyst)
+      return activeConfigID != nil
+    #else
+      return isTunnelInstalled
+    #endif
   }
 
   /// The derived state of the single Route traffic switch, computed once from the

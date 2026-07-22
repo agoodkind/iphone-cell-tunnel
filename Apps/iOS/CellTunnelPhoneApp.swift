@@ -44,17 +44,19 @@ struct CellTunnelPhoneApp: App {
     )
   }
 
-  private static func makeBackend() -> any RelayControlBackend {
-    #if targetEnvironment(macCatalyst)
+  #if targetEnvironment(macCatalyst)
+    private static func makeBackend() -> AgentRelayBackend {
       logger.notice("phone app selecting Mac agent backend")
       return AgentRelayBackend()
-    #else
+    }
+  #else
+    private static func makeBackend() -> PhoneRelayBackend {
       // The iPhone backend drives the on-device packet tunnel and delegates to
       // the in-process relay runtime host in the simulator.
       logger.notice("phone app selecting iPhone relay backend")
       return PhoneRelayBackend()
-    #endif
-  }
+    }
+  #endif
 
   var body: some Scene {
     WindowGroup {
