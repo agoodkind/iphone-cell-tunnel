@@ -4,14 +4,16 @@ Cell Tunnel routes a Mac's internet traffic through an iPhone's native cellular 
 
 ## Build
 
-Builds run lint and audit gates first. `TARGET` is required.
+Builds run lint and audit gates first. `make help` lists every project target.
 
 ```sh
-make build TARGET=mac CONFIG=Debug
-make build TARGET=mac-catalyst CONFIG=Debug
-make build TARGET=iphone-device CONFIG=Debug
-make build TARGET=iphone-simulator CONFIG=Debug
+make build-mac
+make build-catalyst
+make build-iphone
+make build-iphone-sim
 ```
+
+`CONFIG` defaults to `Debug`. Pass `CONFIG=Release` when needed.
 
 ## Signing
 
@@ -31,17 +33,25 @@ The macOS targets sign from `Config/local.xcconfig` (`DEVELOPMENT_TEAM`,
 Install the Mac side, then install and launch the iPhone app:
 
 ```sh
-make install-mac CONFIG=Debug
-make iphone-install CONFIG=Debug
+make install-mac
+make iphone-install
+```
+
+Run the Catalyst app from a built product:
+
+```sh
+make run-catalyst
 ```
 
 Bring the tunnel up from a WireGuard config. The Mac VPN connects immediately, and the routes install once the iPhone dials in over the link:
 
 ```sh
-swift Tools/cell-tunnel-dev.swift relay-up --config <path>   # bring the tunnel up end to end
-swift Tools/cell-tunnel-dev.swift relay-status               # full state dump with a drift verdict
-swift Tools/cell-tunnel-dev.swift relay-down                 # stop the tunnel
+make relay-up WG_CONFIG=<path>
+make relay-status
+make relay-down
 ```
+
+Anything not listed in `make help` stays on the underlying tool: `swift Tools/cell-tunnel-dev.swift <command>` (run with no args for the full list).
 
 The agent owns one config library, so a config you start is stored once and reused. Manage it from the Mac app's Configs card or with `celltunnelctl configs`:
 

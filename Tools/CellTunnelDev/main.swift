@@ -20,6 +20,8 @@ func printHelp() {
   let helpText = """
     usage: swift Tools/cell-tunnel-dev.swift <command>
 
+    Project Make targets (build-mac, relay-up, ...): `make help`.
+
     commands:
       help        Show this help text.
       generate    Install Tuist dependencies and generate CellTunnel.xcworkspace.
