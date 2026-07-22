@@ -4,7 +4,7 @@ Cell Tunnel routes a Mac's internet traffic through an iPhone's native cellular 
 
 ## Build
 
-Builds run lint first via CellTunnelDev. `make help` lists every project target (help text from the tool).
+Builds run lint first via CellTunnelDev. `make help` lists engine targets, then CellTunnelDev's help.
 
 ```sh
 make build-mac

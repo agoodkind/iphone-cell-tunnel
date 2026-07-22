@@ -105,8 +105,8 @@ include bootstrap.mk
 
 .DEFAULT_GOAL := check
 
-# Project targets are thin routers into CellTunnelDev. Help text lives in
-# CellTunnelDev `make-help` and is appended through help::.
+# Project targets are thin routers into CellTunnelDev. Project help is the tool's
+# own help text, appended through help::.
 .PHONY: format iphone-install install-mac smoke logs \
 	build-mac build-catalyst build-iphone build-iphone-sim build-daemon \
 	run-catalyst run-iphone run-iphone-sim \
@@ -114,7 +114,7 @@ include bootstrap.mk
 	mac-logs iphone-logs
 
 help::
-	@$(CELL_TUNNEL_DEV) make-help
+	@$(CELL_TUNNEL_DEV) help
 
 build-mac:
 	@$(CELL_TUNNEL_DEV) build mac $(CONFIG)
