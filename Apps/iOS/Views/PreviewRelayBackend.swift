@@ -56,12 +56,14 @@ final class PreviewRelayBackend: RelayControlBackend {
       return nil
     }
 
-    func importConfig(url _: URL, name _: String) async {
+    func importConfig(url _: URL, name _: String) async throws {
       await Task.yield()
+      try Task.checkCancellation()
     }
 
-    func importConfig(name _: String, text _: String) async {
+    func importConfig(name _: String, text _: String) async throws {
       await Task.yield()
+      try Task.checkCancellation()
     }
 
     func activateConfig(id _: UUID) async {

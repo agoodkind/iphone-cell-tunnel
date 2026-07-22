@@ -52,6 +52,7 @@
   struct ConfigLibraryView: View {
     @Environment(RelayController.self) private var controller
     @State private var presentation = ConfigLibraryPresentation.idle
+    @State private var activeImportRequestID: UUID?
     @State private var renameText = ""
 
     // MARK: - Body
@@ -156,6 +157,7 @@
           presentation.presentImport()
         }
         .buttonStyle(.bordered)
+        .disabled(activeImportRequestID != nil)
         .fileImporter(
           isPresented: importPresentationBinding,
           allowedContentTypes: configLibraryContentTypes,
@@ -196,9 +198,31 @@
           return
         }
         let name = url.deletingPathExtension().lastPathComponent
-        controller.importConfig(url: url, name: name)
+        guard activeImportRequestID == nil else {
+          return
+        }
+        let requestID = UUID()
+        activeImportRequestID = requestID
+        Task {
+          do {
+            try await controller.importConfig(url: url, name: name)
+            completeImport(requestID: requestID, error: nil)
+          } catch {
+            completeImport(requestID: requestID, error: error)
+          }
+        }
       case .failure(let error):
         presentation.failImport(message: error.localizedDescription)
+      }
+    }
+
+    private func completeImport(requestID: UUID, error: Error?) {
+      guard activeImportRequestID == requestID else {
+        return
+      }
+      activeImportRequestID = nil
+      if let error {
+        presentation.completeImportFailure(message: error.localizedDescription)
       }
     }
 

@@ -40,9 +40,9 @@
     }
 
     /// Imports a picked configuration file, then validates, stores, and applies it.
-    func importConfig(url: URL, name: String) {
+    func importConfig(url: URL, name: String) async throws {
       configLibraryLogger.notice("relay controller import config requested")
-      Task { await configLibraryBackend.importConfig(url: url, name: name) }
+      try await configLibraryBackend.importConfig(url: url, name: name)
     }
 
     /// Makes a stored configuration active and applies it.
@@ -83,7 +83,16 @@
         pinnedActiveConfigID = previousActiveID
       }
       Task {
-        await configLibraryBackend.importConfig(name: name, text: text)
+        do {
+          try await configLibraryBackend.importConfig(name: name, text: text)
+        } catch {
+          configLibraryLogger.error(
+            """
+            relay controller create config failed \
+            details=\(String(describing: error), privacy: .public) recovery=keep-state
+            """
+          )
+        }
         if let previousActiveID {
           await configLibraryBackend.activateConfig(id: previousActiveID)
         }

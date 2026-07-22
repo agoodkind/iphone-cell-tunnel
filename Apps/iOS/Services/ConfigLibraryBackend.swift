@@ -23,10 +23,10 @@
     func loadConfigText(id: UUID) async -> String?
 
     /// Imports a selected configuration file into the agent library.
-    func importConfig(url: URL, name: String) async
+    func importConfig(url: URL, name: String) async throws
 
     /// Creates a configuration from raw editor text.
-    func importConfig(name: String, text: String) async
+    func importConfig(name: String, text: String) async throws
 
     /// Marks one stored configuration active.
     func activateConfig(id: UUID) async

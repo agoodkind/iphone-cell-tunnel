@@ -99,6 +99,14 @@
       dismissImport()
     }
 
+    /// Shows an error from a selected file only when no newer presentation replaced it.
+    mutating func completeImportFailure(message: String) {
+      guard self == .idle else {
+        return
+      }
+      self = .importFailure(message)
+    }
+
     /// Replaces the document importer with an error alert when the picker fails.
     mutating func failImport(message: String) {
       self = .importFailure(message)
