@@ -76,4 +76,32 @@ extension RelayControlBackend {
     false
   }
 
+  func loadConfigText(id _: UUID) async -> String? {
+    await Task.yield()
+    return nil
+  }
+
+  func importConfig(url _: URL, name _: String) async {
+    await Task.yield()
+  }
+
+  func activateConfig(id _: UUID) async {
+    await Task.yield()
+  }
+
+  func saveConfigEdit(id _: UUID, text _: String) async {
+    await Task.yield()
+  }
+
+  func deleteConfig(id _: UUID) async {
+    await Task.yield()
+  }
+
+  func renameConfig(id _: UUID, name _: String) async {
+    await Task.yield()
+  }
+
+  func importConfig(name _: String, text _: String) async {
+    await Task.yield()
+  }
 }
