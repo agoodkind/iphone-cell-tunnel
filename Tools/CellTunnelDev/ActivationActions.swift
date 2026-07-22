@@ -231,7 +231,10 @@ func availablePhoneSimulators() throws -> [AvailableSimulator] {
     SimulatorDeviceList.self, from: Data(result.output.utf8))
   return deviceList.devices.flatMap { runtimeIdentifier, devices in
     devices.compactMap { device in
-      guard device.isAvailable, device.name.hasPrefix("iPhone") else {
+      guard
+        device.isAvailable,
+        device.name.hasPrefix("iPhone") || device.name.hasPrefix(autoCreatedSimulatorNamePrefix)
+      else {
         return nil
       }
       return AvailableSimulator(runtimeIdentifier: runtimeIdentifier, device: device)

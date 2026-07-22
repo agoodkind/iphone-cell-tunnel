@@ -45,6 +45,8 @@ func printHelp() {
                   io.goodkind.celltunnel subsystem. See `iphone-logs --help`.
       mac-logs    Show or stream Mac agent and tunnel-provider logs. See `mac-logs --help`.
       logs        Stream Mac and iPhone celltunnel logs together. See `logs --help`.
+      ui-test     Run the Debug UI tests without using a physical device.
+                   Target: iphone-simulator|mac-catalyst.
       relay-browse
                   Foreground Bonjour browse for the iPhone relay service.
                   Optional positional duration in seconds (default 8).
@@ -236,6 +238,10 @@ func runAuditCommand(_ command: String) throws -> Bool {
   switch command {
   case "analyze":
     try analyzeProject()
+    return true
+  case "ui-test":
+    let arguments = Array(CommandLine.arguments.dropFirst(programAndCommandArgumentCount))
+    try runUITests(arguments: arguments)
     return true
   default:
     return false
