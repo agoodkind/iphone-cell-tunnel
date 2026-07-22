@@ -20,10 +20,9 @@ func printHelp() {
   let helpText = """
     usage: swift Tools/cell-tunnel-dev.swift <command>
 
-    Project Make targets (build-mac, relay-up, ...): `make help`.
-
     commands:
       help        Show this help text.
+      make-help   Print the Cell Tunnel Make target list (used by `make help`).
       generate    Install Tuist dependencies and generate CellTunnel.xcworkspace.
       build       Run lint, then build the named target.
                   Targets: daemon|mac|iphone-simulator|iphone-device|all
@@ -186,6 +185,9 @@ func runCoreCommand(_ command: String) throws -> Bool {
   switch command {
   case "help":
     printHelp()
+    return true
+  case "make-help":
+    printMakeHelp()
     return true
   case "generate":
     try generateProject()

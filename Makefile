@@ -105,8 +105,8 @@ include bootstrap.mk
 
 .DEFAULT_GOAL := check
 
-# Project targets are thin routers into CellTunnelDev or the engine build/run rail.
-# Descriptions live here under `help::` (appended after bootstrap.mk).
+# Project targets are thin routers into CellTunnelDev. Help text lives in
+# CellTunnelDev `make-help` and is appended through help::.
 .PHONY: format iphone-install install-mac smoke logs \
 	build-mac build-catalyst build-iphone build-iphone-sim build-daemon \
 	run-catalyst run-iphone run-iphone-sim \
@@ -114,54 +114,33 @@ include bootstrap.mk
 	mac-logs iphone-logs
 
 help::
-	@printf '\n%s\n' 'Cell Tunnel:'
-	@printf '  %-40s %s\n' 'build-mac' 'build the Mac agent'
-	@printf '  %-40s %s\n' 'build-catalyst' 'build the Mac Catalyst app'
-	@printf '  %-40s %s\n' 'build-iphone' 'build the iPhone app for a device'
-	@printf '  %-40s %s\n' 'build-iphone-sim' 'build the iPhone app for the simulator'
-	@printf '  %-40s %s\n' 'build-daemon' 'build the Mac agent daemon only'
-	@printf '  %-40s %s\n' 'run-catalyst' 'install and launch the Mac Catalyst app'
-	@printf '  %-40s %s\n' 'run-iphone' 'install and launch the iPhone app on a device'
-	@printf '  %-40s %s\n' 'run-iphone-sim' 'install and launch the iPhone app in the simulator'
-	@printf '  %-40s %s\n' 'install-mac' 'install the Mac agent into /Applications/CellTunnel'
-	@printf '  %-40s %s\n' 'iphone-install' 'install and launch the iPhone app'
-	@printf '  %-40s %s\n' 'relay-up WG_CONFIG=<path>' 'bring the relay tunnel up end to end'
-	@printf '  %-40s %s\n' 'relay-reload WG_CONFIG=<path>' 'reload the running tunnel config in place'
-	@printf '  %-40s %s\n' 'relay-status' 'print tunnel status with a drift verdict'
-	@printf '  %-40s %s\n' 'relay-down' 'stop the relay tunnel'
-	@printf '  %-40s %s\n' 'mac-logs' 'show or stream Mac agent and tunnel-provider logs'
-	@printf '  %-40s %s\n' 'iphone-logs' 'show the iPhone unified log for the project subsystem'
-	@printf '  %-40s %s\n' 'format' 'format Swift sources via CellTunnelDev'
-	@printf '  %-40s %s\n' 'smoke' 'print the manual smoke sequence (not yet automated)'
-	@printf '  %-40s %s\n' 'logs' 'print how to open Mac and iPhone log streams'
+	@$(CELL_TUNNEL_DEV) make-help
 
 build-mac:
-	@$(MAKE) build-check
 	@$(CELL_TUNNEL_DEV) build mac $(CONFIG)
 
 build-catalyst:
-	@$(MAKE) build-check
 	@$(CELL_TUNNEL_DEV) build mac-catalyst $(CONFIG)
 
 build-iphone:
-	@$(MAKE) build-check
 	@$(CELL_TUNNEL_DEV) build iphone-device $(CONFIG)
 
 build-iphone-sim:
-	@$(MAKE) build-check
 	@$(CELL_TUNNEL_DEV) build iphone-simulator $(CONFIG)
 
 build-daemon:
-	@$(MAKE) build-check
 	@$(CELL_TUNNEL_DEV) build daemon $(CONFIG)
 
-run-catalyst: build-catalyst
+run-catalyst:
+	@$(CELL_TUNNEL_DEV) build mac-catalyst $(CONFIG)
 	@$(CELL_TUNNEL_DEV) activate mac-catalyst $(CONFIG)
 
-run-iphone: build-iphone
+run-iphone:
+	@$(CELL_TUNNEL_DEV) build iphone-device $(CONFIG)
 	@$(CELL_TUNNEL_DEV) activate iphone $(CONFIG)
 
-run-iphone-sim: build-iphone-sim
+run-iphone-sim:
+	@$(CELL_TUNNEL_DEV) build iphone-simulator $(CONFIG)
 	@$(CELL_TUNNEL_DEV) activate iphone-simulator $(CONFIG)
 
 format:
