@@ -105,8 +105,6 @@ include bootstrap.mk
 
 .DEFAULT_GOAL := check
 
-# Named project targets route into CellTunnelDev. help:: prints their descriptions
-# here so `make help` stays instant (no CellTunnelDev compile).
 .PHONY: format iphone-install install-mac smoke logs \
 	build-mac build-catalyst build-iphone build-iphone-sim build-daemon \
 	run-catalyst run-iphone run-iphone-sim \
@@ -136,57 +134,55 @@ help::
 	@printf '  %-40s %s\n' 'logs' 'print how to open Mac and iPhone log streams'
 
 build-mac:
-	@$(CELL_TUNNEL_DEV) build mac $(CONFIG)
+	@$(MAKE) build TARGET=mac CONFIG=$(CONFIG)
 
 build-catalyst:
-	@$(CELL_TUNNEL_DEV) build mac-catalyst $(CONFIG)
+	@$(MAKE) build TARGET=mac-catalyst CONFIG=$(CONFIG)
 
 build-iphone:
-	@$(CELL_TUNNEL_DEV) build iphone-device $(CONFIG)
+	@$(MAKE) build TARGET=iphone-device CONFIG=$(CONFIG)
 
 build-iphone-sim:
-	@$(CELL_TUNNEL_DEV) build iphone-simulator $(CONFIG)
+	@$(MAKE) build TARGET=iphone-simulator CONFIG=$(CONFIG)
 
 build-daemon:
-	@$(CELL_TUNNEL_DEV) build daemon $(CONFIG)
+	@$(MAKE) build TARGET=daemon CONFIG=$(CONFIG)
 
 run-catalyst:
-	@$(CELL_TUNNEL_DEV) build mac-catalyst $(CONFIG)
-	@$(CELL_TUNNEL_DEV) activate mac-catalyst $(CONFIG)
+	@$(MAKE) run TARGET=mac-catalyst CONFIG=$(CONFIG)
 
 run-iphone:
-	@$(CELL_TUNNEL_DEV) build iphone-device $(CONFIG)
-	@$(CELL_TUNNEL_DEV) activate iphone $(CONFIG)
+	@$(MAKE) run TARGET=iphone CONFIG=$(CONFIG)
 
 run-iphone-sim:
-	@$(CELL_TUNNEL_DEV) build iphone-simulator $(CONFIG)
-	@$(CELL_TUNNEL_DEV) activate iphone-simulator $(CONFIG)
+	@$(MAKE) run TARGET=iphone-simulator CONFIG=$(CONFIG)
 
-format:
+format: generate
 	@$(CELL_TUNNEL_DEV) format
 
 iphone-install:
-	@$(CELL_TUNNEL_DEV) activate iphone $(CONFIG)
+	@$(MAKE) deploy TARGET=iphone CONFIG=$(CONFIG)
 
 install-mac:
+	@$(MAKE) build TARGET=mac CONFIG=$(CONFIG)
 	@$(CELL_TUNNEL_DEV) install-mac --config $(CONFIG)
 
-relay-up:
+relay-up: generate
 	@$(CELL_TUNNEL_DEV) relay-up --config "$(WG_CONFIG)"
 
-relay-reload:
+relay-reload: generate
 	@$(CELL_TUNNEL_DEV) relay-reload --config "$(WG_CONFIG)"
 
-relay-status:
+relay-status: generate
 	@$(CELL_TUNNEL_DEV) relay-status
 
-relay-down:
+relay-down: generate
 	@$(CELL_TUNNEL_DEV) relay-down
 
-mac-logs:
+mac-logs: generate
 	@$(CELL_TUNNEL_DEV) mac-logs
 
-iphone-logs:
+iphone-logs: generate
 	@$(CELL_TUNNEL_DEV) iphone-logs
 
 smoke:
