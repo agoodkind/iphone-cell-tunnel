@@ -34,6 +34,12 @@ struct CellTunnelPhoneApp: App {
     CellTunnelLog.bootstrap()
     logger.notice("CellTunnelPhone app initializing")
     applyLaunchPortOverride()
+    #if DEBUG
+      if UITestFixture.isEnabled {
+        _relayController = State(initialValue: UITestFixture.makeRelayController())
+        return
+      }
+    #endif
     _relayController = State(
       initialValue: RelayController(
         backend: Self.makeBackend(),

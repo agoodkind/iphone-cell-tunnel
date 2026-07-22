@@ -36,6 +36,13 @@
     /// last status poll reached the agent over the control transport. The read runs off
     /// the main actor, so the caller awaits it and the main thread stays free.
     func refresh(agentReachable: Bool) async {
+      #if DEBUG
+        if UITestFixture.isEnabled {
+          isAgentInstalled = agentReachable
+          isApprovalPending = false
+          return
+        }
+      #endif
       await refreshMacState(agentReachable: agentReachable)
     }
 
