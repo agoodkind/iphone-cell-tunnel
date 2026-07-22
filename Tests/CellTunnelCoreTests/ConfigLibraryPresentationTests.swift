@@ -6,67 +6,106 @@
 //  Copyright © 2026, all rights reserved.
 //
 
+import CellTunnelCatalystPresentation
+import CellTunnelCore
 import Foundation
 import Testing
 
 // MARK: - ConfigLibraryPresentationTests
 
-/// Verifies the Catalyst-only source contract for the config-library presentation model.
-/// The app target owns this type, so SwiftPM cannot load it into this package test bundle.
+/// Exercises the state machine that owns every Catalyst config-library destination. The
+/// package compiles the Catalyst-only source through its test-only target, leaving the
+/// iPhone and shared core targets free of config-library presentation code.
 struct ConfigLibraryPresentationTests {
-  @Test func stateModelStaysCatalystOnlyAndOwnsEveryDestination() throws {
-    let source = try sourceFile(at: "Apps/iOS/Views/ConfigLibraryPresentation.swift")
-    let corePresentationPath = repositoryRoot.appending(
-      path: "Sources/CellTunnelCore/ConfigLibraryPresentation.swift")
+  private let config = TunnelConfigSummary(
+    id: UUID(),
+    name: "Home",
+    createdAt: Date(timeIntervalSince1970: 1_721_000_000)
+  )
 
-    #expect(source.contains("#if targetEnvironment(macCatalyst)"))
-    #expect(!FileManager.default.fileExists(atPath: corePresentationPath.path))
-    #expect(source.contains("enum ConfigLibraryPresentation"))
-    #expect(source.contains("case creating"))
-    #expect(source.contains("case editing(TunnelConfigSummary)"))
-    #expect(source.contains("case idle"))
-    #expect(source.contains("case importFailure(String)"))
-    #expect(source.contains("case importing"))
-    #expect(source.contains("case renaming(TunnelConfigSummary)"))
+  // MARK: - Exclusivity
+
+  @Test func destinationsReplaceThePreviousPresentation() {
+    var presentation = ConfigLibraryPresentation.idle
+
+    presentation.presentImport()
+    presentation.presentCreate()
+    #expect(presentation == .creating)
+
+    presentation.presentEdit(config)
+    #expect(presentation == .editing(config))
+
+    presentation.presentRename(config)
+    #expect(presentation == .renaming(config))
   }
 
-  @Test func stateModelResetsAfterImportAndModalOutcomes() throws {
-    let source = try sourceFile(at: "Apps/iOS/Views/ConfigLibraryPresentation.swift")
+  // MARK: - Import
 
-    #expect(source.contains("mutating func dismissImport()"))
-    #expect(source.contains("mutating func completeImportSelection()"))
-    #expect(source.contains("mutating func failImport(message: String)"))
-    #expect(source.contains("mutating func dismiss()"))
-    #expect(source.contains("self = .idle"))
+  @Test func repeatedImportCancellationCyclesRestoreIdle() {
+    var presentation = ConfigLibraryPresentation.idle
+
+    for _ in 0..<2 {
+      presentation.presentImport()
+      #expect(presentation == .importing)
+
+      presentation.dismissImport()
+      #expect(presentation == .idle)
+    }
   }
 
-  @Test func viewUsesOneStateAndDerivedPresentationBindings() throws {
-    let source = try sourceFile(at: "Apps/iOS/Views/ConfigLibraryView.swift")
+  @Test func successfulImportSelectionRestoresIdle() {
+    var presentation = ConfigLibraryPresentation.idle
 
-    #expect(source.contains("@State private var presentation = ConfigLibraryPresentation.idle"))
-    #expect(!source.contains("isImportingConfig"))
-    #expect(!source.contains("isCreatingConfig"))
-    #expect(!source.contains("editingConfig"))
-    #expect(!source.contains("isRenaming"))
-    #expect(!source.contains("renamingID"))
-    #expect(source.contains("private var editorPresentationBinding"))
-    #expect(source.contains("private var importPresentationBinding"))
-    #expect(source.contains("private var alertPresentationBinding"))
-    #expect(source.contains(".sheet(item: editorPresentationBinding)"))
-    #expect(source.contains(".alert("))
-    #expect(source.contains(".fileImporter("))
-    #expect(source.contains("presentation.completeImportSelection()"))
-    #expect(source.contains("presentation.failImport(message: error.localizedDescription)"))
+    presentation.presentImport()
+    presentation.completeImport(.success(()))
+
+    #expect(presentation == .idle)
+  }
+
+  @Test func importFailureReplacesTheImporterWithAnAlert() {
+    var presentation = ConfigLibraryPresentation.idle
+
+    presentation.presentImport()
+    presentation.completeImport(.failure(PresentationImportError()))
+
+    #expect(presentation == .importFailure(PresentationImportError.message))
+
+    presentation.dismiss()
+    #expect(presentation == .idle)
+  }
+
+  // MARK: - Editor
+
+  @Test func editorDismissalRestoresIdleForCreateAndEdit() {
+    var presentation = ConfigLibraryPresentation.idle
+
+    presentation.presentCreate()
+    presentation.dismiss()
+    #expect(presentation == .idle)
+
+    presentation.presentEdit(config)
+    presentation.dismiss()
+    #expect(presentation == .idle)
+  }
+
+  // MARK: - Rename
+
+  @Test func renameDismissalRestoresIdle() {
+    var presentation = ConfigLibraryPresentation.idle
+
+    presentation.presentRename(config)
+    presentation.dismiss()
+
+    #expect(presentation == .idle)
   }
 }
 
-// MARK: - Source fixture
+// MARK: - PresentationImportError
 
-private let repositoryRoot = URL(filePath: #filePath)
-  .deletingLastPathComponent()
-  .deletingLastPathComponent()
-  .deletingLastPathComponent()
+private struct PresentationImportError: LocalizedError {
+  static let message = "The selected config could not be imported."
 
-private func sourceFile(at path: String) throws -> String {
-  try String(contentsOf: repositoryRoot.appending(path: path), encoding: .utf8)
+  var errorDescription: String? {
+    Self.message
+  }
 }

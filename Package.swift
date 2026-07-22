@@ -28,6 +28,13 @@ let package = Package(
     ),
     .target(name: "CellTunnelLog"),
     .target(
+      name: "CellTunnelCatalystPresentation",
+      dependencies: ["CellTunnelCore"],
+      path: "Apps/iOS/Presentation",
+      sources: ["ConfigLibraryPresentation.swift"],
+      swiftSettings: [.define("CATALYST_PRESENTATION_TESTING")]
+    ),
+    .target(
       name: "CellTunnelSignalSupport",
       path: "Sources/CellTunnelSignalSupport",
       publicHeadersPath: "include"
@@ -44,6 +51,7 @@ let package = Package(
     .testTarget(
       name: "CellTunnelCoreTests",
       dependencies: [
+        "CellTunnelCatalystPresentation",
         "CellTunnelCore",
         "CellTunnelLog",
       ]

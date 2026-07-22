@@ -6,7 +6,7 @@
 //  Copyright © 2026, all rights reserved.
 //
 
-#if targetEnvironment(macCatalyst)
+#if targetEnvironment(macCatalyst) || CATALYST_PRESENTATION_TESTING
   import CellTunnelCore
   import Foundation
 
@@ -15,7 +15,7 @@
   /// The one destination the Catalyst config library can present. Replacing this value
   /// dismisses the previous destination, which prevents an invisible importer, sheet, or
   /// alert from blocking the library behind the visible presentation.
-  enum ConfigLibraryPresentation: Equatable, Identifiable, Sendable {
+  public enum ConfigLibraryPresentation: Equatable, Identifiable, Sendable {
     case creating
     case editing(TunnelConfigSummary)
     case idle
@@ -24,7 +24,7 @@
     case renaming(TunnelConfigSummary)
 
     /// A stable identity for SwiftUI's item-based sheet and alert presentation.
-    var id: String {
+    public var id: String {
       switch self {
       case .creating:
         "creating"
@@ -42,12 +42,12 @@
     }
 
     /// Whether SwiftUI should show the document importer.
-    var isImporting: Bool {
+    public var isImporting: Bool {
       self == .importing
     }
 
     /// The editor presentation, if the current destination is a create or edit sheet.
-    var editorPresentation: ConfigLibraryPresentation? {
+    public var editorPresentation: ConfigLibraryPresentation? {
       switch self {
       case .creating, .editing:
         self
@@ -57,7 +57,7 @@
     }
 
     /// The alert presentation, if the current destination is a rename or import error.
-    var alertPresentation: ConfigLibraryPresentation? {
+    public var alertPresentation: ConfigLibraryPresentation? {
       switch self {
       case .importFailure, .renaming:
         self
@@ -67,27 +67,27 @@
     }
 
     /// Starts the document import presentation.
-    mutating func presentImport() {
+    public mutating func presentImport() {
       self = .importing
     }
 
     /// Starts the new-config editor presentation.
-    mutating func presentCreate() {
+    public mutating func presentCreate() {
       self = .creating
     }
 
     /// Starts the existing-config editor presentation.
-    mutating func presentEdit(_ config: TunnelConfigSummary) {
+    public mutating func presentEdit(_ config: TunnelConfigSummary) {
       self = .editing(config)
     }
 
     /// Starts the rename alert presentation.
-    mutating func presentRename(_ config: TunnelConfigSummary) {
+    public mutating func presentRename(_ config: TunnelConfigSummary) {
       self = .renaming(config)
     }
 
     /// Ends the active document import after the user cancels it.
-    mutating func dismissImport() {
+    public mutating func dismissImport() {
       guard isImporting else {
         return
       }
@@ -95,25 +95,35 @@
     }
 
     /// Ends the document import before its selected file is handed to the agent.
-    mutating func completeImportSelection() {
+    public mutating func completeImportSelection() {
       dismissImport()
     }
 
     /// Shows an error from a selected file only when no newer presentation replaced it.
-    mutating func completeImportFailure(message: String) {
+    public mutating func completeImportFailure(message: String) {
       guard self == .idle else {
         return
       }
       self = .importFailure(message)
     }
 
+    /// Replaces the document importer with an error alert when importing cannot complete.
+    public mutating func completeImport(_ result: Result<Void, Error>) {
+      switch result {
+      case .success:
+        dismissImport()
+      case .failure(let error):
+        failImport(message: error.localizedDescription)
+      }
+    }
+
     /// Replaces the document importer with an error alert when the picker fails.
-    mutating func failImport(message: String) {
+    public mutating func failImport(message: String) {
       self = .importFailure(message)
     }
 
     /// Ends the active sheet or alert.
-    mutating func dismiss() {
+    public mutating func dismiss() {
       self = .idle
     }
   }
