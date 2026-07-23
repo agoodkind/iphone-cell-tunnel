@@ -82,8 +82,8 @@ final class PrefixedProcess: @unchecked Sendable {
     let lineQueue = DispatchQueue(label: "celltunnel.prefixed-process.\(executable)")
     let outBuffer = PrefixedLineBuffer(prefix: linePrefix)
     let errBuffer = PrefixedLineBuffer(prefix: linePrefix)
-    let stdoutEOF = DispatchSemaphore(value: 0)
-    let stderrEOF = DispatchSemaphore(value: 0)
+    let stdoutEndOfFile = DispatchSemaphore(value: 0)
+    let stderrEndOfFile = DispatchSemaphore(value: 0)
 
     // Appends and EOF signals share lineQueue so waitUntilExitAndDrain can flush only
     // after every in-flight append has finished (no post-flush tail loss).
@@ -92,7 +92,7 @@ final class PrefixedProcess: @unchecked Sendable {
         handle: handle,
         buffer: outBuffer,
         queue: lineQueue,
-        eof: stdoutEOF
+        eof: stdoutEndOfFile
       )
     }
     errPipe.fileHandleForReading.readabilityHandler = { handle in
@@ -100,7 +100,7 @@ final class PrefixedProcess: @unchecked Sendable {
         handle: handle,
         buffer: errBuffer,
         queue: lineQueue,
-        eof: stderrEOF
+        eof: stderrEndOfFile
       )
     }
 
@@ -111,8 +111,8 @@ final class PrefixedProcess: @unchecked Sendable {
         queue: lineQueue,
         stdoutState: outBuffer,
         stderrState: errBuffer,
-        stdoutEOF: stdoutEOF,
-        stderrEOF: stderrEOF
+        stdoutEOF: stdoutEndOfFile,
+        stderrEOF: stderrEndOfFile
       )
     )
   }

@@ -33,26 +33,24 @@ jobs:
       # adds /opt/homebrew/bin to PATH, which is where brew installs go. The shared
       # required jobs and the signed macOS build all link WireGuardKitGo.
       brew-packages: go
-      # Import the Apple Distribution certificate into the runner keychain and hand
-      # its SHA-1 to swift-mk as CODE_SIGN_IDENTITY. swift-mk builds the signing
-      # xcconfig (the identity + Manual style + team) and exports XCODE_XCCONFIG_FILE
-      # so it wins over every target. The macOS agent and tunnel provider use the
-      # app-extension NetworkExtension entitlement (packet-tunnel-provider), which
-      # Developer ID cannot authorize on macOS; App Store distribution profiles do,
-      # and they enumerate no devices, so the build signs on an unregistered runner.
+      # Sign every product in one Verify job. SWIFT_VERIFY_BUILD_CMD (`build all`)
+      # builds the Mac agent and tunnel, the Catalyst app, the iPhone simulator app,
+      # the iPhone device app, and the daemon. These targets carry App Groups and
+      # Network Extension entitlements, so each needs a provisioning profile. The CI
+      # runner is not a registered device, so development provisioning cannot work;
+      # only App Store distribution profiles, which carry no device list, sign there.
+      #
+      # import-signing-cert imports the Apple Distribution certificate that manual
+      # signing uses. The ci-provision setup step runs fastlane before the build to
+      # create or renew one App Store profile per target through the App Store Connect
+      # API key (APPLE_NOTARY_*), so profiles never expire out from under CI;
+      # Project.swift pins each profile by name. TUIST_DEVELOPER_ID_SIGNING selects the
+      # project's distribution signing mode. install-provisioning-profile is not set,
+      # because fastlane provisions instead. SWIFT_MK_VERIFY_SIGNING_ROOTS verifies each
+      # runnable product is signed with the team and is not ad-hoc.
       import-signing-cert: true
       signing-identity-name: "Apple Distribution: Alex Goodkind (H3BMXM4W7H)"
       apple-team-id: H3BMXM4W7H
-      # The agent and tunnel-provider targets carry App Groups + Network Extensions
-      # entitlements, so each needs its own provisioning profile. Two Mac App Store
-      # provisioning profiles are installed from the newline-separated
-      # APPLE_DEVELOPER_ID_PROFILE_BASE64 secret; Project.swift maps each NE target to
-      # its profile by name when the engine signals provisioning (a non-empty
-      # PROVISIONING_PROFILE_SPECIFIER), so local builds that install no profile are
-      # unaffected.
-      install-provisioning-profile: true
-      # Signed Build job runs `make build`, which SWIFT_BUILD_CMD wires to
-      # CellTunnelDev `build all` (Apple Distribution on the Mac products). Do not
-      # set CODE_SIGN_IDENTITY or CODE_SIGN_STYLE in make-args: that would beat
-      # swift-mk's signing override and force failing development signing.
+      setup-target: ci-provision
+      make-args: TUIST_DEVELOPER_ID_SIGNING=1
     secrets: inherit

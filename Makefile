@@ -38,6 +38,7 @@ XCCONFIG_EXPORTED_VARS := \
 # exports that command into child environments.
 SWIFT_NAMED_RUN_HINT := use make run-catalyst|run-iphone|run-iphone-sim
 SWIFT_BUILD_CMD ?= $(CELL_TUNNEL_DEV) build all $(CONFIG)
+SWIFT_VERIFY_BUILD_CMD ?= $(CELL_TUNNEL_DEV) build all $(CONFIG)
 SWIFT_TEST_CMD ?= $(CELL_TUNNEL_DEV) test
 SWIFT_RUN_CMD ?= printf 'run: use a named target (%s)\n' '$(SWIFT_NAMED_RUN_HINT)'; exit 1
 # The dev tool's `generate` installs Tuist dependencies and renders the project; it is
@@ -70,6 +71,19 @@ ifneq ($(strip $(PROVISIONING_PROFILE_SPECIFIER)),)
 export TUIST_DEVELOPER_ID_SIGNING := 1
 endif
 
+# The Verify gate builds every platform through SWIFT_VERIFY_BUILD_CMD and verifies
+# the actual signed output. SWIFT_MK_VERIFY_SIGNING_ROOTS makes the engine discover
+# every runnable .app the build dropped under Products and check each one's signature,
+# so the Mac agent, the Catalyst app, and the iPhone device app are all confirmed
+# signed with the team and not ad-hoc, without listing paths. The engine skips the
+# iPhone simulator app, which is ad-hoc by design.
+#
+# The pre-build settings check (SWIFT_MK_VERIFY_WORKSPACE/SCHEME) is intentionally
+# unset: under automatic App Store Connect API-key signing the identity resolves at
+# build time, so static xcodebuild -showBuildSettings reports CODE_SIGN_IDENTITY = -
+# for targets that Xcode signs at build time. The signed identity is knowable only
+# after the build, which the products check inspects directly.
+SWIFT_MK_VERIFY_SIGNING_ROOTS := Products
 SWIFT_SOURCE_ROOTS := Apps Sources Tests Tools/CellTunnelCtl Tools/CellTunnelDev
 SWIFT_OWNED_SWIFT_FILES := $(shell find $(SWIFT_SOURCE_ROOTS) -path '*/.build/*' -prune -o -name '*.swift' -print)
 SWIFT_PACKAGE_MANIFESTS := Package.swift Project.swift Tuist.swift Tuist/Package.swift Tools/Package.swift Tools/cell-tunnel-dev.swift
@@ -87,11 +101,21 @@ include bootstrap.mk
 
 .DEFAULT_GOAL := check
 
-.PHONY: format iphone-install install-mac smoke logs \
+.PHONY: format iphone-install install-mac smoke logs ci-provision \
 	build-all build-mac build-catalyst build-iphone build-iphone-sim build-daemon \
 	run-catalyst run-iphone run-iphone-sim \
 	relay-up relay-reload relay-status relay-down \
 	mac-logs iphone-logs
+
+# CI signing provisioning. CI and unregistered machines cannot use development
+# provisioning (it requires a registered device), so this creates or renews one App
+# Store distribution profile per target with the App Store Connect API key and installs
+# it, for a manual-signed build. The engine runs this as the Verify job's setup step,
+# before the build, with APPLE_NOTARY_* in the environment. See fastlane/Fastfile.
+ci-provision:
+	@command -v bundle >/dev/null 2>&1 || gem install bundler --no-document
+	@bundle install --quiet
+	@bundle exec fastlane ios ci_provision
 
 help::
 	@printf '\n%s\n' 'Cell Tunnel:'

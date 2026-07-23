@@ -7,10 +7,10 @@ Cell Tunnel routes a Mac's internet traffic through an iPhone's native cellular 
 `make help` lists engine targets, then the named Cell Tunnel targets.
 
 `make build` and `make build-all` compile every platform through CellTunnelDev.
+
 Named targets build one platform:
 
 ```sh
-make build-all
 make build-mac
 make build-catalyst
 make build-iphone
@@ -18,7 +18,8 @@ make build-iphone-sim
 make build-daemon
 ```
 
-Continuous integration runs `make build` for the signed full build.
+Continuous integration builds every platform in one Verify job, signs each
+product, and verifies each runnable product's signature.
 
 `CONFIG` defaults to `Debug`. Pass `CONFIG=Release` when needed.
 
@@ -34,6 +35,13 @@ to the interactive Xcode account.
 
 The macOS targets sign from `Config/local.xcconfig` (`DEVELOPMENT_TEAM`,
 `CODE_SIGN_IDENTITY`, `CODE_SIGN_STYLE`).
+
+Continuous integration signs differently, because its runners are not registered
+devices and development provisioning requires one. `make ci-provision` runs fastlane
+to create or renew one App Store distribution profile per target through the App Store
+Connect API key, and the build signs manually against those profiles. `Project.swift`
+pins each profile by name when `TUIST_DEVELOPER_ID_SIGNING` is set. See
+[fastlane/Fastfile](fastlane/Fastfile).
 
 ## Install and run
 
