@@ -113,7 +113,7 @@ help::
 	@printf '  %-40s %s\n' 'mac-logs' 'show or stream Mac agent and tunnel-provider logs'
 	@printf '  %-40s %s\n' 'iphone-logs' 'show the iPhone unified log for the project subsystem'
 	@printf '  %-40s %s\n' 'format' 'format Swift sources via CellTunnelDev'
-	@printf '  %-40s %s\n' 'smoke' 'print the manual smoke sequence (not yet automated)'
+	@printf '  %-40s %s\n' 'smoke WG_CONFIG=<path> PEER=<n>' 'run agent smoke plus connectivity probes'
 	@printf '  %-40s %s\n' 'logs' 'stream Mac and iPhone celltunnel logs together'
 
 build-all: generate
@@ -171,17 +171,12 @@ mac-logs: generate
 iphone-logs: generate
 	@$(CELL_TUNNEL_DEV) iphone-logs
 
-smoke:
-	@printf 'make smoke: run these in order against the smoke config\n'
-	@printf '  Products/celltunnelctl status\n'
-	@printf '  Products/celltunnelctl devices\n'
-	@printf '  Products/celltunnelctl select <n>\n'
-	@printf '  Products/celltunnelctl start --config "%s"\n' "/Users/agoodkind/Desktop/wireguard-export/example.com only.conf"
-	@printf '  ping -c 5 208.67.222.222\n'
-	@printf '  ping6 -c 5 2620:119:35::35\n'
-	@printf '  curl -v https://208.67.222.222/\n'
-	@printf "  curl -v -g 'https://[2620:119:35::35]/'\n"
-	@printf 'TODO: graduate this sequence into a celltunnelctl smoke subcommand\n'
+smoke: generate
+	@test -n "$(WG_CONFIG)" || (printf 'smoke: set WG_CONFIG=<wireguard.conf>\n'; exit 1)
+	@test -n "$(PEER)" || (printf 'smoke: set PEER=<1-based peer index>\n'; exit 1)
+	@$(CELL_TUNNEL_DEV) build daemon $(CONFIG)
+	@"$(CURDIR)/Products/celltunnelctl" \
+		smoke --config "$(WG_CONFIG)" --peer "$(PEER)"
 
 logs: generate
 	@$(CELL_TUNNEL_DEV) logs
