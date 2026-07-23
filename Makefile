@@ -114,7 +114,7 @@ help::
 	@printf '  %-40s %s\n' 'iphone-logs' 'show the iPhone unified log for the project subsystem'
 	@printf '  %-40s %s\n' 'format' 'format Swift sources via CellTunnelDev'
 	@printf '  %-40s %s\n' 'smoke' 'print the manual smoke sequence (not yet automated)'
-	@printf '  %-40s %s\n' 'logs' 'print how to open Mac and iPhone log streams'
+	@printf '  %-40s %s\n' 'logs' 'stream Mac and iPhone celltunnel logs together'
 
 build-all: generate
 	@$(CELL_TUNNEL_DEV) build all $(CONFIG)
@@ -183,8 +183,5 @@ smoke:
 	@printf "  curl -v -g 'https://[2620:119:35::35]/'\n"
 	@printf 'TODO: graduate this sequence into a celltunnelctl smoke subcommand\n'
 
-logs:
-	@printf 'make logs: open two terminals\n'
-	@printf '  terminal 1 (mac agent):    log stream --predicate %s\n' "'subsystem == \"io.goodkind.celltunnel\"'"
-	@printf '  terminal 2 (iphone):       $(CELL_TUNNEL_DEV) iphone-logs --app\n'
-	@printf 'TODO: graduate this into a cell-tunnel-dev logs subcommand that streams both\n'
+logs: generate
+	@$(CELL_TUNNEL_DEV) logs
