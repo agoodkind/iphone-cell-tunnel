@@ -4,15 +4,21 @@ Cell Tunnel routes a Mac's internet traffic through an iPhone's native cellular 
 
 ## Build
 
-`make help` lists engine targets, then the named Cell Tunnel targets. Those
-targets route into CellTunnelDev:
+`make help` lists engine targets, then the named Cell Tunnel targets.
+
+`make build` and `make build-all` compile every platform through CellTunnelDev.
+Named targets build one platform:
 
 ```sh
+make build-all
 make build-mac
 make build-catalyst
 make build-iphone
 make build-iphone-sim
+make build-daemon
 ```
+
+Continuous integration runs `make build` for the signed full build.
 
 `CONFIG` defaults to `Debug`. Pass `CONFIG=Release` when needed.
 

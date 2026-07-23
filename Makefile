@@ -32,12 +32,12 @@ XCCONFIG_EXPORTED_VARS := \
 	DEVELOPMENT_TEAM \
 	CODE_SIGN_IDENTITY
 
-# Named Make targets alias into CellTunnelDev. That tool owns GatedBuild, so these
-# wrappers must not nest `$(MAKE) build TARGET=...`: swift.mk exports SWIFT_BUILD_CMD,
-# and a parent with empty TARGET freezes the usage failure into the child environment.
-SWIFT_NAMED_BUILD_HINT := use make build-mac|build-catalyst|build-iphone|build-iphone-sim|build-daemon
+# Named Make targets alias into CellTunnelDev. Engine `make build` compiles every
+# platform through CellTunnelDev `build all`. Prefer a named alias when you want
+# one platform. Do not nest `$(MAKE) build-*` inside SWIFT_BUILD_CMD: swift.mk
+# exports that command into child environments.
 SWIFT_NAMED_RUN_HINT := use make run-catalyst|run-iphone|run-iphone-sim
-SWIFT_BUILD_CMD ?= printf 'build: use a named target (%s)\n' '$(SWIFT_NAMED_BUILD_HINT)'; exit 1
+SWIFT_BUILD_CMD ?= $(CELL_TUNNEL_DEV) build all $(CONFIG)
 SWIFT_TEST_CMD ?= $(CELL_TUNNEL_DEV) test
 SWIFT_RUN_CMD ?= printf 'run: use a named target (%s)\n' '$(SWIFT_NAMED_RUN_HINT)'; exit 1
 # The dev tool's `generate` installs Tuist dependencies and renders the project; it is
@@ -70,15 +70,6 @@ ifneq ($(strip $(PROVISIONING_PROFILE_SPECIFIER)),)
 export TUIST_DEVELOPER_ID_SIGNING := 1
 endif
 
-# Signing verification for product builds lives in CellTunnelDev's GatedBuild path.
-# These variables remain for any residual engine verify hooks that still read them;
-# named build aliases do not go through bare `make build`.
-SWIFT_MK_VERIFY_WORKSPACE := CellTunnel.xcworkspace
-SWIFT_MK_VERIFY_SCHEME := CellTunnelAgent
-SWIFT_MK_VERIFY_CONFIGURATION := $(CONFIG)
-SWIFT_MK_VERIFY_XCCONFIG := Config/local.xcconfig
-SWIFT_MK_VERIFY_SIGNING_PATHS := Products/$(CONFIG)/CellTunnelAgent.app Products/$(CONFIG)/CellTunnelTunnelProvider.appex
-
 SWIFT_SOURCE_ROOTS := Apps Sources Tests Tools/CellTunnelCtl Tools/CellTunnelDev
 SWIFT_OWNED_SWIFT_FILES := $(shell find $(SWIFT_SOURCE_ROOTS) -path '*/.build/*' -prune -o -name '*.swift' -print)
 SWIFT_PACKAGE_MANIFESTS := Package.swift Project.swift Tuist.swift Tuist/Package.swift Tools/Package.swift Tools/cell-tunnel-dev.swift
@@ -97,13 +88,14 @@ include bootstrap.mk
 .DEFAULT_GOAL := check
 
 .PHONY: format iphone-install install-mac smoke logs \
-	build-mac build-catalyst build-iphone build-iphone-sim build-daemon \
+	build-all build-mac build-catalyst build-iphone build-iphone-sim build-daemon \
 	run-catalyst run-iphone run-iphone-sim \
 	relay-up relay-reload relay-status relay-down \
 	mac-logs iphone-logs
 
 help::
 	@printf '\n%s\n' 'Cell Tunnel:'
+	@printf '  %-40s %s\n' 'build-all' 'build every platform (same as make build)'
 	@printf '  %-40s %s\n' 'build-mac' 'build the Mac agent'
 	@printf '  %-40s %s\n' 'build-catalyst' 'build the Mac Catalyst app'
 	@printf '  %-40s %s\n' 'build-iphone' 'build the iPhone app for a device'
@@ -123,6 +115,9 @@ help::
 	@printf '  %-40s %s\n' 'format' 'format Swift sources via CellTunnelDev'
 	@printf '  %-40s %s\n' 'smoke' 'print the manual smoke sequence (not yet automated)'
 	@printf '  %-40s %s\n' 'logs' 'print how to open Mac and iPhone log streams'
+
+build-all: generate
+	@$(CELL_TUNNEL_DEV) build all $(CONFIG)
 
 build-mac: generate
 	@$(CELL_TUNNEL_DEV) build mac $(CONFIG)
