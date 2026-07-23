@@ -19,9 +19,6 @@ protocol RelayControlBackend {
   /// Brings the platform relay session up.
   func start() async
 
-  /// Reads the saved tunnel state fresh from the platform without saving anything.
-  func tunnelProvisioned() async -> Bool
-
   /// One status reading, or `nil` when the source is briefly unavailable.
   func sample() async -> RelayStatusSample?
 

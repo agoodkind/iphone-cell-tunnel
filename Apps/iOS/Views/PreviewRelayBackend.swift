@@ -20,12 +20,6 @@ final class PreviewRelayBackend: RelayControlBackend {
     await Task.yield()
   }
 
-  /// Previews have no platform setup gate, so launch gating always proceeds.
-  func tunnelProvisioned() async -> Bool {
-    await Task.yield()
-    return true
-  }
-
   func sample() async -> RelayStatusSample? {
     await Task.yield()
     return nil
@@ -83,5 +77,10 @@ final class PreviewRelayBackend: RelayControlBackend {
     }
   }
 #else
-  extension PreviewRelayBackend: PhoneTunnelProvisioningBackend {}
+  extension PreviewRelayBackend: PhoneTunnelProvisioningBackend {
+    func tunnelProvisioned() async -> Bool {
+      await Task.yield()
+      return true
+    }
+  }
 #endif

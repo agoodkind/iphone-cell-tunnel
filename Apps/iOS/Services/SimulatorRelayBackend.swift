@@ -26,7 +26,7 @@
   /// simulator composition root: it builds the host-network graph, where each
   /// connection egresses over the host network instead of a pinned interface.
   @MainActor
-  final class SimulatorRelayBackend: RelayControlBackend, PhoneTunnelProvisioningBackend {
+  final class SimulatorRelayBackend: RelayControlBackend {
     private let runtime = RelayRuntime(
       composition: .hostNetwork(
         deviceName: UIDevice.current.name,
@@ -42,12 +42,6 @@
       await Task.yield()
       logger.notice("simulator relay backend starting in-process relay runtime")
       runtime.start()
-    }
-
-    /// The simulator hosts the relay in process, so launch gating always proceeds.
-    func tunnelProvisioned() async -> Bool {
-      await Task.yield()
-      return true
     }
 
     // MARK: - Sampling
@@ -86,16 +80,6 @@
 
     func selectEgressPeer(id _: String) async {
       await Task.yield()
-    }
-
-    // MARK: - Tunnel install
-
-    // The in-process relay needs no saved profile and no WireGuard config, so the
-    // install action just brings the runtime up.
-    func installTunnel(configURL _: URL) async {
-      await Task.yield()
-      logger.notice("simulator relay backend install tunnel: starting runtime")
-      runtime.start()
     }
 
   }
