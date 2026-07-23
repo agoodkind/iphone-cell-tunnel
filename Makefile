@@ -9,8 +9,6 @@
 
 CONFIG ?= Debug
 CELL_TUNNEL_DEV := swift Tools/cell-tunnel-dev.swift
-ACTIVATION_TARGET_USAGE := iphone|iphone-simulator|mac-catalyst
-BUILD_TARGET_USAGE := daemon|mac|mac-catalyst|iphone-simulator|iphone-device|all
 
 SWIFT_MK_MODULES := swift-build.mk xcconfig.mk
 
@@ -34,9 +32,14 @@ XCCONFIG_EXPORTED_VARS := \
 	DEVELOPMENT_TEAM \
 	CODE_SIGN_IDENTITY
 
-SWIFT_BUILD_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) build $(TARGET) $(CONFIG),printf 'build: TARGET=$(BUILD_TARGET_USAGE) is required\n'; exit 1)
+# Named Make targets alias into CellTunnelDev. That tool owns GatedBuild, so these
+# wrappers must not nest `$(MAKE) build TARGET=...`: swift.mk exports SWIFT_BUILD_CMD,
+# and a parent with empty TARGET freezes the usage failure into the child environment.
+SWIFT_NAMED_BUILD_HINT := use make build-mac|build-catalyst|build-iphone|build-iphone-sim|build-daemon
+SWIFT_NAMED_RUN_HINT := use make run-catalyst|run-iphone|run-iphone-sim
+SWIFT_BUILD_CMD ?= printf 'build: use a named target (%s)\n' '$(SWIFT_NAMED_BUILD_HINT)'; exit 1
 SWIFT_TEST_CMD ?= $(CELL_TUNNEL_DEV) test
-SWIFT_RUN_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) activate $(TARGET) $(CONFIG),printf 'run: TARGET=$(ACTIVATION_TARGET_USAGE) is required\n'; exit 1)
+SWIFT_RUN_CMD ?= printf 'run: use a named target (%s)\n' '$(SWIFT_NAMED_RUN_HINT)'; exit 1
 # The dev tool's `generate` installs Tuist dependencies and renders the project; it is
 # idempotent via its fingerprint check. The dev tool (CellTunnelDev) depends on
 # CellTunnelCore, which needs the rendered Config.generated.swift, so on a fresh checkout
@@ -53,7 +56,7 @@ SWIFT_XCODE_GENERATOR := tuist
 SWIFT_XCODE_COVERAGE_CONFIGURATION := $(CONFIG)
 SWIFT_XCODE_PREBUILD_CMD := $(CELL_TUNNEL_DEV) prebuild
 SWIFT_CLEAN_CMD ?= $(CELL_TUNNEL_DEV) clean
-SWIFT_DEPLOY_CMD ?= $(if $(strip $(TARGET)),$(CELL_TUNNEL_DEV) activate $(TARGET) $(CONFIG),printf 'deploy: TARGET=$(ACTIVATION_TARGET_USAGE) is required\n'; exit 1)
+SWIFT_DEPLOY_CMD ?= printf 'deploy: use make iphone-install|install-mac\n'; exit 1
 SWIFT_ANALYZE_CMD ?= $(CELL_TUNNEL_DEV) analyze
 
 # Tuist forwards only TUIST_* variables into manifest evaluation, so Project.swift
@@ -67,26 +70,14 @@ ifneq ($(strip $(PROVISIONING_PROFILE_SPECIFIER)),)
 export TUIST_DEVELOPER_ID_SIGNING := 1
 endif
 
-# swift-mk owns signature verification. The `build` target runs `verify-signing
-# settings` (every target's effective signing matches the override) before the build
-# and `verify-signing artifacts` (codesign on the produced bundles) after, so a
-# setting that beat the override is caught. The expected team and identity live in
-# the gitignored Config/local.xcconfig, named here so the verifier resolves the same
-# inputs the override uses. Only the macOS products are checked on the build paths
-# that produce them; iOS device, simulator, and Catalyst signing is validated by the
-# install step. The dead-code coverage build never runs the `build` target, so these
-# never touch that gate.
+# Signing verification for product builds lives in CellTunnelDev's GatedBuild path.
+# These variables remain for any residual engine verify hooks that still read them;
+# named build aliases do not go through bare `make build`.
 SWIFT_MK_VERIFY_WORKSPACE := CellTunnel.xcworkspace
 SWIFT_MK_VERIFY_SCHEME := CellTunnelAgent
 SWIFT_MK_VERIFY_CONFIGURATION := $(CONFIG)
 SWIFT_MK_VERIFY_XCCONFIG := Config/local.xcconfig
-ifeq ($(TARGET),mac)
 SWIFT_MK_VERIFY_SIGNING_PATHS := Products/$(CONFIG)/CellTunnelAgent.app Products/$(CONFIG)/CellTunnelTunnelProvider.appex
-else ifeq ($(TARGET),all)
-SWIFT_MK_VERIFY_SIGNING_PATHS := Products/$(CONFIG)/CellTunnelAgent.app Products/$(CONFIG)/CellTunnelTunnelProvider.appex
-else ifeq ($(TARGET),daemon)
-SWIFT_MK_VERIFY_SIGNING_PATHS := Products/$(CONFIG)/CellTunnelAgent.app
-endif
 
 SWIFT_SOURCE_ROOTS := Apps Sources Tests Tools/CellTunnelCtl Tools/CellTunnelDev
 SWIFT_OWNED_SWIFT_FILES := $(shell find $(SWIFT_SOURCE_ROOTS) -path '*/.build/*' -prune -o -name '*.swift' -print)
@@ -133,38 +124,38 @@ help::
 	@printf '  %-40s %s\n' 'smoke' 'print the manual smoke sequence (not yet automated)'
 	@printf '  %-40s %s\n' 'logs' 'print how to open Mac and iPhone log streams'
 
-build-mac:
-	@$(MAKE) build TARGET=mac CONFIG=$(CONFIG)
+build-mac: generate
+	@$(CELL_TUNNEL_DEV) build mac $(CONFIG)
 
-build-catalyst:
-	@$(MAKE) build TARGET=mac-catalyst CONFIG=$(CONFIG)
+build-catalyst: generate
+	@$(CELL_TUNNEL_DEV) build mac-catalyst $(CONFIG)
 
-build-iphone:
-	@$(MAKE) build TARGET=iphone-device CONFIG=$(CONFIG)
+build-iphone: generate
+	@$(CELL_TUNNEL_DEV) build iphone-device $(CONFIG)
 
-build-iphone-sim:
-	@$(MAKE) build TARGET=iphone-simulator CONFIG=$(CONFIG)
+build-iphone-sim: generate
+	@$(CELL_TUNNEL_DEV) build iphone-simulator $(CONFIG)
 
-build-daemon:
-	@$(MAKE) build TARGET=daemon CONFIG=$(CONFIG)
+build-daemon: generate
+	@$(CELL_TUNNEL_DEV) build daemon $(CONFIG)
 
-run-catalyst:
-	@$(MAKE) run TARGET=mac-catalyst CONFIG=$(CONFIG)
+run-catalyst: generate
+	@$(CELL_TUNNEL_DEV) activate mac-catalyst $(CONFIG)
 
-run-iphone:
-	@$(MAKE) run TARGET=iphone CONFIG=$(CONFIG)
+run-iphone: generate
+	@$(CELL_TUNNEL_DEV) activate iphone $(CONFIG)
 
-run-iphone-sim:
-	@$(MAKE) run TARGET=iphone-simulator CONFIG=$(CONFIG)
+run-iphone-sim: generate
+	@$(CELL_TUNNEL_DEV) activate iphone-simulator $(CONFIG)
 
 format: generate
 	@$(CELL_TUNNEL_DEV) format
 
-iphone-install:
-	@$(MAKE) deploy TARGET=iphone CONFIG=$(CONFIG)
+iphone-install: generate
+	@$(CELL_TUNNEL_DEV) activate iphone $(CONFIG)
 
-install-mac:
-	@$(MAKE) build TARGET=mac CONFIG=$(CONFIG)
+install-mac: generate
+	@$(CELL_TUNNEL_DEV) build mac $(CONFIG)
 	@$(CELL_TUNNEL_DEV) install-mac --config $(CONFIG)
 
 relay-up: generate
