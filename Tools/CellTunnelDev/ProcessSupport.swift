@@ -15,34 +15,47 @@ enum ProcessSupport {}
 private let logger = CellTunnelLog.logger(category: .build)
 private let commandNotFoundExitStatus: Int32 = 127
 
+func writePrefixedLines(_ text: String, prefix: String) {
+  guard !text.isEmpty else {
+    return
+  }
+  var remainder = text
+  if remainder.hasSuffix("\n") {
+    remainder.removeLast()
+  }
+  for line in remainder.split(separator: "\n", omittingEmptySubsequences: false) {
+    FileHandle.standardOutput.write(Data("\(prefix)\(line)\n".utf8))
+  }
+}
+
 // MARK: - PrefixedProcess
 
 /// A long-running process whose stdout/stderr lines are forwarded with a prefix.
 /// Call `waitUntilExitAndDrain()` so the final pipe contents are not lost.
 final class PrefixedProcess: @unchecked Sendable {
   let process: Process
-  private let stdoutPipe: Pipe
-  private let stderrPipe: Pipe
   private let queue: DispatchQueue
   private let stdoutState: PrefixedLineBuffer
   private let stderrState: PrefixedLineBuffer
+  private let stdoutEOF: DispatchSemaphore
+  private let stderrEOF: DispatchSemaphore
 
   private struct Parts {
     var process: Process
-    var stdoutPipe: Pipe
-    var stderrPipe: Pipe
     var queue: DispatchQueue
     var stdoutState: PrefixedLineBuffer
     var stderrState: PrefixedLineBuffer
+    var stdoutEOF: DispatchSemaphore
+    var stderrEOF: DispatchSemaphore
   }
 
   private init(parts: Parts) {
     self.process = parts.process
-    self.stdoutPipe = parts.stdoutPipe
-    self.stderrPipe = parts.stderrPipe
     self.queue = parts.queue
     self.stdoutState = parts.stdoutState
     self.stderrState = parts.stderrState
+    self.stdoutEOF = parts.stdoutEOF
+    self.stderrEOF = parts.stderrEOF
   }
 
   static func start(
@@ -69,39 +82,58 @@ final class PrefixedProcess: @unchecked Sendable {
     let lineQueue = DispatchQueue(label: "celltunnel.prefixed-process.\(executable)")
     let outBuffer = PrefixedLineBuffer(prefix: linePrefix)
     let errBuffer = PrefixedLineBuffer(prefix: linePrefix)
+    let stdoutEOF = DispatchSemaphore(value: 0)
+    let stderrEOF = DispatchSemaphore(value: 0)
 
-    // Read on the handler thread, then append via queue.sync so an in-flight
-    // callback finishes before waitUntilExitAndDrain's barrier drain.
+    // Appends and EOF signals share lineQueue so waitUntilExitAndDrain can flush only
+    // after every in-flight append has finished (no post-flush tail loss).
     outPipe.fileHandleForReading.readabilityHandler = { handle in
-      let data = handle.availableData
-      guard !data.isEmpty else {
-        return
-      }
-      lineQueue.sync {
-        outBuffer.append(data)
-      }
+      Self.handleReadable(
+        handle: handle,
+        buffer: outBuffer,
+        queue: lineQueue,
+        eof: stdoutEOF
+      )
     }
     errPipe.fileHandleForReading.readabilityHandler = { handle in
-      let data = handle.availableData
-      guard !data.isEmpty else {
-        return
-      }
-      lineQueue.sync {
-        errBuffer.append(data)
-      }
+      Self.handleReadable(
+        handle: handle,
+        buffer: errBuffer,
+        queue: lineQueue,
+        eof: stderrEOF
+      )
     }
 
     try launched.run()
     return PrefixedProcess(
       parts: Parts(
         process: launched,
-        stdoutPipe: outPipe,
-        stderrPipe: errPipe,
         queue: lineQueue,
         stdoutState: outBuffer,
-        stderrState: errBuffer
+        stderrState: errBuffer,
+        stdoutEOF: stdoutEOF,
+        stderrEOF: stderrEOF
       )
     )
+  }
+
+  private static func handleReadable(
+    handle: FileHandle,
+    buffer: PrefixedLineBuffer,
+    queue: DispatchQueue,
+    eof: DispatchSemaphore
+  ) {
+    // Capture bytes before hopping to lineQueue so EOF and appends for this handle
+    // stay in the order Foundation delivered them.
+    let data = handle.availableData
+    queue.async {
+      if data.isEmpty {
+        handle.readabilityHandler = nil
+        eof.signal()
+        return
+      }
+      buffer.append(data)
+    }
   }
 
   var isRunning: Bool {
@@ -121,24 +153,12 @@ final class PrefixedProcess: @unchecked Sendable {
 
   func waitUntilExitAndDrain() {
     process.waitUntilExit()
-    stdoutPipe.fileHandleForReading.readabilityHandler = nil
-    stderrPipe.fileHandleForReading.readabilityHandler = nil
+    stdoutEOF.wait()
+    stderrEOF.wait()
     queue.sync {
-      drainPrefixedPipe(stdoutPipe, into: stdoutState)
-      drainPrefixedPipe(stderrPipe, into: stderrState)
       stdoutState.flushRemainder()
       stderrState.flushRemainder()
     }
-  }
-}
-
-private func drainPrefixedPipe(_ pipe: Pipe, into buffer: PrefixedLineBuffer) {
-  while true {
-    let chunk = pipe.fileHandleForReading.availableData
-    if chunk.isEmpty {
-      break
-    }
-    buffer.append(chunk)
   }
 }
 

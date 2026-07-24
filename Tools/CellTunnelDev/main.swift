@@ -44,6 +44,7 @@ func printHelp() {
       iphone-logs Show (and optionally --follow) the iPhone unified log for the
                   io.goodkind.celltunnel subsystem. See `iphone-logs --help`.
       mac-logs    Show or stream Mac agent and tunnel-provider logs. See `mac-logs --help`.
+      logs        Stream Mac and iPhone celltunnel logs together. See `logs --help`.
       relay-browse
                   Foreground Bonjour browse for the iPhone relay service.
                   Optional positional duration in seconds (default 8).
@@ -175,6 +176,10 @@ func runLogCommand(_ command: String) throws -> Bool {
     let arguments = Array(CommandLine.arguments.dropFirst(programAndCommandArgumentCount))
     try runMacLogs(arguments)
     return true
+  case "logs":
+    let arguments = Array(CommandLine.arguments.dropFirst(programAndCommandArgumentCount))
+    try runLogs(arguments)
+    return true
   default:
     return false
   }
@@ -295,6 +300,8 @@ func main() throws {
 
 do {
   try main()
+} catch let error as LogsInterrupted {
+  exit(error.exitStatus)
 } catch {
   FileHandle.standardError.write(Data("\(error)\n".utf8))
   exit(1)

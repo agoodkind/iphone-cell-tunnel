@@ -38,10 +38,10 @@ private let iPhoneLogsUsage = """
   `log collect` needs sudo; credentials cache so --follow does not re-prompt
   each poll within the sudo timeout.
   """
-private let unifiedLogDefaultDuration = "5m"
+let unifiedLogDefaultDuration = "5m"
 private let unifiedLogArchiveName = "celltunnel-device.logarchive"
-private let followDefaultIntervalSeconds: Double = 3
-private let followWindowDuration = "10s"
+let followDefaultIntervalSeconds: Double = 3
+let followWindowDuration = "10s"
 
 // MARK: - Mode
 
@@ -100,6 +100,7 @@ private func dispatchIPhoneLogs(_ options: IPhoneLogsOptions) throws {
   let mode: IPhoneLogsMode =
     options.follow ? .follow(intervalSeconds: options.followIntervalSeconds) : .snapshot
 
+  let followAnchor = Date()
   try collectAndShowUnifiedLog(
     deviceUDID: deviceUDID,
     lastDuration: options.lastDuration,
@@ -108,13 +109,20 @@ private func dispatchIPhoneLogs(_ options: IPhoneLogsOptions) throws {
   guard case .follow(let intervalSeconds) = mode else {
     return
   }
+  var previousCollectElapsed = Date().timeIntervalSince(followAnchor)
   while true {
     iPhoneLogsFollowDelay(seconds: intervalSeconds)
+    let followWindow = iPhoneFollowWindowDuration(
+      intervalSeconds: intervalSeconds,
+      previousCollectElapsed: previousCollectElapsed
+    )
+    let collectStarted = Date()
     try collectAndShowUnifiedLog(
       deviceUDID: deviceUDID,
-      lastDuration: followWindowDuration,
+      lastDuration: followWindow,
       predicate: predicate
     )
+    previousCollectElapsed = Date().timeIntervalSince(collectStarted)
   }
 }
 
@@ -124,10 +132,12 @@ private func dispatchIPhoneLogs(_ options: IPhoneLogsOptions) throws {
 /// prints the entries matching the predicate. `log collect` is the only device
 /// log path Apple ships; it carries history, unlike a live attach. The predicate
 /// filters the `log show` pass; `log collect` ignores it for an attached device.
-private func collectAndShowUnifiedLog(
+func collectAndShowUnifiedLog(
   deviceUDID: String?,
   lastDuration: String,
-  predicate: String
+  predicate: String,
+  linePrefix: String? = nil,
+  processRegistry: ProcessRegistry? = nil
 ) throws {
   iPhoneLogsLogger.notice(
     "iphone-logs collecting unified log lastDuration=\(lastDuration, privacy: .public)")
@@ -154,7 +164,8 @@ private func collectAndShowUnifiedLog(
   try run(
     "sudo",
     collectArguments,
-    failureMessage: "sudo log collect failed (needs an admin password and a connected device)"
+    failureMessage: "sudo log collect failed (needs an admin password and a connected device)",
+    processRegistry: processRegistry
   )
 
   let showArguments = [
@@ -164,16 +175,24 @@ private func collectAndShowUnifiedLog(
     "--style", "compact",
   ]
   announceInvocation("log " + renderShellArguments(showArguments))
-  try run("log", showArguments)
+  if let linePrefix {
+    let result = try capture(
+      "log",
+      showArguments,
+      echoOutput: false,
+      processRegistry: processRegistry
+    )
+    guard result.status == 0 else {
+      throw ToolError.failure("log show failed with status \(result.status)")
+    }
+    writePrefixedLines(result.output, prefix: linePrefix)
+  } else {
+    try run("log", showArguments, processRegistry: processRegistry)
+  }
 }
 
-private func unifiedLogPredicate(containsFilter: String?, rawPredicate: String?) -> String {
-  var predicate = rawPredicate ?? "subsystem == \"\(CellTunnelLog.subsystem)\""
-  if let containsFilter, !containsFilter.isEmpty {
-    let escaped = containsFilter.replacingOccurrences(of: "\"", with: "\\\"")
-    predicate += " AND composedMessage CONTAINS[c] \"\(escaped)\""
-  }
-  return predicate
+func unifiedLogPredicate(containsFilter: String?, rawPredicate: String?) -> String {
+  cellTunnelUnifiedLogPredicate(containsFilter: containsFilter, rawPredicate: rawPredicate)
 }
 
 private func cleanupUnifiedLogArchive(at archiveURL: URL) {
@@ -199,7 +218,7 @@ private func cleanupUnifiedLogArchive(at archiveURL: URL) {
 /// Resolves the device UDID for `log collect --device-udid` from an explicit
 /// override or the environment, returning nil so the caller falls back to
 /// `log collect --device` (first connected device) when none is set.
-private func resolvedDeviceUDID(override: String?) -> String? {
+func resolvedDeviceUDID(override: String?) -> String? {
   if let override, !override.isEmpty {
     return override
   }
@@ -215,13 +234,48 @@ private func resolvedDeviceUDID(override: String?) -> String? {
 // MARK: - Follow delay
 
 /// Waits the follow interval without a sleep call by signaling a semaphore from a
-/// delayed dispatch, matching the no-sleep convention the repo enforces.
-private func iPhoneLogsFollowDelay(seconds: Double) {
-  let semaphore = DispatchSemaphore(value: 0)
-  DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) {
-    semaphore.signal()
+/// delayed dispatch, matching the no-sleep convention the repo enforces. When a
+/// cancellation flag is provided, waits in short slices so Ctrl-C can interrupt.
+private let followDelaySliceSeconds: TimeInterval = 0.2
+private let followWindowSlopSeconds = 2
+
+func iPhoneLogsFollowDelay(seconds: Double, cancellation: CancellationFlag? = nil) {
+  guard let cancellation else {
+    let semaphore = DispatchSemaphore(value: 0)
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) {
+      semaphore.signal()
+    }
+    semaphore.wait()
+    return
   }
-  semaphore.wait()
+  let deadline = Date().addingTimeInterval(seconds)
+  while Date() < deadline {
+    if cancellation.isCancelled {
+      return
+    }
+    let remaining = deadline.timeIntervalSinceNow
+    if remaining <= 0 {
+      return
+    }
+    let slice = min(followDelaySliceSeconds, remaining)
+    let semaphore = DispatchSemaphore(value: 0)
+    DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + slice) {
+      semaphore.signal()
+    }
+    semaphore.wait()
+  }
+}
+
+func iPhoneFollowWindowDuration(
+  intervalSeconds: Double,
+  previousCollectElapsed: TimeInterval = 0
+) -> String {
+  // Cover the poll interval plus the previous collect duration plus a small slop
+  // margin so entries emitted during collect itself are not dropped between polls.
+  let covered =
+    intervalSeconds + previousCollectElapsed + Double(followWindowSlopSeconds)
+  let seconds = max(1, Int(ceil(covered)))
+  return "\(seconds)s"
 }
 
 // MARK: - Rendering helpers
