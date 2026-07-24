@@ -8,11 +8,15 @@
 
 import CellTunnelCore
 import CellTunnelLog
+import CellTunnelSignalSupport
 import Foundation
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 private let helpSubcommand = "--help"
 private let helpShortSubcommand = "-h"
+private let interruptExitStatus: Int32 = 130
+private let terminationExitStatus: Int32 = 143
+private let millisecondsPerSecond: TimeInterval = 1_000
 
 @main
 enum CellTunnelCtl {
@@ -44,6 +48,9 @@ enum CellTunnelCtl {
         FileHandle.standardOutput.write(Data((output + "\n").utf8))
       }
       await client.shutdown()
+    } catch let interruption as SmokeProbeInterrupted {
+      await client.shutdown()
+      exit(interruption.exitStatus)
     } catch {
       await client.shutdown()
       emit(error: error)
@@ -103,27 +110,50 @@ private struct ProcessSmokeProbeRunner: SmokeProbeRunner {
       argumentCount=\(arguments.count, privacy: .public)
       """
     )
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-    process.arguments = [executable] + arguments
     let rendered = ([executable] + arguments).joined(separator: " ")
-    try process.run()
-
-    let timedOut = CancellationFlag()
-    let timeoutSource = DispatchSource.makeTimerSource(queue: .global())
-    timeoutSource.schedule(deadline: .now() + timeoutSeconds)
-    timeoutSource.setEventHandler {
-      guard process.isRunning else {
-        return
-      }
-      timedOut.cancel()
-      process.terminate()
+    let command = try encodeCommand(executable: executable, arguments: arguments)
+    let timeoutMilliseconds = UInt64(timeoutSeconds * millisecondsPerSecond)
+    var result = CellTunnelProbeResult()
+    command.withUnsafeBytes { commandBytes in
+      cell_tunnel_probe_run(
+        commandBytes.bindMemory(to: UInt8.self).baseAddress,
+        commandBytes.count,
+        timeoutMilliseconds,
+        &result
+      )
     }
-    timeoutSource.resume()
-    process.waitUntilExit()
-    timeoutSource.cancel()
+    try validate(
+      result: result,
+      executable: executable,
+      rendered: rendered
+    )
+  }
 
-    if timedOut.isCancelled {
+  private func encodeCommand(executable: String, arguments: [String]) throws -> Data {
+    var command = Data()
+    for argument in [executable] + arguments {
+      guard !argument.utf8.contains(0) else {
+        throw TunnelDaemonError.transportFailure(
+          "smoke probe argument contains a null byte")
+      }
+      command.append(contentsOf: argument.utf8)
+      command.append(0)
+    }
+    return command
+  }
+
+  private func validate(
+    result: CellTunnelProbeResult,
+    executable: String,
+    rendered: String
+  ) throws {
+    if result.outcome == CELL_TUNNEL_PROBE_INTERRUPTED {
+      if result.signal_number == SIGTERM {
+        throw SmokeProbeInterrupted(exitStatus: terminationExitStatus)
+      }
+      throw SmokeProbeInterrupted(exitStatus: interruptExitStatus)
+    }
+    if result.outcome == CELL_TUNNEL_PROBE_TIMED_OUT {
       logger.error(
         """
         smoke probe timed out executable=\(executable, privacy: .public) \
@@ -133,7 +163,11 @@ private struct ProcessSmokeProbeRunner: SmokeProbeRunner {
       throw TunnelDaemonError.transportFailure(
         "\(rendered) timed out after \(Int(timeoutSeconds))s")
     }
-    let status = process.terminationStatus
+    if result.outcome == CELL_TUNNEL_PROBE_SYSTEM_ERROR {
+      throw TunnelDaemonError.transportFailure(
+        "\(rendered) probe runner failed with errno \(result.error_number)")
+    }
+    let status = result.status
     if status == 0 {
       logger.notice(
         "smoke probe ok executable=\(executable, privacy: .public) status=0")
@@ -164,21 +198,8 @@ private struct ProcessSmokeProbeRunner: SmokeProbeRunner {
 
 private let curlSSLCertificateProblemExitStatus: Int32 = 60
 
-// MARK: - CancellationFlag
+// MARK: - SmokeProbeInterrupted
 
-private final class CancellationFlag: @unchecked Sendable {
-  private let lock = NSLock()
-  private var cancelled = false
-
-  var isCancelled: Bool {
-    lock.lock()
-    defer { lock.unlock() }
-    return cancelled
-  }
-
-  func cancel() {
-    lock.lock()
-    cancelled = true
-    lock.unlock()
-  }
+private struct SmokeProbeInterrupted: Error {
+  let exitStatus: Int32
 }
