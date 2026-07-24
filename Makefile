@@ -119,9 +119,6 @@ help::
 build-all: generate
 	@$(CELL_TUNNEL_DEV) build all $(CONFIG)
 
-build-all: generate
-	@$(CELL_TUNNEL_DEV) build all $(CONFIG)
-
 build-mac: generate
 	@$(CELL_TUNNEL_DEV) build mac $(CONFIG)
 
