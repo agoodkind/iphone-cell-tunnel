@@ -23,6 +23,7 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
   case peers
   case reset
   case select(reference: String)
+  case smoke(SmokeSettings)
   case start(TunnelStartSettings)
   case startDiscovery
   case status
@@ -57,6 +58,8 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
       return .reset
     case "start":
       return .start(try parseStart(arguments: Array(arguments.dropFirst())))
+    case "smoke":
+      return .smoke(try parseSmoke(arguments: Array(arguments.dropFirst())))
     default:
       throw TunnelDaemonError.usage("unknown command: \(command)")
     }
@@ -105,6 +108,53 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
       throw TunnelDaemonError.usage("start requires --config <path>")
     }
     return TunnelStartSettings(wireGuardConfigPath: configPath, relayEndpoint: relayEndpoint)
+  }
+
+  private static func parseSmoke(arguments: [String]) throws -> SmokeSettings {
+    var configPath = ""
+    var peerReference = ""
+    var relayEndpoint: TunnelRelayEndpoint?
+
+    var index = 0
+    while index < arguments.count {
+      let argument = arguments[index]
+      switch argument {
+      case "--config":
+        guard index + 1 < arguments.count else {
+          throw TunnelDaemonError.usage("missing value for --config")
+        }
+        configPath = arguments[index + 1]
+        index += optionArgumentStride
+      case "--peer":
+        guard index + 1 < arguments.count else {
+          throw TunnelDaemonError.usage("missing value for --peer")
+        }
+        peerReference = arguments[index + 1]
+        index += optionArgumentStride
+      case "--relay":
+        guard index + 1 < arguments.count else {
+          throw TunnelDaemonError.usage("missing value for --relay")
+        }
+        relayEndpoint = try TunnelRelayEndpoint.parse(argument: arguments[index + 1])
+        index += optionArgumentStride
+      default:
+        throw TunnelDaemonError.usage("unknown smoke option: \(argument)")
+      }
+    }
+
+    let trimmedConfig = configPath.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedConfig.isEmpty else {
+      throw TunnelDaemonError.usage("smoke requires --config <path>")
+    }
+    let trimmedPeer = peerReference.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedPeer.isEmpty else {
+      throw TunnelDaemonError.usage("smoke requires --peer <n>")
+    }
+    return SmokeSettings(
+      wireGuardConfigPath: trimmedConfig,
+      peerReference: trimmedPeer,
+      relayEndpoint: relayEndpoint
+    )
   }
 }
 
@@ -163,10 +213,15 @@ public enum ConfigsCommand: Equatable, Sendable {
 // MARK: - TunnelControlCLIExecutor
 
 public struct TunnelControlCLIExecutor: Sendable {
-  private let client: any TunnelControlClientProtocol
+  let client: any TunnelControlClientProtocol
+  let probeRunner: any SmokeProbeRunner
 
-  public init(client: any TunnelControlClientProtocol) {
+  public init(
+    client: any TunnelControlClientProtocol,
+    probeRunner: any SmokeProbeRunner = UnavailableSmokeProbeRunner()
+  ) {
     self.client = client
+    self.probeRunner = probeRunner
   }
 
   public func run(action: TunnelControlCLIAction) async throws -> String {
@@ -190,6 +245,8 @@ public struct TunnelControlCLIExecutor: Sendable {
       return snapshot.renderedOutput
     case .select(let reference):
       return try await selectPeer(reference: reference)
+    case .smoke(let settings):
+      return try await runSmoke(settings)
     case .start(let settings):
       let status = try await client.startTunnel(settings: settings)
       return status.renderedOutput
@@ -202,7 +259,7 @@ public struct TunnelControlCLIExecutor: Sendable {
     }
   }
 
-  private func listPeers() async throws -> String {
+  func listPeers() async throws -> String {
     let snapshot = try await client.status()
     return renderPeerListing(peers: snapshot.connectedPeers ?? [])
   }
@@ -278,7 +335,7 @@ public struct TunnelControlCLIExecutor: Sendable {
     return lines.joined(separator: "\n")
   }
 
-  private func selectPeer(reference: String) async throws -> String {
+  func selectPeer(reference: String) async throws -> String {
     let peerID = try await resolvePeerID(reference: reference)
     let snapshot = try await client.selectEgressPeer(peerID: peerID)
     return snapshot.renderedOutput
@@ -287,7 +344,7 @@ public struct TunnelControlCLIExecutor: Sendable {
   // Resolves a 1-based index into the current roster to its peer id. Selection is
   // index-only because a roster id is an opaque numeric token, indistinguishable from
   // an index, so a non-integer reference is a usage error.
-  private func resolvePeerID(reference: String) async throws -> String {
+  func resolvePeerID(reference: String) async throws -> String {
     guard let index = Int(reference) else {
       throw TunnelDaemonError.usage("select requires a 1-based index from `peers`")
     }
@@ -304,7 +361,7 @@ public struct TunnelControlCLIExecutor: Sendable {
 
   // One row per dialed-in iPhone: its name and id, or just its id when the name has not
   // arrived yet, so no device-type word is ever fabricated.
-  private func renderPeerListing(peers: [ConnectedPeer]) -> String {
+  func renderPeerListing(peers: [ConnectedPeer]) -> String {
     guard !peers.isEmpty else {
       return noRelayPeersMessage
     }

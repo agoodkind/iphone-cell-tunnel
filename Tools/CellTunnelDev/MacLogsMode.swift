@@ -109,23 +109,22 @@ private func showMacLogs(predicate: String, lastDuration: String) throws {
 /// Streams live log entries for the predicate until interrupted.
 private func streamMacLogs(predicate: String) throws {
   macLogsLogger.notice("mac-logs stream starting")
-  let arguments = [
+  let arguments = macLogStreamArguments(predicate: predicate)
+  announceMacLogsInvocation("log " + renderMacLogsArguments(arguments))
+  try run("log", arguments)
+}
+
+func macLogStreamArguments(predicate: String) -> [String] {
+  [
     "stream",
     "--predicate", predicate,
     "--level", "debug",
     "--style", "compact",
   ]
-  announceMacLogsInvocation("log " + renderMacLogsArguments(arguments))
-  try run("log", arguments)
 }
 
-private func macLogsPredicate(containsFilter: String?, rawPredicate: String?) -> String {
-  var predicate = rawPredicate ?? "subsystem == \"\(CellTunnelLog.subsystem)\""
-  if let containsFilter, !containsFilter.isEmpty {
-    let escaped = containsFilter.replacingOccurrences(of: "\"", with: "\\\"")
-    predicate += " AND composedMessage CONTAINS[c] \"\(escaped)\""
-  }
-  return predicate
+func macLogsPredicate(containsFilter: String?, rawPredicate: String?) -> String {
+  cellTunnelUnifiedLogPredicate(containsFilter: containsFilter, rawPredicate: rawPredicate)
 }
 
 // MARK: - Rendering helpers

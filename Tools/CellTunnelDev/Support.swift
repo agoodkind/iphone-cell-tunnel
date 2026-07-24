@@ -9,9 +9,11 @@
 import CellTunnelLog
 import Foundation
 
+/// Namesake type so SwiftLint `file_name` matches `Support.swift`.
+enum Support {}
+
 private let logger = CellTunnelLog.logger(category: .build)
 private let keyValuePairComponentCount = 2
-private let commandNotFoundExitStatus: Int32 = 127
 
 var fileManager: FileManager {
   FileManager.default
@@ -229,88 +231,13 @@ private func appStoreConnectKeyPath(keyID: String) throws -> String? {
   return destination.path
 }
 
-func run(
-  _ executable: String,
-  _ arguments: [String],
-  environment: [String: String] = [:],
-  workingDirectory: URL = repoRoot,
-  failureMessage: String? = nil
-) throws {
-  logger.debug("run executable=\(executable, privacy: .public)")
-  let process = Process()
-  process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-  process.arguments = [executable] + arguments
-  process.currentDirectoryURL = workingDirectory
-  process.environment = mergedEnvironment(environment)
-
-  try process.run()
-  process.waitUntilExit()
-
-  guard process.terminationStatus == 0 else {
-    let renderedCommand = failureMessage ?? ([executable] + arguments).joined(separator: " ")
-    throw ToolError.failure(
-      "\(renderedCommand) failed with status \(process.terminationStatus)")
+func cellTunnelUnifiedLogPredicate(containsFilter: String?, rawPredicate: String?) -> String {
+  var predicate = rawPredicate ?? "subsystem == \"\(CellTunnelLog.subsystem)\""
+  if let containsFilter, !containsFilter.isEmpty {
+    let escaped = containsFilter.replacingOccurrences(of: "\"", with: "\\\"")
+    predicate += " AND composedMessage CONTAINS[c] \"\(escaped)\""
   }
-}
-
-@discardableResult
-func runBestEffort(
-  _ executable: String,
-  _ arguments: [String],
-  environment: [String: String] = [:],
-  workingDirectory: URL = repoRoot
-) -> Int32 {
-  logger.debug("runBestEffort executable=\(executable, privacy: .public)")
-  let process = Process()
-  process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-  process.arguments = [executable] + arguments
-  process.currentDirectoryURL = workingDirectory
-  process.environment = mergedEnvironment(environment)
-
-  do {
-    try process.run()
-    process.waitUntilExit()
-    return process.terminationStatus
-  } catch {
-    logger.error(
-      """
-      runBestEffort failed executable=\(executable, privacy: .public) \
-      details=\(error.localizedDescription, privacy: .public) recovery=return-not-found-status
-      """
-    )
-    return commandNotFoundExitStatus
-  }
-}
-
-func capture(
-  _ executable: String,
-  _ arguments: [String],
-  environment: [String: String] = [:],
-  workingDirectory: URL = repoRoot,
-  echoOutput: Bool = true
-) throws -> CommandResult {
-  logger.debug("capture executable=\(executable, privacy: .public)")
-  let process = Process()
-  process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-  process.arguments = [executable] + arguments
-  process.currentDirectoryURL = workingDirectory
-
-  process.environment = mergedEnvironment(environment)
-
-  let outputPipe = Pipe()
-  process.standardOutput = outputPipe
-  process.standardError = outputPipe
-
-  try process.run()
-  process.waitUntilExit()
-
-  let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
-  let output = String(data: outputData, encoding: .utf8) ?? ""
-  if echoOutput, !output.isEmpty {
-    FileHandle.standardOutput.write(Data(output.utf8))
-  }
-
-  return CommandResult(status: process.terminationStatus, output: output)
+  return predicate
 }
 
 func runWritingOutput(
