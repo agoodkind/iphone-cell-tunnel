@@ -27,11 +27,17 @@ let package = Package(
       dependencies: ["CellTunnelLog"]
     ),
     .target(name: "CellTunnelLog"),
+    .target(
+      name: "CellTunnelSignalSupport",
+      path: "Sources/CellTunnelSignalSupport",
+      publicHeadersPath: "include"
+    ),
     .executableTarget(
       name: "celltunnelctl",
       dependencies: [
         "CellTunnelCore",
         "CellTunnelLog",
+        "CellTunnelSignalSupport",
       ],
       path: "Tools/CellTunnelCtl"
     ),
