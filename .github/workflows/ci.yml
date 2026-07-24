@@ -51,11 +51,8 @@ jobs:
       # PROVISIONING_PROFILE_SPECIFIER), so local builds that install no profile are
       # unaffected.
       install-provisioning-profile: true
-      # Build the macOS agent + provider only. CODE_SIGN_IDENTITY and
-      # CODE_SIGN_STYLE are deliberately NOT set here: setting them in make-args
-      # would beat swift-mk's Developer ID override and force the failing
-      # development signing, the exact bug in the prior CI. The shared required
-      # jobs still compile-check the unsigned iOS simulator and Mac Catalyst slices;
-      # the iOS device build needs an archive/App-Store flow and belongs at release.
-      make-args: "TARGET=mac"
+      # Signed Build job runs `make build`, which SWIFT_BUILD_CMD wires to
+      # CellTunnelDev `build all` (Apple Distribution on the Mac products). Do not
+      # set CODE_SIGN_IDENTITY or CODE_SIGN_STYLE in make-args: that would beat
+      # swift-mk's signing override and force failing development signing.
     secrets: inherit

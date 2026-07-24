@@ -165,6 +165,7 @@ func buildTargets(target: BuildTarget, configuration: String, receipt: GateRecei
   case .all:
     try buildMacAgent(configuration: configuration, receipt: receipt)
     try buildMacTunnelProvider(configuration: configuration, receipt: receipt)
+    try buildMacCatalyst(configuration: configuration, receipt: receipt)
     try buildIPhoneSimulator(configuration: configuration, receipt: receipt)
     try buildPhoneDevice(
       configuration: configuration,
