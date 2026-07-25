@@ -183,8 +183,9 @@ import Foundation
 
     // MARK: - Config library
 
-    /// Validates, stores, activates, and starts a config from its text. The text
-    /// carries a `PrivateKey`, so only its length is logged.
+    /// Validates, stores, and activates a config from its text. The tunnel starts
+    /// through the routing-enable path, not here. The text carries a `PrivateKey`,
+    /// so only its length is logged.
     public func importConfig(
       name: String, text: String
     ) async throws -> TunnelDaemonStatusSnapshot {
@@ -207,7 +208,8 @@ import Foundation
       return try requireStatus(from: response, operationName: "setActiveConfig")
     }
 
-    /// Makes a stored config active and starts the tunnel with it.
+    /// Makes a stored config active. The tunnel starts through the routing-enable
+    /// path, not here.
     public func activateConfig(id: UUID) async throws -> TunnelDaemonStatusSnapshot {
       logger.notice(
         "agent client invoked rpc=activate-config id=\(id.uuidString, privacy: .public)")
