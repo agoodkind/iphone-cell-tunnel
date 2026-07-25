@@ -15,7 +15,11 @@ private let logger = CellTunnelLog.logger(category: .app)
 // MARK: - Constants
 
 private let emptyValuePlaceholder = "(none)"
-private let openLoginItemsTitle = "Open Login Items"
+
+#if targetEnvironment(macCatalyst)
+  private let openLoginItemsTitle = "Open Login Items"
+#endif
+
 private let dataSectionTitle = "Data"
 private let currentSpeedSectionTitle = "Current Speed"
 private let connectingStatusLabel = "Connecting"
@@ -248,13 +252,21 @@ struct RelayScreenModel {
   var status: RelayStatus {
     RelayStatus(
       errorMessage: controller.lastError,
-      isAgentInstalled: controller.isAgentInstalled,
+      isAgentInstalled: isAgentInstalled,
       isTunnelInstalled: controller.isTunnelInstalled,
       isActiveConfigPresent: controller.hasActiveConfig,
       peersFound: peersAvailable,
       isPeerConnected: controller.connectedPeerName != nil,
       isRouting: controller.routeState == .installed
     )
+  }
+
+  private var isAgentInstalled: Bool {
+    #if targetEnvironment(macCatalyst)
+      return controller.isAgentInstalled
+    #else
+      return true
+    #endif
   }
 
   /// The status word the screens show, the state's label except while a turn-on
@@ -328,32 +340,34 @@ struct RelayScreenModel {
     status.action
   }
 
-  /// Installs the background agent, or opens Login Items when the agent is registered
-  /// but awaiting approval. The install-agent setup action.
-  func installAgent() {
-    logger.notice("relay screen install agent requested")
-    if controller.isAgentApprovalPending {
-      controller.openLoginItems()
-    } else {
-      controller.installAgent()
+  #if targetEnvironment(macCatalyst)
+    /// Installs the background agent, or opens Login Items when the agent is registered
+    /// but awaiting approval. The install-agent setup action.
+    func installAgent() {
+      logger.notice("relay screen install agent requested")
+      if controller.isAgentApprovalPending {
+        controller.openLoginItems()
+      } else {
+        controller.installAgent()
+      }
     }
-  }
 
-  /// Installs the tunnel profile from the imported configuration. The install-tunnel
-  /// setup action.
-  func installTunnel(configURL: URL) {
-    logger.notice("relay screen install tunnel requested")
-    Task { await controller.installTunnel(configURL: configURL) }
-  }
-
-  /// The title for the setup screen's primary action, deferring to the agent
-  /// approval state when the agent is registered but pending.
-  var setupActionTitle: String {
-    if status.action == .installAgent, controller.isAgentApprovalPending {
-      return openLoginItemsTitle
+    /// Installs the tunnel profile from the imported configuration. The install-tunnel
+    /// setup action.
+    func installTunnel(configURL: URL) {
+      logger.notice("relay screen install tunnel requested")
+      Task { await controller.installTunnel(configURL: configURL) }
     }
-    return status.action?.title ?? ""
-  }
+
+    /// The title for the setup screen's primary action, deferring to the agent
+    /// approval state when the agent is registered but pending.
+    var setupActionTitle: String {
+      if status.action == .installAgent, controller.isAgentApprovalPending {
+        return openLoginItemsTitle
+      }
+      return status.action?.title ?? ""
+    }
+  #endif
 
   /// The runtime error message when the status is an error, shown as a row.
   var errorMessage: String? {
