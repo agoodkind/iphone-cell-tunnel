@@ -210,7 +210,7 @@ enum RelayHeroAction: Equatable {
     case .installAgent:
       return "Install Agent"
     case .installTunnel:
-      return "Install Tunnel"
+      return "Import Configuration"
     case .retry:
       return "Retry"
     case .selectPeer:

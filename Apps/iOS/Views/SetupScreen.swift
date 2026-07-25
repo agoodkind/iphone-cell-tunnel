@@ -145,7 +145,7 @@
       case .noAgent:
         return "Install the background agent"
       case .noTunnelInstalled:
-        return "Install the tunnel"
+        return "Import a tunnel configuration"
       case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
         .routing:
         return model.status.label
