@@ -8,6 +8,7 @@
 
 #if targetEnvironment(macCatalyst)
   import CellTunnelCore
+  import CellTunnelLog
   import Foundation
   import SwiftUI
   import UniformTypeIdentifiers
@@ -34,6 +35,7 @@
   private let configLibraryHeaderSpacing: CGFloat = 10
   private let configLibraryActionSpacing: CGFloat = 8
   private let configLibraryDividerOutset: CGFloat = 8
+  private let configLibraryLogger = CellTunnelLog.logger(category: .relay)
   private let configLibraryContentTypes: [UTType] = [
     UTType(filenameExtension: "conf") ?? .data,
     .text,
@@ -208,11 +210,17 @@
             try await controller.importConfig(url: url, name: name)
             completeImport(requestID: requestID, error: nil)
           } catch {
+            configLibraryLogger.error(
+              """
+              config library import failed \
+              details=\(String(describing: error), privacy: .public) recovery=show-import-error
+              """
+            )
             completeImport(requestID: requestID, error: error)
           }
         }
       case .failure(let error):
-        presentation.failImport(message: error.localizedDescription)
+        presentation.completeImport(.failure(error))
       }
     }
 
