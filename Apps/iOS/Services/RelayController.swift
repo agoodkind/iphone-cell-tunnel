@@ -140,7 +140,7 @@ struct RelayStatusSample: Sendable {
 @MainActor
 @Observable
 final class RelayController {
-  private let backend: any RelayControlBackend
+  let backend: any RelayControlBackend
   private let installState: InstallationState
   private let deviceProbe: DeviceEgressProbe?
   private var pollTask: Task<Void, Never>?
@@ -183,7 +183,7 @@ final class RelayController {
   /// cannot momentarily surface the agent's intermediate "new config is active" state
   /// between `importConfig` and the restoring `activateConfig`. Non-nil only while a
   /// create that preserves a prior active config is in flight.
-  private var pinnedActiveConfigID: UUID?
+  var pinnedActiveConfigID: UUID?
   /// Whether the background agent is installed, the gate to the install-agent setup
   /// tier. Always true on the iPhone, where there is no separate agent; on the Mac
   /// it tracks the install state.
@@ -610,43 +610,6 @@ extension RelayController {
     Task { @MainActor [weak self] in
       await self?.backend.selectPeer(id: first.id)
       self?.autoSelectInFlight = false
-    }
-  }
-}
-
-// MARK: - Config operations
-
-extension RelayController {
-  /// Deletes a stored configuration.
-  func deleteConfig(id: UUID) {
-    logger.notice("relay controller delete config requested")
-    Task { await backend.deleteConfig(id: id) }
-  }
-
-  /// Renames a stored configuration without touching tunnel state.
-  func renameConfig(id: UUID, name: String) {
-    logger.notice("relay controller rename config requested")
-    Task { await backend.renameConfig(id: id, name: name) }
-  }
-
-  /// Creates a stored configuration from raw text without leaving it active, for the
-  /// new-config flow. The agent activates a config on import, so the previously active
-  /// config is restored afterward to keep New from stealing the current selection.
-  func createConfig(name: String, text: String) {
-    logger.notice("relay controller create config requested")
-    let previousActiveID = activeConfigID
-    // Pin the prior active id only when there is one to preserve, so the poll holds
-    // the checkmark in place until the restore lands; with no prior active config the
-    // newly imported one stays active and no restore runs.
-    if previousActiveID != nil {
-      pinnedActiveConfigID = previousActiveID
-    }
-    Task {
-      await backend.importConfig(name: name, text: text)
-      if let previousActiveID {
-        await backend.activateConfig(id: previousActiveID)
-      }
-      pinnedActiveConfigID = nil
     }
   }
 }
