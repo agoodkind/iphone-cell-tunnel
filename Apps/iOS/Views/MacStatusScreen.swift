@@ -52,6 +52,13 @@
         VStack(alignment: .leading, spacing: contentPadding) {
           header
           masonry
+          #if DEBUG
+            if UITestFixture.isEnabled {
+              Text(UITestFixture.scrollRecoveryMarkerTitle)
+                .padding(.top, UITestFixture.scrollRecoveryMarkerTopPadding)
+                .cellTunnelAccessibilityIdentifier(.fixtureScrollRecovery)
+            }
+          #endif
         }
         .padding(contentPadding)
         .frame(maxWidth: .infinity, alignment: .leading)

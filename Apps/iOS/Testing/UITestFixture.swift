@@ -13,11 +13,18 @@
   // MARK: - UITestFixture
 
   enum UITestFixture {
-    static let fixtureConfigIdentifierString = "00000000-0000-0000-0000-000000000001"
     static let fixtureConfigCreationTimeInterval: TimeInterval = 1_721_000_000
-    static let fixtureConfigIdentifier = makeFixtureConfigIdentifier()
+    static let fixtureConfigIdentifier = UUID(
+      uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1)
+    )
     static let fixtureConfigCreationDate =
       Date(timeIntervalSince1970: fixtureConfigCreationTimeInterval)
+
+    #if targetEnvironment(macCatalyst)
+      static let scrollRecoveryMarkerTitle = "Fixture scroll recovery marker"
+      static let scrollRecoveryMarkerTopPadding: CGFloat = 1_000
+    #endif
+
     private static let provisionedArgument = "--cell-tunnel-ui-test-fixture"
     private static let approvalRequiredArgument = "--cell-tunnel-ui-test-approval-required"
     private static let approvalRequiredEnvironment =
@@ -55,12 +62,6 @@
         || environment[approvalRequiredEnvironment] == "1"
     }
 
-    private static func makeFixtureConfigIdentifier() -> UUID {
-      guard let identifier = UUID(uuidString: fixtureConfigIdentifierString) else {
-        preconditionFailure("The UI test fixture config identifier must be valid.")
-      }
-      return identifier
-    }
   }
 
   // MARK: - UITestFixtureBackend
