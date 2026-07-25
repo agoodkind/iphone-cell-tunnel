@@ -75,13 +75,17 @@ struct CellTunnelPhoneApp: App {
           handleScenePhase(phase)
         }
         #if targetEnvironment(macCatalyst)
-          // The Mac window opens wide enough for the sidebar and the card grid,
-          // and resists shrinking below a usable two-pane width.
-          .frame(minWidth: macWindowMinimumWidth, minHeight: macWindowMinimumHeight)
+          .frame(
+            minWidth: macWindowMinimumWidth,
+            maxWidth: .infinity,
+            minHeight: macWindowMinimumHeight,
+            maxHeight: .infinity
+          )
         #endif
     }
     #if targetEnvironment(macCatalyst)
       .defaultSize(width: macWindowDefaultWidth, height: macWindowDefaultHeight)
+      .windowResizability(.contentMinSize)
     #endif
   }
 
