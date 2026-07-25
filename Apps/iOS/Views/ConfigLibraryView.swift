@@ -55,6 +55,7 @@
     @Environment(RelayController.self) private var controller
     @State private var presentation = ConfigLibraryPresentation.idle
     @State private var activeImportRequestID: UUID?
+    @State private var pickerRequest: ConfigDocumentPicker.Request?
     @State private var renameText = ""
 
     // MARK: - Body
@@ -65,6 +66,14 @@
         actions
       }
       .frame(maxWidth: .infinity, alignment: .leading)
+      .background {
+        ConfigDocumentPicker(
+          request: pickerRequest,
+          completion: handlePickerCompletion
+        )
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+      }
       .sheet(item: editorPresentationBinding) { editorPresentation in
         editor(for: editorPresentation)
       }
@@ -162,18 +171,18 @@
       HStack(spacing: configLibraryActionSpacing) {
         Spacer(minLength: 0)
         Button(configLibraryImportTitle) {
+          guard pickerRequest == nil, activeImportRequestID == nil else {
+            return
+          }
           presentation.presentImport()
+          pickerRequest = ConfigDocumentPicker.Request(
+            id: UUID(),
+            allowedContentTypes: configLibraryContentTypes
+          )
         }
         .buttonStyle(.bordered)
-        .disabled(activeImportRequestID != nil)
+        .disabled(pickerRequest != nil || activeImportRequestID != nil)
         .cellTunnelAccessibilityIdentifier(.importConfig)
-        .fileImporter(
-          isPresented: importPresentationBinding,
-          allowedContentTypes: configLibraryContentTypes,
-          allowsMultipleSelection: false
-        ) { result in
-          handleImport(result)
-        }
         Button(configLibraryNewTitle) {
           presentation.presentCreate()
         }
@@ -200,35 +209,46 @@
 
     // MARK: - Import
 
-    private func handleImport(_ result: Result<[URL], Error>) {
+    private func handlePickerCompletion(
+      requestID: UUID,
+      result: Result<[URL], Error>
+    ) {
+      guard pickerRequest?.id == requestID else {
+        return
+      }
+      pickerRequest = nil
+      presentation.completeImportSelection()
       switch result {
       case .success(let urls):
-        presentation.completeImportSelection()
         guard let url = urls.first else {
           return
         }
-        let name = url.deletingPathExtension().lastPathComponent
-        guard activeImportRequestID == nil else {
-          return
-        }
-        let requestID = UUID()
-        activeImportRequestID = requestID
-        Task {
-          do {
-            try await controller.importConfig(url: url, name: name)
-            completeImport(requestID: requestID, error: nil)
-          } catch {
-            configLibraryLogger.error(
-              """
-              config library import failed \
-              details=\(String(describing: error), privacy: .public) recovery=show-import-error
-              """
-            )
-            completeImport(requestID: requestID, error: error)
-          }
-        }
+        beginImport(url: url)
       case .failure(let error):
-        presentation.completeImport(.failure(error))
+        presentation.completeImportFailure(message: error.localizedDescription)
+      }
+    }
+
+    private func beginImport(url: URL) {
+      guard activeImportRequestID == nil else {
+        return
+      }
+      let requestID = UUID()
+      let name = url.deletingPathExtension().lastPathComponent
+      activeImportRequestID = requestID
+      Task {
+        do {
+          try await controller.importConfig(url: url, name: name)
+          completeImport(requestID: requestID, error: nil)
+        } catch {
+          configLibraryLogger.error(
+            """
+            config library import failed \
+            details=\(String(describing: error), privacy: .public) recovery=show-import-error
+            """
+          )
+          completeImport(requestID: requestID, error: error)
+        }
       }
     }
 
@@ -252,19 +272,6 @@
             presentation = newPresentation
           } else {
             presentation.dismiss()
-          }
-        }
-      )
-    }
-
-    private var importPresentationBinding: Binding<Bool> {
-      Binding(
-        get: { presentation.isImporting },
-        set: { isPresented in
-          if isPresented {
-            presentation.presentImport()
-          } else {
-            presentation.dismissImport()
           }
         }
       )
