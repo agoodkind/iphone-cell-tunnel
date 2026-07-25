@@ -11,6 +11,8 @@ import XCTest
 // MARK: - Constants
 
 private let fixtureArgument = "--cell-tunnel-ui-test-fixture"
+private let setupFixtureArgument = "--cell-tunnel-ui-test-setup"
+private let setupActionIdentifier = "cell-tunnel.setup-action"
 private let approvalRequiredArgument = "--cell-tunnel-ui-test-approval-required"
 private let approvalRequiredEnvironment = "CELL_TUNNEL_UI_TEST_APPROVAL_REQUIRED"
 private let routeTrafficIdentifier = "cell-tunnel.route-traffic"
@@ -280,6 +282,21 @@ final class CellTunnelPhoneUITests: XCTestCase {
 
       let newButton = app.buttons[newConfigIdentifier]
       try require(newButton.isHittable)
+    }
+
+    /// The setup screen's action opens the configuration picker, so the button is
+    /// wired to the import flow rather than doing nothing. Dismissal is covered by
+    /// the config-library import tests, so this one asserts presentation and then
+    /// escapes, which does not depend on a uniquely matched Cancel button.
+    func testCatalystSetupImportButtonPresentsThePicker() throws {
+      launch(arguments: [setupFixtureArgument])
+      let setupButton = app.buttons[setupActionIdentifier]
+      try require(setupButton.waitForExistence(timeout: elementWaitTimeout))
+
+      setupButton.tap()
+      let picker = try pickerPresentationAfterImport()
+      try require(picker.element.exists)
+      picker.host.typeKey(XCUIKeyboardKey.escape, modifierFlags: [])
     }
   #endif
 }
