@@ -43,11 +43,43 @@ final class PreviewRelayBackend: RelayControlBackend {
     await Task.yield()
   }
 
-  func installTunnel(configURL _: URL) async {
-    await Task.yield()
-  }
 }
 
-#if !targetEnvironment(macCatalyst)
+#if targetEnvironment(macCatalyst)
+  extension PreviewRelayBackend: ConfigLibraryBackend {
+    func installTunnel(configURL _: URL) async {
+      await Task.yield()
+    }
+
+    func loadConfigText(id _: UUID) async -> String? {
+      await Task.yield()
+      return nil
+    }
+
+    func importConfig(url _: URL, name _: String) async {
+      await Task.yield()
+    }
+
+    func importConfig(name _: String, text _: String) async {
+      await Task.yield()
+    }
+
+    func activateConfig(id _: UUID) async {
+      await Task.yield()
+    }
+
+    func saveConfigEdit(id _: UUID, text _: String) async {
+      await Task.yield()
+    }
+
+    func deleteConfig(id _: UUID) async {
+      await Task.yield()
+    }
+
+    func renameConfig(id _: UUID, name _: String) async {
+      await Task.yield()
+    }
+  }
+#else
   extension PreviewRelayBackend: PhoneTunnelProvisioningBackend {}
 #endif

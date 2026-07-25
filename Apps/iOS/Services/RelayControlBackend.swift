@@ -39,30 +39,6 @@ protocol RelayControlBackend {
 
   /// Whether available peers come from the dialed-in roster.
   var usesEgressRoster: Bool { get }
-
-  /// Installs the tunnel profile from an imported configuration.
-  func installTunnel(configURL: URL) async
-
-  /// Loads a stored configuration's secret text on demand for the editor.
-  func loadConfigText(id: UUID) async -> String?
-
-  /// Imports a WireGuard configuration file into the config library.
-  func importConfig(url: URL, name: String) async
-
-  /// Makes a stored configuration active.
-  func activateConfig(id: UUID) async
-
-  /// Saves edited WireGuard configuration text.
-  func saveConfigEdit(id: UUID, text: String) async
-
-  /// Deletes a stored configuration.
-  func deleteConfig(id: UUID) async
-
-  /// Renames a stored configuration.
-  func renameConfig(id: UUID, name: String) async
-
-  /// Creates and stores a configuration from raw text.
-  func importConfig(name: String, text: String) async
 }
 
 // MARK: - Defaults
@@ -74,34 +50,5 @@ extension RelayControlBackend {
 
   var usesEgressRoster: Bool {
     false
-  }
-
-  func loadConfigText(id _: UUID) async -> String? {
-    await Task.yield()
-    return nil
-  }
-
-  func importConfig(url _: URL, name _: String) async {
-    await Task.yield()
-  }
-
-  func activateConfig(id _: UUID) async {
-    await Task.yield()
-  }
-
-  func saveConfigEdit(id _: UUID, text _: String) async {
-    await Task.yield()
-  }
-
-  func deleteConfig(id _: UUID) async {
-    await Task.yield()
-  }
-
-  func renameConfig(id _: UUID, name _: String) async {
-    await Task.yield()
-  }
-
-  func importConfig(name _: String, text _: String) async {
-    await Task.yield()
   }
 }
