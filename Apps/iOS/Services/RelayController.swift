@@ -420,9 +420,11 @@ final class RelayController {
     assign(\.connectedPeerName, sample.connectedPeerName)
     assign(\.backendCellularPath, sample.cellularPath)
     assign(\.counters, sample.counters)
+    // `relayBytesOut` leaves the Mac (transferred/sent) and `relayBytesIn` arrives
+    // at the Mac (received).
     let lifetime = lifetimeStore.totals(
-      sessionTransferred: sample.counters.relayBytesIn,
-      sessionReceived: sample.counters.relayBytesOut
+      sessionTransferred: sample.counters.relayBytesOut,
+      sessionReceived: sample.counters.relayBytesIn
     )
     assign(\.lifetimeTransferredBytes, lifetime.transferred)
     assign(\.lifetimeReceivedBytes, lifetime.received)

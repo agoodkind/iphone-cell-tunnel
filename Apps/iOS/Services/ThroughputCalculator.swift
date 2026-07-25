@@ -39,11 +39,13 @@ struct ThroughputCalculator {
       hasBaseline = true
       return (0, 0)
     }
-    let bytesInDelta = counters.relayBytesIn &- baseline.relayBytesIn
-    let bytesOutDelta = counters.relayBytesOut &- baseline.relayBytesOut
+    // The relay counts bytes from the Mac's view: `relayBytesIn` arrives at the Mac
+    // (download) and `relayBytesOut` leaves the Mac (upload).
+    let downloadDelta = counters.relayBytesIn &- baseline.relayBytesIn
+    let uploadDelta = counters.relayBytesOut &- baseline.relayBytesOut
     baseline = counters
-    let upload = Double(bytesInDelta) * bitsPerByte / bitsPerMegabit
-    let download = Double(bytesOutDelta) * bitsPerByte / bitsPerMegabit
+    let upload = Double(uploadDelta) * bitsPerByte / bitsPerMegabit
+    let download = Double(downloadDelta) * bitsPerByte / bitsPerMegabit
     return (upload, download)
   }
 }
