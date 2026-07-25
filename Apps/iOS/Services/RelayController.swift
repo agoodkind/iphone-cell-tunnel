@@ -293,34 +293,36 @@ final class RelayController {
   /// Starts the relay only when the platform's own required setup is complete.
   func prepare() async {
     logger.notice("relay controller prepare requested")
-    let provisioned = await platformTunnelProvisioned()
-    if provisioned {
+    #if targetEnvironment(macCatalyst)
       await start()
-    } else {
-      isTunnelInstalled = false
-      logger.notice("relay controller prepare found no saved tunnel")
-    }
+    #else
+      let provisioned = await phoneProvisioningBackend.tunnelProvisioned()
+      if provisioned {
+        await start()
+      } else {
+        isTunnelInstalled = false
+        logger.notice("relay controller prepare found no saved tunnel")
+      }
+    #endif
   }
 
   /// Refreshes saved tunnel presence and starts the relay when provisioned and idle.
   func refreshProvisioned() async {
     logger.notice("relay controller provisioned refresh requested")
-    let provisioned = await platformTunnelProvisioned()
-    if !provisioned {
-      isTunnelInstalled = false
-      logger.notice("relay controller provisioned refresh found no saved tunnel")
-      return
-    }
-    if pollTask == nil {
-      await start()
-    }
-  }
-
-  private func platformTunnelProvisioned() async -> Bool {
     #if targetEnvironment(macCatalyst)
-      return await backend.tunnelProvisioned()
+      if pollTask == nil {
+        await start()
+      }
     #else
-      return await phoneProvisioningBackend.tunnelProvisioned()
+      let provisioned = await phoneProvisioningBackend.tunnelProvisioned()
+      if !provisioned {
+        isTunnelInstalled = false
+        logger.notice("relay controller provisioned refresh found no saved tunnel")
+        return
+      }
+      if pollTask == nil {
+        await start()
+      }
     #endif
   }
 

@@ -114,19 +114,6 @@
       }
     }
 
-    // MARK: - Tunnel install
-
-    // The iPhone tunnel carries no WireGuard config, so installing it saves and
-    // starts the provider manager through the existing start path.
-    func installTunnel(configURL _: URL) async {
-      if isSimulator {
-        await simulatorProbe.installTunnel(configURL: URL(fileURLWithPath: "/"))
-        return
-      }
-      logger.notice("phone relay backend install tunnel: starting session")
-      await start()
-    }
-
     private func makeSample(
       snapshot: TunnelDaemonStatusSnapshot, connectionStatus: NEVPNStatus
     ) -> RelayStatusSample {
