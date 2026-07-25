@@ -64,7 +64,7 @@ Targets reference the xcconfig values rather than literal identifiers. A make ta
 
 ## Build and install
 
-`README.md` is the user-facing build, install, and run quickstart, and `make help` lists every target. Prefer a named platform target (`make build-mac`, `make build-iphone`, and the rest) when you need one product. `make build` and `make build-all` compile every platform for the engine and CI path. The `install` targets deploy a prebuilt bundle, so build the target first. `make install-mac` copies the agent app to `/Applications/CellTunnel/CellTunnelAgent.app`, then always restarts the launchd service so the freshly built binary is the one running.
+`README.md` is the user-facing build, install, and run quickstart, and `make help` lists every target. Use the named build targets (`make build-mac`, `make build-iphone`, and the rest) for normal platform builds. `make build` and `make build-all` compile every platform. CI builds every platform in one Verify job, signs each product, and verifies each runnable product's signature. The `install` targets deploy a prebuilt bundle, so build the target first. `make install-mac` copies the agent app to `/Applications/CellTunnel/CellTunnelAgent.app`, then always restarts the launchd service so the freshly built binary is the one running.
 
 `Products/celltunnelctl` is built alongside the daemon target and is the agent control client; run `celltunnelctl --help` for the current command set. The agent owns one config library, exposed both there (`celltunnelctl configs`) and in the Mac Catalyst app. The library model (UUID identity, profile stamping, and the non-mutating boot assertion) lives in `docs/architecture.md` under "Configuration and routes".
 

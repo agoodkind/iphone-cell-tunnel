@@ -15,3 +15,12 @@ Sources/CellTunnelCore/Generated/
 *.xcworkspace/
 xcuserdata/
 .config/mise/conf.d/swift-mk.toml
+
+# Ruby / fastlane
+/vendor/
+/.bundle/
+/fastlane/report.xml
+# fastlane downloads a copy of each provisioning profile into the working dir; the
+# authoritative copy is installed into Xcode's profiles folder.
+/AppStore_*.mobileprovision
+/AppStore_*.provisionprofile

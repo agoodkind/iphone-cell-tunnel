@@ -1,0 +1,68 @@
+# Fastfile: provisioning for CI code signing.
+#
+# CI and any unregistered machine cannot use development provisioning profiles,
+# because those enumerate registered devices. App Store distribution profiles carry
+# no device list, so they sign on any machine. This lane creates or renews one App
+# Store profile per signable target through the App Store Connect API key and installs
+# it, so a manual-signed `xcodebuild build` finds each profile by name. Project.swift
+# pins these exact names for the CI (distribution) build.
+
+# Distinct "Managed AppStore ..." names so fastlane owns these profiles outright and
+# never collides with any manually created profile of the same app identifier.
+# Project.swift pins these exact names for the CI distribution build.
+APP_STORE_PROFILES = [
+  { app_identifier: "io.goodkind.CellTunnel.Agent",               platform: "macos", name: "Managed AppStore CellTunnelAgent" },
+  { app_identifier: "io.goodkind.CellTunnel.Agent.TunnelProvider", platform: "macos", name: "Managed AppStore CellTunnelTunnelProvider" },
+  { app_identifier: "io.goodkind.CellTunnelPhone",                platform: "ios",   name: "Managed AppStore CellTunnelPhone iOS" },
+  { app_identifier: "io.goodkind.CellTunnelPhone",                platform: "macos", name: "Managed AppStore CellTunnelPhone Catalyst" },
+  { app_identifier: "io.goodkind.CellTunnelPhone.Tunnel",         platform: "ios",   name: "Managed AppStore CellTunnelPhoneTunnel iOS" },
+].freeze
+
+require "base64"
+
+platform :ios do
+  desc "Create or renew the App Store provisioning profiles CI signs with, using the App Store Connect API key."
+  lane :ci_provision do
+    connect_token = app_store_connect_api_key(
+      key_id: ENV.fetch("APPLE_NOTARY_KEY_ID"),
+      issuer_id: ENV.fetch("APPLE_NOTARY_ISSUER_ID"),
+      key_content: ENV.fetch("APPLE_NOTARY_KEY_BASE64"),
+      is_key_content_base64: true,
+      in_house: false,
+    )
+
+    # The same key, as a spaceship token, so the lane can delete stale profiles. The
+    # account can hold more than one Apple Distribution certificate (a local one and
+    # the CI one), and a profile is bound to a specific certificate. A profile of the
+    # right name left over from a different certificate makes the build fail with
+    # "profile does not include signing certificate", so delete every profile of each
+    # name first, then recreate it bound to the certificate this build uses.
+    Spaceship::ConnectAPI.token = Spaceship::ConnectAPI::Token.create(
+      key_id: ENV.fetch("APPLE_NOTARY_KEY_ID"),
+      issuer_id: ENV.fetch("APPLE_NOTARY_ISSUER_ID"),
+      key: Base64.decode64(ENV.fetch("APPLE_NOTARY_KEY_BASE64")),
+    )
+
+    APP_STORE_PROFILES.each do |profile|
+      target_name = profile[:name]
+      Spaceship::ConnectAPI::Profile.all.each do |existing|
+        next unless existing.name == target_name || existing.name.start_with?("#{target_name} ")
+
+        UI.message("Deleting stale profile '#{existing.name}'")
+        existing.delete!
+      end
+
+      # Default type is an App Store distribution profile: no device list, so it
+      # signs on an unregistered runner. force recreates it bound to the current
+      # certificate.
+      get_provisioning_profile(
+        api_key: connect_token,
+        app_identifier: profile[:app_identifier],
+        platform: profile[:platform],
+        provisioning_name: target_name,
+        force: true,
+        output_path: "build/fastlane-profiles",
+      )
+    end
+  end
+end
