@@ -22,6 +22,7 @@
   private let configLibraryDeleteTitle = "Delete"
   private let configLibraryActionsAccessibilityLabel = "Config actions"
   private let configLibraryRenameSheetTitle = "Rename Config"
+  private let configLibraryImportFailureTitle = "Unable to Import Config"
   private let configLibraryRenameFieldTitle = "Name"
   private let configLibraryRenameConfirmTitle = "Rename"
   private let configLibraryCancelTitle = "Cancel"
@@ -39,26 +40,6 @@
     .plainText,
   ]
 
-  // MARK: - ActiveConfigSheet
-
-  /// The single sheet the config library presents, either editing an existing config or
-  /// composing a new one. Driving both through one `sheet(item:)` keeps the view from
-  /// stacking two competing sheet presentations, which wedges modal presentation on Mac
-  /// Catalyst and freezes the window.
-  private enum ActiveConfigSheet: Identifiable {
-    case create
-    case edit(TunnelConfigSummary)
-
-    var id: String {
-      switch self {
-      case .create:
-        return "create"
-      case .edit(let config):
-        return "edit-\(config.id.uuidString)"
-      }
-    }
-  }
-
   // MARK: - ConfigLibraryView
 
   /// Presents the stored WireGuard configs inside the shared masonry tile, the same rounded
@@ -70,34 +51,28 @@
   /// save without stealing the active selection.
   struct ConfigLibraryView: View {
     @Environment(RelayController.self) private var controller
-    @State private var isImportingConfig = false
-    @State private var activeSheet: ActiveConfigSheet?
-    @State private var isRenaming = false
-    @State private var renamingID: UUID?
+    @State private var presentation = ConfigLibraryPresentation.idle
     @State private var renameText = ""
 
     // MARK: - Body
 
-    // Each modal presentation lives on its own view so the library never stacks a sheet, a
-    // file importer, and an alert on one node; on Mac Catalyst that stack wedges the window
-    // when the file importer opens. The editor and new-config flows share one `sheet(item:)`,
-    // and the file importer sits on the Import button in `actions`.
     var body: some View {
       VStack(alignment: .leading, spacing: configLibrarySectionSpacing) {
         card
         actions
       }
       .frame(maxWidth: .infinity, alignment: .leading)
-      .sheet(item: $activeSheet) { sheet in
-        switch sheet {
-        case .edit(let config):
-          ConfigEditorView(config: config)
-        case .create:
-          ConfigEditorView(config: nil)
-        }
+      .sheet(item: editorPresentationBinding) { editorPresentation in
+        editor(for: editorPresentation)
       }
-      .alert(configLibraryRenameSheetTitle, isPresented: $isRenaming) {
-        renameAlertContent
+      .alert(
+        alertTitle,
+        isPresented: alertPresentationBinding,
+        presenting: presentation.alertPresentation
+      ) { alertPresentation in
+        alertActions(for: alertPresentation)
+      } message: { alertPresentation in
+        alertMessage(for: alertPresentation)
       }
     }
 
@@ -150,7 +125,7 @@
     private func rowMenu(_ config: TunnelConfigSummary) -> some View {
       Menu {
         Button(configLibraryEditTitle) {
-          activeSheet = .edit(config)
+          presentation.presentEdit(config)
         }
         Button(configLibraryRenameTitle) {
           startRename(config)
@@ -178,18 +153,18 @@
       HStack(spacing: configLibraryActionSpacing) {
         Spacer(minLength: 0)
         Button(configLibraryImportTitle) {
-          isImportingConfig = true
+          presentation.presentImport()
         }
         .buttonStyle(.bordered)
         .fileImporter(
-          isPresented: $isImportingConfig,
+          isPresented: importPresentationBinding,
           allowedContentTypes: configLibraryContentTypes,
           allowsMultipleSelection: false
         ) { result in
           handleImport(result)
         }
         Button(configLibraryNewTitle) {
-          activeSheet = .create
+          presentation.presentCreate()
         }
         .buttonStyle(.bordered)
       }
@@ -197,28 +172,18 @@
 
     // MARK: - Rename
 
-    @ViewBuilder private var renameAlertContent: some View {
-      TextField(configLibraryRenameFieldTitle, text: $renameText)
-      Button(configLibraryCancelTitle, role: .cancel) {
-        // Dismiss the rename alert without changing the name.
-      }
-      Button(configLibraryRenameConfirmTitle) {
-        confirmRename()
-      }
-    }
-
     private func startRename(_ config: TunnelConfigSummary) {
-      renamingID = config.id
       renameText = config.name
-      isRenaming = true
+      presentation.presentRename(config)
     }
 
     private func confirmRename() {
       let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
-      guard let id = renamingID, !name.isEmpty else {
+      guard case .renaming(let config) = presentation, !name.isEmpty else {
         return
       }
-      controller.renameConfig(id: id, name: name)
+      controller.renameConfig(id: config.id, name: name)
+      presentation.dismiss()
     }
 
     // MARK: - Import
@@ -226,14 +191,111 @@
     private func handleImport(_ result: Result<[URL], Error>) {
       switch result {
       case .success(let urls):
+        presentation.completeImportSelection()
         guard let url = urls.first else {
           return
         }
         let name = url.deletingPathExtension().lastPathComponent
         controller.importConfig(url: url, name: name)
-      case .failure:
-        break
+      case .failure(let error):
+        presentation.failImport(message: error.localizedDescription)
+      }
+    }
+
+    // MARK: - Presentation bindings
+
+    private var editorPresentationBinding: Binding<ConfigLibraryPresentation?> {
+      Binding(
+        get: { presentation.editorPresentation },
+        set: { newPresentation in
+          if let newPresentation {
+            presentation = newPresentation
+          } else {
+            presentation.dismiss()
+          }
+        }
+      )
+    }
+
+    private var importPresentationBinding: Binding<Bool> {
+      Binding(
+        get: { presentation.isImporting },
+        set: { isPresented in
+          if isPresented {
+            presentation.presentImport()
+          } else {
+            presentation.dismissImport()
+          }
+        }
+      )
+    }
+
+    private var alertPresentationBinding: Binding<Bool> {
+      Binding(
+        get: { presentation.alertPresentation != nil },
+        set: { isPresented in
+          if !isPresented {
+            presentation.dismiss()
+          }
+        }
+      )
+    }
+
+    private var alertTitle: String {
+      switch presentation {
+      case .renaming:
+        configLibraryRenameSheetTitle
+      case .importFailure:
+        configLibraryImportFailureTitle
+      case .idle, .importing, .creating, .editing:
+        ""
+      }
+    }
+
+    @ViewBuilder private func editor(
+      for presentation: ConfigLibraryPresentation
+    ) -> some View {
+      switch presentation {
+      case .creating:
+        ConfigEditorView(config: nil)
+      case .editing(let config):
+        ConfigEditorView(config: config)
+      case .idle, .importing, .renaming, .importFailure:
+        EmptyView()
+      }
+    }
+
+    @ViewBuilder private func alertActions(
+      for presentation: ConfigLibraryPresentation
+    ) -> some View {
+      switch presentation {
+      case .renaming:
+        TextField(configLibraryRenameFieldTitle, text: $renameText)
+        Button(configLibraryCancelTitle, role: .cancel) {
+          self.presentation.dismiss()
+        }
+        Button(configLibraryRenameConfirmTitle) {
+          confirmRename()
+        }
+      case .importFailure:
+        Button(configLibraryCancelTitle, role: .cancel) {
+          self.presentation.dismiss()
+        }
+      case .idle, .importing, .creating, .editing:
+        EmptyView()
+      }
+    }
+
+    @ViewBuilder private func alertMessage(
+      for presentation: ConfigLibraryPresentation
+    ) -> some View {
+      switch presentation {
+      case .importFailure(let message):
+        Text(message)
+      case .idle, .importing, .creating, .editing, .renaming:
+        EmptyView()
       }
     }
   }
+
 #endif
