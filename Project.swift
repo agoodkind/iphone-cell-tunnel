@@ -205,6 +205,16 @@ let project = Project(
       settings: .settings(base: cellTunnelPhoneBaseSettings)
     ),
     .target(
+      name: "CellTunnelPhoneUITests",
+      destinations: [.iPhone, .macCatalyst],
+      product: .uiTests,
+      bundleId: "$(BUNDLE_ID_PREFIX).CellTunnelPhoneUITests",
+      deploymentTargets: iOSDeploymentTarget,
+      infoPlist: .default,
+      sources: ["Tests/CellTunnelPhoneUITests/**"],
+      dependencies: [.target(name: "CellTunnelPhone")]
+    ),
+    .target(
       name: "CellTunnelAgent",
       destinations: [.mac],
       product: .app,
@@ -273,6 +283,10 @@ let project = Project(
       name: "CellTunnelPhone",
       shared: true,
       buildAction: .buildAction(targets: [.target("CellTunnelPhone")]),
+      testAction: .targets(
+        [.testableTarget(target: .target("CellTunnelPhoneUITests"))],
+        configuration: "Debug"
+      ),
       runAction: .runAction(configuration: "Debug"),
       archiveAction: .archiveAction(configuration: "Release"),
       profileAction: .profileAction(configuration: "Release"),

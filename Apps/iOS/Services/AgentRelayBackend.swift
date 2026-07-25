@@ -23,7 +23,7 @@
   /// The Mac and the command-line tool share one control client, `AgentClient`,
   /// which connects to the agent's mach service with the libxpc session API.
   @MainActor
-  final class AgentRelayBackend: RelayControlBackend {
+  final class AgentRelayBackend: RelayControlBackend, ConfigLibraryBackend {
     private let client = AgentClient()
 
     // MARK: - Lifecycle
@@ -43,12 +43,6 @@
           """
         )
       }
-    }
-
-    /// The Mac setup gating comes from the agent's status snapshot, so launch proceeds.
-    func tunnelProvisioned() async -> Bool {
-      await Task.yield()
-      return true
     }
 
     // Sends the routing choice to the agent, which installs or withdraws the
@@ -115,7 +109,16 @@
     // stores, activates, and starts it. The agent owns the library, so the install
     // setup action and the Configs import share one path.
     func installTunnel(configURL: URL) async {
-      await importConfig(url: configURL, name: defaultName(from: configURL))
+      do {
+        try await importConfig(url: configURL, name: defaultName(from: configURL))
+      } catch {
+        logger.error(
+          """
+          agent relay backend tunnel install failed \
+          details=\(String(describing: error), privacy: .public) recovery=keep-state
+          """
+        )
+      }
     }
 
     // MARK: - Config library
@@ -123,7 +126,7 @@
     /// Reads a picked config file and asks the agent to import it: validate, store,
     /// activate, and start. The text crosses to the agent over XPC; the agent owns
     /// the keychain storage.
-    func importConfig(url: URL, name: String) async {
+    func importConfig(url: URL, name: String) async throws {
       let text: String
       let accessing = url.startAccessingSecurityScopedResource()
       defer {
@@ -140,15 +143,15 @@
           details=\(String(describing: error), privacy: .public) recovery=keep-state
           """
         )
-        return
+        throw error
       }
 
-      await importConfig(name: name, text: text)
+      try await importConfig(name: name, text: text)
     }
 
     /// Creates a config from raw text via the agent, which validates, stores, and
     /// activates it. The new-config flow and the file import share this path.
-    func importConfig(name: String, text: String) async {
+    func importConfig(name: String, text: String) async throws {
       do {
         _ = try await client.importConfig(name: name, text: text)
         logger.notice("agent relay backend config create forwarded")
@@ -159,6 +162,7 @@
           details=\(String(describing: error), privacy: .public) recovery=keep-state
           """
         )
+        throw error
       }
     }
 
