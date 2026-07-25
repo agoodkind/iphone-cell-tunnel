@@ -33,6 +33,11 @@ final class RouteGate: @unchecked Sendable {
   private var programDNSSearchDomains: [String] = []
   private var installed = false
 
+  /// The public resolver published for an all-traffic config that supplies no
+  /// `DNS =` line, so names resolve over the tunnel. Cloudflare's anycast
+  /// addresses are reachable from any full-tunnel exit.
+  private static let allTrafficFallbackDNSServers = ["1.1.1.1", "2606:4700:4700::1111"]
+
   /// Records the adapter's requested settings, keeping its tunnel addresses and
   /// replacing its captured routes with the program's scoped set gated by the
   /// current link state.
@@ -119,17 +124,43 @@ final class RouteGate: @unchecked Sendable {
     return settings
   }
 
-  /// The DNS settings to publish while the link is up, or nil when the config
-  /// supplied no DNS servers. `matchDomains = [""]` makes the tunnel resolver
-  /// authoritative for every query, so it overrides any system resolver, which
-  /// is what an all-traffic config needs to resolve names over the tunnel.
+  /// The DNS settings to publish while the link is up, or nil when the tunnel
+  /// should keep the system resolver. `matchDomains = [""]` makes the tunnel
+  /// resolver authoritative for every query, so it overrides any system resolver,
+  /// which is what an all-traffic config needs to resolve names over the tunnel.
   private func makeDNSSettingsLocked() -> NEDNSSettings? {
-    guard !programDNSServers.isEmpty else {
+    let servers = resolvedDNSServersLocked()
+    guard !servers.isEmpty else {
       return nil
     }
-    let dnsSettings = NEDNSSettings(servers: programDNSServers)
+    let dnsSettings = NEDNSSettings(servers: servers)
     dnsSettings.searchDomains = programDNSSearchDomains
     dnsSettings.matchDomains = [""]
     return dnsSettings
+  }
+
+  /// The DNS servers to publish. A config `DNS =` line wins. When the config
+  /// supplies none but the captured routes include a default route, the config is
+  /// all-traffic and the system would otherwise have no resolver reachable over
+  /// the tunnel, so a public fallback resolver is published. A scoped config with
+  /// no default route keeps the system resolver by publishing none.
+  private func resolvedDNSServersLocked() -> [String] {
+    if !programDNSServers.isEmpty {
+      return programDNSServers
+    }
+    if programRoutesIncludeDefaultLocked() {
+      return Self.allTrafficFallbackDNSServers
+    }
+    return []
+  }
+
+  /// Whether the captured routes include an IPv4 or IPv6 default route, the mark
+  /// of an all-traffic config.
+  private func programRoutesIncludeDefaultLocked() -> Bool {
+    let hasIPv4Default = programIPv4Routes.contains { $0.destinationSubnetMask == "0.0.0.0" }
+    let hasIPv6Default = programIPv6Routes.contains {
+      $0.destinationNetworkPrefixLength.intValue == 0
+    }
+    return hasIPv4Default || hasIPv6Default
   }
 }
