@@ -6,64 +6,57 @@
 //  Copyright © 2026, all rights reserved.
 //
 
-import CellTunnelCore
-import CellTunnelLog
-import Foundation
-import Observation
-
 #if targetEnvironment(macCatalyst)
+  import CellTunnelCore
+  import CellTunnelLog
+  import Foundation
+  import Observation
   import ServiceManagement
-#endif
 
-private let logger = CellTunnelLog.logger(category: .app)
+  private let logger = CellTunnelLog.logger(category: .app)
 
-// MARK: - InstallationState
+  // MARK: - InstallationState
 
-/// Tracks whether the background agent is installed, so the status screen can show
-/// the install-agent setup tier on a Mac that has no agent yet. The iPhone has no
-/// separate agent, so it reports the agent as always present. On the Mac it reads the
-/// login-item registration and whether the agent answers a status call, and it drives
-/// the register and Login Items actions.
-@MainActor
-@Observable
-final class InstallationState {
-  /// Whether the agent is installed: always true on the iPhone, and on the Mac true
-  /// once the login item is enabled or the agent answers a status call.
-  private(set) var isAgentInstalled = true
-  /// Whether the agent is registered but waiting on the user's Login Items approval,
-  /// so the setup screen can route them to System Settings.
-  private(set) var isApprovalPending = false
+  /// Tracks whether the background agent is installed, so the status screen can show
+  /// the install-agent setup tier on a Mac that has no agent yet. The iPhone has no
+  /// separate agent, so it reports the agent as always present. On the Mac it reads the
+  /// login-item registration and whether the agent answers a status call, and it drives
+  /// the register and Login Items actions.
+  @MainActor
+  @Observable
+  final class InstallationState {
+    /// Whether the agent is installed: always true on the iPhone, and on the Mac true
+    /// once the login item is enabled or the agent answers a status call.
+    private(set) var isAgentInstalled = true
+    /// Whether the agent is registered but waiting on the user's Login Items approval,
+    /// so the setup screen can route them to System Settings.
+    private(set) var isApprovalPending = false
 
-  /// Reconciles the install state from the platform. `agentReachable` is whether the
-  /// last status poll reached the agent over the control transport. The read runs off
-  /// the main actor, so the caller awaits it and the main thread stays free.
-  func refresh(agentReachable: Bool) async {
-    #if targetEnvironment(macCatalyst)
+    /// Reconciles the install state from the platform. `agentReachable` is whether the
+    /// last status poll reached the agent over the control transport. The read runs off
+    /// the main actor, so the caller awaits it and the main thread stays free.
+    func refresh(agentReachable: Bool) async {
+      #if DEBUG
+        if UITestFixture.isEnabled {
+          isAgentInstalled = agentReachable
+          isApprovalPending = false
+          return
+        }
+      #endif
       await refreshMacState(agentReachable: agentReachable)
-    #else
-      // The iPhone has no separate agent, so it is always present.
-      _ = agentReachable
-    #endif
-  }
+    }
 
-  /// Registers the agent login item, the install-agent setup action. A no-op on the
-  /// iPhone, which has no separate agent. The registration runs off the main actor.
-  func registerAgent() async {
-    #if targetEnvironment(macCatalyst)
+    /// Registers the agent login item, the install-agent setup action. A no-op on the
+    /// iPhone, which has no separate agent. The registration runs off the main actor.
+    func registerAgent() async {
       await registerMacAgent()
-    #endif
-  }
+    }
 
-  /// Opens Login Items so the user can approve a registered-but-pending agent. A
-  /// no-op on the iPhone.
-  func openLoginItems() {
-    #if targetEnvironment(macCatalyst)
+    /// Opens Login Items so the user can approve a registered-but-pending agent.
+    func openLoginItems() {
       SMAppService.openSystemSettingsLoginItems()
-    #endif
+    }
   }
-}
-
-#if targetEnvironment(macCatalyst)
 
   // MARK: - Mac install state
 

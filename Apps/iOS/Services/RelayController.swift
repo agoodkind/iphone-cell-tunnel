@@ -131,96 +131,6 @@ struct RelayStatusSample: Sendable {
   }
 }
 
-// MARK: - RelayControlBackend
-
-/// The platform-specific source behind the shared relay UI. The iPhone backend
-/// drives the on-device relay. The Mac backend reads the agent. The controller
-/// owns the poll cadence and the published state, so a backend only brings its
-/// session up or down and answers one status reading at a time.
-@MainActor
-protocol RelayControlBackend {
-  /// Brings the platform relay session up. The iPhone creates and starts its
-  /// tunnel. The Mac starts the control pairing path so the iPhone can appear in
-  /// the peer roster; turning the Route traffic switch on then starts the relay.
-  func start() async
-
-  /// Reads the saved tunnel state fresh from the platform without saving anything;
-  /// true when a usable tunnel configuration exists. The iPhone reads
-  /// NetworkExtension preferences; the Mac, the simulator, and previews answer true
-  /// because their setup gating comes from status samples.
-  func tunnelProvisioned() async -> Bool
-
-  /// One status reading, or `nil` when the source is briefly unavailable.
-  func sample() async -> RelayStatusSample?
-
-  /// Sets the routing choice: on installs the program routes, off returns to
-  /// passthrough. The choice reaches the agent, which owns the routes, over the
-  /// platform's control path.
-  func setRouting(enabled: Bool) async
-
-  /// Selects the discovered peer to connect to. The Mac forwards the choice to the
-  /// agent; the iPhone records it and dials that peer over the control link.
-  func selectPeer(id: String) async
-
-  /// Selects which dialed-in iPhone the Mac routes egress through, by the roster id.
-  /// Only the Mac backend acts on it; the iPhone hosts no roster, so its default is a
-  /// no-op.
-  func selectEgressPeer(id: String) async
-
-  /// Whether this backend auto-dials the first discovered peer when none is selected,
-  /// so the iPhone connects to its Mac with no picker. The Mac, which selects egress
-  /// from its own roster instead, leaves this false.
-  var autoSelectsDiscoveredPeer: Bool { get }
-
-  /// Whether this backend's available peers come from the dialed-in roster rather than
-  /// Bonjour discovery, so the status word reflects connected iPhones on the Mac. True
-  /// only on the Mac; the iPhone, which browses for a Mac to dial, leaves this false.
-  var usesEgressRoster: Bool { get }
-
-  /// Installs the tunnel profile from an imported configuration. The Mac hands the
-  /// config to the agent's start path; the iPhone saves its own tunnel manager.
-  func installTunnel(configURL: URL) async
-
-  /// Loads a stored config's secret text on demand, for the editor. The Mac fetches
-  /// it from the agent; backends with no library answer `nil`.
-  func loadConfigText(id: UUID) async -> String?
-
-  /// Imports a WireGuard configuration file into this backend's config library.
-  func importConfig(url: URL, name: String) async
-
-  /// Makes a stored configuration the active relay configuration.
-  func activateConfig(id: UUID) async
-
-  /// Saves edited WireGuard configuration text for a stored configuration.
-  func saveConfigEdit(id: UUID, text: String) async
-
-  /// Deletes a stored configuration from this backend's config library.
-  func deleteConfig(id: UUID) async
-
-  /// Renames a stored configuration in this backend's config library.
-  func renameConfig(id: UUID, name: String) async
-
-  /// Creates and stores a configuration from raw text; the backend validates it.
-  func importConfig(name: String, text: String) async
-}
-
-// MARK: - RelayControlBackend defaults
-
-/// Defaults for the two capability flags: a backend that does not override them does
-/// not auto-dial and hosts no egress roster. The Mac overrides the roster flag and the
-/// iPhone backends override auto-dial. Egress selection itself has no default; each
-/// backend implements its own `selectEgressPeer`, which the iPhone backends leave as a
-/// no-op.
-extension RelayControlBackend {
-  var autoSelectsDiscoveredPeer: Bool {
-    false
-  }
-
-  var usesEgressRoster: Bool {
-    false
-  }
-}
-
 // MARK: - RelayController
 
 /// Drives the shared relay screens. It holds the published status the views bind
@@ -231,7 +141,14 @@ extension RelayControlBackend {
 @Observable
 final class RelayController {
   private let backend: any RelayControlBackend
-  private let installState: InstallationState
+
+  #if targetEnvironment(macCatalyst)
+    let configLibraryBackend: any ConfigLibraryBackend
+    let installState: InstallationState
+  #else
+    private let phoneProvisioningBackend: any PhoneTunnelProvisioningBackend
+  #endif
+
   private let deviceProbe: DeviceEgressProbe?
   private var pollTask: Task<Void, Never>?
   private var throughput: ThroughputCalculator
@@ -269,20 +186,27 @@ final class RelayController {
   // Status polls left before an unconfirmed routing request reverts to the real
   // state; a positive value means a request is pending, counted down each poll.
   private var routeIntentPollsRemaining = 0
-  /// The active config id held across a new-config create and restore so the poll
-  /// cannot momentarily surface the agent's intermediate "new config is active" state
-  /// between `importConfig` and the restoring `activateConfig`. Non-nil only while a
-  /// create that preserves a prior active config is in flight.
-  private var pinnedActiveConfigID: UUID?
-  /// Whether the background agent is installed, the gate to the install-agent setup
-  /// tier. Always true on the iPhone, where there is no separate agent; on the Mac
-  /// it tracks the install state.
-  var isAgentInstalled = true
+
+  #if targetEnvironment(macCatalyst)
+    /// The active config id held across a new-config create and restore so the poll
+    /// cannot momentarily surface the agent's intermediate "new config is active" state
+    /// between `importConfig` and the restoring `activateConfig`. Non-nil only while a
+    /// create that preserves a prior active config is in flight.
+    var pinnedActiveConfigID: UUID?
+    /// Whether the background agent is installed, the gate to the install-agent setup
+    /// tier on Mac Catalyst.
+    var isAgentInstalled = true
+  #endif
+
   /// Whether a tunnel profile is saved, the gate to the install-tunnel setup tier.
   var isTunnelInstalled = false
-  /// Whether the agent install is registered but awaiting the user's Login Items
-  /// approval, surfaced so the setup screen can route them to System Settings.
-  var isAgentApprovalPending = false
+
+  #if targetEnvironment(macCatalyst)
+    /// Whether the agent install is registered but awaiting the user's Login Items
+    /// approval, surfaced so the setup screen can route them to System Settings.
+    var isAgentApprovalPending = false
+  #endif
+
   /// The peers discovery currently sees, the selected peer's id, and the discovery
   /// phase, the inputs to the peers list and the no-peer states.
   var discoveredPeers: [TunnelRelayService] = []
@@ -316,27 +240,44 @@ final class RelayController {
   var relayHost: String?
   var relayServerIPv4Address: String?
   var relayServerIPv6Address: String?
-  /// The agent's config library mirrored from the status poll, the rows the Configs
-  /// card lists, so the card reads the same source as the Relay tile and the two
-  /// never diverge. Empty on the iPhone, which hosts no library.
-  var configLibrary: [TunnelConfigSummary] = []
-  /// The active config's id, mirrored from the same poll, the entry the card marks
-  /// active and the running tunnel uses.
-  var activeConfigID: UUID?
 
-  init(
-    backend: any RelayControlBackend,
-    throughput: ThroughputCalculator,
-    lifetimeStore: LifetimeDataStore,
-    installState: InstallationState = InstallationState(),
-    deviceProbe: DeviceEgressProbe? = nil
-  ) {
-    self.backend = backend
-    self.throughput = throughput
-    self.lifetimeStore = lifetimeStore
-    self.installState = installState
-    self.deviceProbe = deviceProbe
-  }
+  #if targetEnvironment(macCatalyst)
+    /// The agent's config library mirrored from the status poll, the rows the Configs
+    /// card lists, so the card reads the same source as the Relay tile and the two
+    /// never diverge.
+    var configLibrary: [TunnelConfigSummary] = []
+    /// The active config's id, mirrored from the same poll, the entry the card marks
+    /// active and the running tunnel uses.
+    var activeConfigID: UUID?
+
+    init(
+      backend: some RelayControlBackend & ConfigLibraryBackend,
+      throughput: ThroughputCalculator,
+      lifetimeStore: LifetimeDataStore,
+      installState: InstallationState = InstallationState(),
+      deviceProbe: DeviceEgressProbe? = nil
+    ) {
+      self.backend = backend
+      configLibraryBackend = backend
+      self.throughput = throughput
+      self.lifetimeStore = lifetimeStore
+      self.installState = installState
+      self.deviceProbe = deviceProbe
+    }
+  #else
+    init(
+      backend: some RelayControlBackend & PhoneTunnelProvisioningBackend,
+      throughput: ThroughputCalculator,
+      lifetimeStore: LifetimeDataStore,
+      deviceProbe: DeviceEgressProbe? = nil
+    ) {
+      self.backend = backend
+      phoneProvisioningBackend = backend
+      self.throughput = throughput
+      self.lifetimeStore = lifetimeStore
+      self.deviceProbe = deviceProbe
+    }
+  #endif
 
   // MARK: - Lifecycle
 
@@ -349,30 +290,40 @@ final class RelayController {
     startPolling()
   }
 
-  /// Starts the relay only when a saved tunnel configuration is already approved.
+  /// Starts the relay only when the platform's own required setup is complete.
   func prepare() async {
     logger.notice("relay controller prepare requested")
-    let provisioned = await backend.tunnelProvisioned()
-    if provisioned {
+    #if targetEnvironment(macCatalyst)
       await start()
-    } else {
-      isTunnelInstalled = false
-      logger.notice("relay controller prepare found no saved tunnel")
-    }
+    #else
+      let provisioned = await phoneProvisioningBackend.tunnelProvisioned()
+      if provisioned {
+        await start()
+      } else {
+        isTunnelInstalled = false
+        logger.notice("relay controller prepare found no saved tunnel")
+      }
+    #endif
   }
 
   /// Refreshes saved tunnel presence and starts the relay when provisioned and idle.
   func refreshProvisioned() async {
     logger.notice("relay controller provisioned refresh requested")
-    let provisioned = await backend.tunnelProvisioned()
-    if !provisioned {
-      isTunnelInstalled = false
-      logger.notice("relay controller provisioned refresh found no saved tunnel")
-      return
-    }
-    if pollTask == nil {
-      await start()
-    }
+    #if targetEnvironment(macCatalyst)
+      if pollTask == nil {
+        await start()
+      }
+    #else
+      let provisioned = await phoneProvisioningBackend.tunnelProvisioned()
+      if !provisioned {
+        isTunnelInstalled = false
+        logger.notice("relay controller provisioned refresh found no saved tunnel")
+        return
+      }
+      if pollTask == nil {
+        await start()
+      }
+    #endif
   }
 
   // Wires the app's egress probe to the device-value recompute and starts it for
@@ -442,9 +393,13 @@ final class RelayController {
         }
         if let sample = await backend.sample() {
           apply(sample)
-          await refreshInstallState(agentReachable: true)
+          #if targetEnvironment(macCatalyst)
+            await refreshInstallState(agentReachable: true)
+          #endif
         } else {
-          await refreshInstallState(agentReachable: false)
+          #if targetEnvironment(macCatalyst)
+            await refreshInstallState(agentReachable: false)
+          #endif
         }
         guard !Task.isCancelled else {
           return
@@ -496,11 +451,13 @@ final class RelayController {
     assign(\.relayHost, sample.relayHost)
     assign(\.relayServerIPv4Address, sample.relayServerIPv4Address)
     assign(\.relayServerIPv6Address, sample.relayServerIPv6Address)
-    assign(\.configLibrary, sample.configLibrary)
-    // While a create-and-restore is in flight, `pinnedActiveConfigID` holds the prior
-    // active id so a poll landing mid-sequence cannot flicker the checkmark onto the
-    // new config; it is nil otherwise, so the snapshot's id wins.
-    assign(\.activeConfigID, pinnedActiveConfigID ?? sample.activeConfigID)
+    #if targetEnvironment(macCatalyst)
+      assign(\.configLibrary, sample.configLibrary)
+      // While a create-and-restore is in flight, `pinnedActiveConfigID` holds the prior
+      // active id so a poll landing mid-sequence cannot flicker the checkmark onto the
+      // new config; it is nil otherwise, so the snapshot's id wins.
+      assign(\.activeConfigID, pinnedActiveConfigID ?? sample.activeConfigID)
+    #endif
     recomputeDeviceValues()
     let rate = throughput.update(with: sample.counters)
     assign(\.uploadMbps, rate.upload)
@@ -518,26 +475,32 @@ final class RelayController {
     }
   }
 
-  // Refreshes the agent install state each poll, so the install-agent setup tier
-  // appears on a Mac with no agent and clears once the agent answers or is enabled.
-  // The install read runs off the main actor, so the poll awaits it and the main
-  // thread stays free to present modals mid-poll.
-  private func refreshInstallState(agentReachable: Bool) async {
-    await installState.refresh(agentReachable: agentReachable)
-    isAgentInstalled = installState.isAgentInstalled
-    isAgentApprovalPending = installState.isApprovalPending
-  }
-
-  // MARK: - Routing control
-
-  /// Whether an active config exists to relay through, the gate that decides a
-  /// connected peer can route at all. The Mac reads the agent's active config id;
-  /// the iPhone, whose tunnel carries its own config, mirrors its saved-tunnel flag.
-  var hasActiveConfig: Bool {
-    if usesEgressRoster {
-      return activeConfigID != nil
+  #if targetEnvironment(macCatalyst)
+    // Refreshes the agent install state each poll, so the install-agent setup tier
+    // appears on a Mac with no agent and clears once the agent answers or is enabled.
+    // The install read runs off the main actor, so the poll awaits it and the main
+    // thread stays free to present modals mid-poll.
+    private func refreshInstallState(agentReachable: Bool) async {
+      await installState.refresh(agentReachable: agentReachable)
+      isAgentInstalled = installState.isAgentInstalled
+      isAgentApprovalPending = installState.isApprovalPending
     }
-    return isTunnelInstalled
+  #endif
+
+}
+
+// MARK: - Routing control
+
+extension RelayController {
+
+  /// Whether the current platform has an active relay configuration. Mac Catalyst
+  /// reads the agent library selection, while the iPhone reads its approved VPN state.
+  var hasActiveConfig: Bool {
+    #if targetEnvironment(macCatalyst)
+      return activeConfigID != nil
+    #else
+      return isTunnelInstalled
+    #endif
   }
 
   /// The derived state of the single Route traffic switch, computed once from the
@@ -595,61 +558,6 @@ final class RelayController {
     }
   }
 
-  // MARK: - Setup actions
-
-  /// Registers the background agent, the install-agent setup action. Mac only; the
-  /// iPhone has no separate agent, so the install state holds it as always present.
-  func installAgent() {
-    logger.notice("relay controller install agent requested")
-    Task { await installState.registerAgent() }
-  }
-
-  /// Opens Login Items so the user can approve a registered-but-pending agent.
-  func openLoginItems() {
-    logger.notice("relay controller open login items requested")
-    installState.openLoginItems()
-  }
-
-  /// Installs the tunnel profile from an imported configuration, the install-tunnel
-  /// setup action. The backend hands it to the platform's start path.
-  func installTunnel(configURL: URL) async {
-    logger.notice("relay controller install tunnel requested")
-    await backend.installTunnel(configURL: configURL)
-  }
-
-  // MARK: - Config library
-
-  // The library list and active id are published properties mirrored from the
-  // status poll (`configLibrary`, `activeConfigID`), so the card reads the same
-  // source as the Relay tile. Mutations go to the backend and the next poll
-  // reflects them.
-
-  /// Loads a stored config's secret text on demand, for the editor only.
-  func loadConfigText(id: UUID) async -> String? {
-    logger.notice("relay controller load config text requested")
-    return await backend.loadConfigText(id: id)
-  }
-
-  /// Imports a picked configuration file, then validates, stores, and applies it.
-  func importConfig(url: URL, name: String) {
-    logger.notice("relay controller import config requested")
-    Task { await backend.importConfig(url: url, name: name) }
-  }
-
-  /// Makes a stored configuration active and applies it. The active id is set optimistically
-  /// so the selection moves on the same frame as the tap; the next status poll reconciles it.
-  func activateConfig(id: UUID) {
-    logger.notice("relay controller activate config requested")
-    activeConfigID = id
-    Task { await backend.activateConfig(id: id) }
-  }
-
-  /// Saves edited configuration text and reloads it when it is the active config.
-  func saveConfigEdit(id: UUID, text: String) {
-    logger.notice("relay controller save config edit requested")
-    Task { await backend.saveConfigEdit(id: id, text: text) }
-  }
-
   /// Spaces polls without `Task.sleep` by resuming off a dispatch queue after the
   /// configured interval.
   private static func delayBetweenPolls() async {
@@ -700,43 +608,6 @@ extension RelayController {
     Task { @MainActor [weak self] in
       await self?.backend.selectPeer(id: first.id)
       self?.autoSelectInFlight = false
-    }
-  }
-}
-
-// MARK: - Config operations
-
-extension RelayController {
-  /// Deletes a stored configuration.
-  func deleteConfig(id: UUID) {
-    logger.notice("relay controller delete config requested")
-    Task { await backend.deleteConfig(id: id) }
-  }
-
-  /// Renames a stored configuration without touching tunnel state.
-  func renameConfig(id: UUID, name: String) {
-    logger.notice("relay controller rename config requested")
-    Task { await backend.renameConfig(id: id, name: name) }
-  }
-
-  /// Creates a stored configuration from raw text without leaving it active, for the
-  /// new-config flow. The agent activates a config on import, so the previously active
-  /// config is restored afterward to keep New from stealing the current selection.
-  func createConfig(name: String, text: String) {
-    logger.notice("relay controller create config requested")
-    let previousActiveID = activeConfigID
-    // Pin the prior active id only when there is one to preserve, so the poll holds
-    // the checkmark in place until the restore lands; with no prior active config the
-    // newly imported one stays active and no restore runs.
-    if previousActiveID != nil {
-      pinnedActiveConfigID = previousActiveID
-    }
-    Task {
-      await backend.importConfig(name: name, text: text)
-      if let previousActiveID {
-        await backend.activateConfig(id: previousActiveID)
-      }
-      pinnedActiveConfigID = nil
     }
   }
 }

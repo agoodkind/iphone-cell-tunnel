@@ -44,12 +44,6 @@
       runtime.start()
     }
 
-    /// The simulator hosts the relay in process, so launch gating always proceeds.
-    func tunnelProvisioned() async -> Bool {
-      await Task.yield()
-      return true
-    }
-
     // MARK: - Sampling
 
     func sample() async -> RelayStatusSample? {
@@ -88,18 +82,6 @@
       await Task.yield()
     }
 
-    // MARK: - Tunnel install
-
-    // The in-process relay needs no saved profile and no WireGuard config, so the
-    // install action just brings the runtime up.
-    func installTunnel(configURL _: URL) async {
-      await Task.yield()
-      logger.notice("simulator relay backend install tunnel: starting runtime")
-      runtime.start()
-    }
-
-    // The in-process simulator relay hosts no config library, so it takes the shared
-    // no-op config-op defaults from RelayControlBackend.
   }
 
 #endif

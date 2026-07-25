@@ -20,12 +20,6 @@ final class PreviewRelayBackend: RelayControlBackend {
     await Task.yield()
   }
 
-  /// Previews have no platform setup gate, so launch gating always proceeds.
-  func tunnelProvisioned() async -> Bool {
-    await Task.yield()
-    return true
-  }
-
   func sample() async -> RelayStatusSample? {
     await Task.yield()
     return nil
@@ -43,10 +37,50 @@ final class PreviewRelayBackend: RelayControlBackend {
     await Task.yield()
   }
 
-  func installTunnel(configURL _: URL) async {
-    await Task.yield()
-  }
-
-  // The preview backend hosts no config library, so it takes the shared no-op config-op
-  // defaults from RelayControlBackend.
 }
+
+#if targetEnvironment(macCatalyst)
+  extension PreviewRelayBackend: ConfigLibraryBackend {
+    func installTunnel(configURL _: URL) async {
+      await Task.yield()
+    }
+
+    func loadConfigText(id _: UUID) async -> String? {
+      await Task.yield()
+      return nil
+    }
+
+    func importConfig(url _: URL, name _: String) async throws {
+      await Task.yield()
+      try Task.checkCancellation()
+    }
+
+    func importConfig(name _: String, text _: String) async throws {
+      await Task.yield()
+      try Task.checkCancellation()
+    }
+
+    func activateConfig(id _: UUID) async {
+      await Task.yield()
+    }
+
+    func saveConfigEdit(id _: UUID, text _: String) async {
+      await Task.yield()
+    }
+
+    func deleteConfig(id _: UUID) async {
+      await Task.yield()
+    }
+
+    func renameConfig(id _: UUID, name _: String) async {
+      await Task.yield()
+    }
+  }
+#else
+  extension PreviewRelayBackend: PhoneTunnelProvisioningBackend {
+    func tunnelProvisioned() async -> Bool {
+      await Task.yield()
+      return true
+    }
+  }
+#endif

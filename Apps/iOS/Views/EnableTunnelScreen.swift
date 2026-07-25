@@ -86,6 +86,7 @@ struct EnableTunnelScreen: View {
     .buttonStyle(.borderedProminent)
     .controlSize(.large)
     .frame(minWidth: buttonMinWidth)
+    .cellTunnelAccessibilityIdentifier(.vpnApproval)
   }
 }
 
