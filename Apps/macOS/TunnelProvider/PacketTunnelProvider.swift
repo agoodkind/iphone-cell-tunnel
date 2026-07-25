@@ -308,7 +308,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       )
       return
     }
-    super.setTunnelNetworkSettings(settings) { error in
+    super.setTunnelNetworkSettings(settings) { [weak self] error in
       if let error {
         logger.error(
           """
@@ -319,6 +319,17 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
         return
       }
       logger.notice("route state applied installed=\(installed, privacy: .public)")
+      // On a fresh start the gate holds captured routes back until the iPhone link
+      // is up, so the tunnel establishes with no captured routes and comes up
+      // non-primary. On a multi-homed Mac this first apply of the default route
+      // installs the route but does not re-elect the tunnel as the primary
+      // default, so non-scoped traffic keeps egressing through a physical uplink.
+      // Re-assert the settings once, through the recording override so the routes
+      // stay gated, to make macOS promote the tunnel to primary the way the
+      // in-place reload path does. Only when installing captured routes.
+      if installed {
+        self?.setTunnelNetworkSettings(settings, completionHandler: nil)
+      }
     }
   }
 
