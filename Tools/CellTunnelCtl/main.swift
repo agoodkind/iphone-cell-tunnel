@@ -41,6 +41,7 @@ enum CellTunnelCtl {
       let action = try TunnelControlCLIAction.parse(arguments: arguments)
       let executor = TunnelControlCLIExecutor(
         client: client,
+        configImportFileLoader: MacOSConfigImportFileLoader(),
         probeRunner: ProcessSmokeProbeRunner()
       )
       let output = try await executor.run(action: action)
