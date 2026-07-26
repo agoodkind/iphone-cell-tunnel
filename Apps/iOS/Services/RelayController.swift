@@ -91,6 +91,14 @@ struct RelayStatusSample: Sendable {
   var configLibrary: [TunnelConfigSummary]
   /// The id of the active config in `configLibrary`, the one the running tunnel uses.
   var activeConfigID: UUID?
+  /// The bytes the Mac has sent and received through the relay, in the directions a
+  /// person reads them. The relay's two ends count opposite directions under the
+  /// same names: the Mac counts bytes arriving from the WireGuard server as its
+  /// download, while the iPhone counts bytes it forwards to the Mac as the Mac's
+  /// download. Resolving that here, where the producer is known, lets the speed and
+  /// lifetime figures share one mapping on both platforms.
+  var uploadBytes: UInt64
+  var downloadBytes: UInt64
 
   /// Maps a daemon status snapshot to one sample. Every backend builds its sample
   /// here, so the snapshot-to-sample mapping lives in one place; a backend applies
@@ -128,6 +136,18 @@ struct RelayStatusSample: Sendable {
     relayServerIPv6Address = snapshot.relayServerIPv6Address
     configLibrary = snapshot.configLibrary ?? []
     activeConfigID = snapshot.activeConfigID
+    if let phoneCounters = snapshot.phoneCounters {
+      // The iPhone forwards for the Mac, so bytes it receives from the Mac are the
+      // Mac's upload and bytes it sends to the Mac are the Mac's download.
+      uploadBytes = phoneCounters.relayBytesIn
+      downloadBytes = phoneCounters.relayBytesOut
+    } else {
+      // The Mac counts its own traffic, so bytes leaving for the server are upload
+      // and bytes arriving from it are download.
+      let macCounters = snapshot.macCounters ?? TunnelCounters()
+      uploadBytes = macCounters.relayBytesOut
+      downloadBytes = macCounters.relayBytesIn
+    }
   }
 }
 
@@ -420,11 +440,9 @@ final class RelayController {
     assign(\.connectedPeerName, sample.connectedPeerName)
     assign(\.backendCellularPath, sample.cellularPath)
     assign(\.counters, sample.counters)
-    // `relayBytesOut` leaves the Mac (transferred/sent) and `relayBytesIn` arrives
-    // at the Mac (received).
     let lifetime = lifetimeStore.totals(
-      sessionTransferred: sample.counters.relayBytesOut,
-      sessionReceived: sample.counters.relayBytesIn
+      sessionTransferred: sample.uploadBytes,
+      sessionReceived: sample.downloadBytes
     )
     assign(\.lifetimeTransferredBytes, lifetime.transferred)
     assign(\.lifetimeReceivedBytes, lifetime.received)
@@ -461,7 +479,8 @@ final class RelayController {
       assign(\.activeConfigID, pinnedActiveConfigID ?? sample.activeConfigID)
     #endif
     recomputeDeviceValues()
-    let rate = throughput.update(with: sample.counters)
+    let rate = throughput.update(
+      uploadBytes: sample.uploadBytes, downloadBytes: sample.downloadBytes)
     assign(\.uploadMbps, rate.upload)
     assign(\.downloadMbps, rate.download)
     logger.debug("relay controller sample applied running=\(self.isRunning, privacy: .public)")

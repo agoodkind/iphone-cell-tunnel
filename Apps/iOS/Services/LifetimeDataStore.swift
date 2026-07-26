@@ -33,6 +33,7 @@ struct LifetimeDataTotals: Equatable {
 struct LifetimeDataStore {
   private static let transferredKey = "lifetimeRelayBytesTransferredBase"
   private static let receivedKey = "lifetimeRelayBytesReceivedBase"
+  private static let directionsCorrectedKey = "lifetimeRelayBytesDirectionsCorrected"
 
   private let defaults: UserDefaults
   private var lastSessionTransferred: UInt64 = 0
@@ -40,6 +41,23 @@ struct LifetimeDataStore {
 
   init(suiteName: String = cellTunnelAppGroupIdentifier) {
     defaults = UserDefaults(suiteName: suiteName) ?? .standard
+    correctStoredDirectionsIfNeeded()
+  }
+
+  /// Moves already-stored totals to the direction they actually describe, once.
+  /// Earlier readings accumulated bytes arriving at this device under the
+  /// transferred base and bytes leaving it under the received base, so without
+  /// this the historical figures stay attached to the wrong direction and mix
+  /// with correctly directed new traffic.
+  private func correctStoredDirectionsIfNeeded() {
+    guard !defaults.bool(forKey: Self.directionsCorrectedKey) else {
+      return
+    }
+    let storedTransferred = storedBase(Self.transferredKey)
+    let storedReceived = storedBase(Self.receivedKey)
+    persistBase(Self.transferredKey, storedReceived)
+    persistBase(Self.receivedKey, storedTransferred)
+    defaults.set(true, forKey: Self.directionsCorrectedKey)
   }
 
   /// Returns the lifetime transferred and received totals for a new per-session
