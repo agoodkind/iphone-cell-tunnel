@@ -48,10 +48,16 @@
     // MARK: - Body
 
     var body: some View {
+      GeometryReader { proxy in
+        statusContent(parentContentSize: proxy.size)
+      }
+    }
+
+    private func statusContent(parentContentSize: CGSize) -> some View {
       ScrollView {
         VStack(alignment: .leading, spacing: contentPadding) {
           header
-          masonry
+          masonry(parentContentSize: parentContentSize)
           #if DEBUG
             if UITestFixture.isEnabled {
               Text(UITestFixture.scrollRecoveryMarkerTitle)
@@ -144,7 +150,7 @@
     // distribute into whichever column is shorter, so every card packs tightly with no gap
     // under a short card. Configs seeds the left column and Peers the right, so their
     // positions stay stable while the status tiles balance the column heights.
-    private var masonry: some View {
+    private func masonry(parentContentSize: CGSize) -> some View {
       let columns = distribute(
         tiles,
         into: columnCount,
@@ -153,7 +159,7 @@
       return HStack(alignment: .top, spacing: gridSpacing) {
         ForEach(Array(columns.enumerated()), id: \.offset) { index, column in
           VStack(spacing: gridSpacing) {
-            leadCard(forColumn: index)
+            leadCard(forColumn: index, parentContentSize: parentContentSize)
             ForEach(column) { section in
               tile(section)
             }
@@ -165,9 +171,12 @@
 
     // The lead card atop each column: the Configs library on the left, the Peers roster on
     // the right.
-    @ViewBuilder private func leadCard(forColumn index: Int) -> some View {
+    @ViewBuilder private func leadCard(
+      forColumn index: Int,
+      parentContentSize: CGSize
+    ) -> some View {
       if index == 0 {
-        ConfigLibraryView()
+        ConfigLibraryView(parentContentSize: parentContentSize)
       } else {
         RelayRosterView(
           peers: model.connectedPeers,

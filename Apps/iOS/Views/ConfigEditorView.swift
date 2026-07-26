@@ -15,8 +15,6 @@
 
   private let configEditorCancelTitle = "Cancel"
   private let configEditorSaveTitle = "Save"
-  private let configEditorEditTitle = "Edit"
-  private let configEditorDoneTitle = "Done"
   private let configEditorNameSectionTitle = "Name"
   private let configEditorConfigSectionTitle = "Configuration"
   private let configEditorNamePlaceholder = "Config Name"
@@ -24,6 +22,10 @@
   private let configEditorNewConfigName = "New Config"
   private let configEditorMinWidth: CGFloat = 460
   private let configEditorMinHeight: CGFloat = 520
+  private let configEditorIdealWidth: CGFloat = 640
+  private let configEditorIdealHeight: CGFloat = 720
+  private let configEditorDefaultParentWidth: CGFloat = 760
+  private let configEditorDefaultParentHeight: CGFloat = 520
   private let configEditorContentInset: CGFloat = 20
   private let configEditorBlockPadding: CGFloat = 16
   private let configEditorBlockCornerRadius: CGFloat = 10
@@ -45,20 +47,19 @@
 
   /// Edits one stored WireGuard config in a sheet. The agent owns the config text, so
   /// the editor fetches it on demand from the summary's id rather than holding it. It
-  /// shows the masked `ConfigReadView` by default and swaps to the plain `ConfigEditView`
-  /// while editing. Neither the read nor the edit surface uses a `Form`: on Mac Catalyst
-  /// a `Form` is a list, and a `TextEditor` hosted in a list cell stops accepting input
-  /// and resets its scroll, so the two surfaces are laid out directly here instead. Save
+  /// presents the plain `ConfigEditView` as soon as it loads. It does not use a `Form`:
+  /// on Mac Catalyst a `Form` is a list, and a `TextEditor` hosted in a list cell stops
+  /// accepting input and resets its scroll, so the editor is laid out directly here. Save
   /// stays disabled until the text has loaded, so a failed fetch cannot overwrite the
   /// stored config with empty text.
   struct ConfigEditorView: View {
     /// The config being edited, or nil when composing a new config.
     let config: TunnelConfigSummary?
+    let parentContentSize: CGSize
     @Environment(RelayController.self) private var controller
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
     @State private var loaded = false
-    @State private var editing = false
     @State private var newName = ""
     @State private var didAttemptLoad = false
 
@@ -76,8 +77,16 @@
             toolbarContent
           }
       }
-      .frame(minWidth: configEditorMinWidth, minHeight: configEditorMinHeight)
+      .frame(
+        minWidth: configEditorMinWidth,
+        idealWidth: configEditorIdealWidth,
+        maxWidth: .infinity,
+        minHeight: configEditorMinHeight,
+        idealHeight: configEditorIdealHeight,
+        maxHeight: .infinity
+      )
       .cellTunnelAccessibilityIdentifier(.configEditor)
+      .frame(width: editorContentSize.width, height: editorContentSize.height)
     }
 
     // MARK: - Content
@@ -104,6 +113,19 @@
       .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
+    private var editorContentSize: CGSize {
+      CGSize(
+        width: max(
+          configEditorMinWidth,
+          parentContentSize.width - configEditorDefaultParentWidth + configEditorIdealWidth
+        ),
+        height: max(
+          configEditorMinHeight,
+          parentContentSize.height - configEditorDefaultParentHeight + configEditorIdealHeight
+        )
+      )
+    }
+
     private func sectionLabel(_ title: String) -> some View {
       Text(title)
         .font(.subheadline.weight(.semibold))
@@ -124,12 +146,13 @@
       }
     }
 
-    /// The configuration body: the masked read view, or the plain editor while editing.
+    /// The configuration body exposes the editable draft only after its text has loaded.
     @ViewBuilder private var configBody: some View {
-      if editing {
+      if loaded {
         ConfigEditView(text: $text)
       } else {
-        ConfigReadView(text: text)
+        ProgressView()
+          .frame(maxWidth: .infinity, maxHeight: .infinity)
       }
     }
 
@@ -153,13 +176,6 @@
         }
         .fixedSize()
       }
-      if config != nil {
-        ToolbarItem(placement: .primaryAction) {
-          Button(editing ? configEditorDoneTitle : configEditorEditTitle) {
-            editing.toggle()
-          }
-        }
-      }
       ToolbarItem(placement: .confirmationAction) {
         Button(configEditorSaveTitle) {
           saveAndDismiss()
@@ -171,10 +187,8 @@
 
     // MARK: - Actions
 
-    /// Loads the config text exactly once. Without a `Form` the container identity
-    /// changes when the read and edit surfaces swap, so the guard stops a re-run from
-    /// overwriting in-progress edits with the stored text. A new config seeds the
-    /// starter template and opens straight into edit mode.
+    /// Loads the config text exactly once so a re-run cannot overwrite an in-progress
+    /// draft. A new config seeds the starter template and enables Save immediately.
     private func loadConfigOnce() async {
       if didAttemptLoad {
         return
@@ -189,7 +203,6 @@
         }
       } else {
         text = Self.newConfigTemplate()
-        editing = true
         loaded = true
       }
     }

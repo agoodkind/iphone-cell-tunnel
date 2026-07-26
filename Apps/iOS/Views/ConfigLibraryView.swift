@@ -52,6 +52,7 @@
   /// card, outside the grey tile. New opens the editor on a blank config and creates it on
   /// save without stealing the active selection.
   struct ConfigLibraryView: View {
+    let parentContentSize: CGSize
     @Environment(RelayController.self) private var controller
     @State private var presentation = ConfigLibraryPresentation.idle
     @State private var activeImportRequestID: UUID?
@@ -304,9 +305,9 @@
     ) -> some View {
       switch presentation {
       case .creating:
-        ConfigEditorView(config: nil)
+        ConfigEditorView(config: nil, parentContentSize: parentContentSize)
       case .editing(let config):
-        ConfigEditorView(config: config)
+        ConfigEditorView(config: config, parentContentSize: parentContentSize)
       case .idle, .importing, .renaming, .importFailure:
         EmptyView()
       }

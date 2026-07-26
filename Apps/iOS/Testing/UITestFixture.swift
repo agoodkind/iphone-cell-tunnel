@@ -69,6 +69,7 @@
   @MainActor
   private final class UITestFixtureBackend: RelayControlBackend {
     private let isTunnelProvisioned: Bool
+    private var configText = "[Interface]\nAddress = 10.0.0.2/32"
     private let config = TunnelConfigSummary(
       id: UITestFixture.fixtureConfigIdentifier,
       name: "Fixture Config",
@@ -111,7 +112,7 @@
 
       func loadConfigText(id _: UUID) async -> String? {
         await Task.yield()
-        return "[Interface]\nAddress = 10.0.0.2/32"
+        return configText
       }
 
       func importConfig(url _: URL, name _: String) async {
@@ -126,8 +127,9 @@
         await Task.yield()
       }
 
-      func saveConfigEdit(id _: UUID, text _: String) async {
+      func saveConfigEdit(id _: UUID, text: String) async {
         await Task.yield()
+        configText = text
       }
 
       func deleteConfig(id _: UUID) async {
