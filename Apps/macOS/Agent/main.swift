@@ -18,6 +18,15 @@ import ServiceManagement
 private let logger = CellTunnelLog.logger(category: .daemon)
 
 private let agentIdleTimeoutSeconds: Double = 60
+/// The countdown while the agent is advertising and no phone has connected. Long
+/// enough that a person can pick up their phone, unlock it, and open the app, and
+/// short enough that an attempt nobody completes still releases the agent.
+private let agentAdvertisingTimeoutSeconds: Double = 900
+/// How long to wait when a relay is hosted but its phone link is momentarily
+/// down, which is the usual shape of a failover between interfaces.
+private let agentLinkGraceSeconds: Double = 30
+/// How many of those short waits to allow before deciding the phone is gone.
+private let agentLinkGraceRounds = 4
 
 // MARK: - AgentRuntime
 
@@ -25,7 +34,19 @@ final class AgentRuntime: @unchecked Sendable {
   private let controller: AgentTunnelController
   private let idleQueue = DispatchQueue(label: "io.goodkind.celltunnel.agent.idle")
   private var idleTimer: DispatchSourceTimer?
-  private var relayActive = false
+  private var work: AgentWork = .idle
+  /// Asked before exiting, so neither a bridge that failed after reporting itself
+  /// hosted nor a phone that walked away can keep the agent alive with nothing to
+  /// protect.
+  private var phoneToStrandCheck: (@Sendable () async -> Bool)?
+  /// Asked alongside it, so a hosted relay in a brief link gap is told apart from
+  /// one whose phone has actually gone.
+  private var relayHostedCheck: (@Sendable () async -> Bool)?
+  /// Bumped on every arming, so a check still in flight from an earlier expiry
+  /// cannot exit after a newer wait has begun.
+  private var countdownGeneration: UInt64 = 0
+  /// Consecutive short waits already spent on a hosted relay with no phone link.
+  private var linkGraceRounds = 0
   private var sessionListener: AgentSessionListener?
 
   init(controller: AgentTunnelController) {
@@ -44,24 +65,28 @@ final class AgentRuntime: @unchecked Sendable {
       self?.resetIdleTimer()
     }
     self.sessionListener = listener
-    listener.start()
     resetIdleTimer()
-    wireRelayActivityHold()
-    logger.notice(
-      "agent listener resumed machService=\(agentMachServiceName, privacy: .public)"
-    )
-  }
-
-  // Hands the controller a hold so the agent does not idle-terminate while it
-  // hosts an active relay. The agent owns the relay bridge in memory, so exiting
-  // mid-relay would kill the bridge and strand the iPhone link.
-  private func wireRelayActivityHold() {
+    // The hold is installed before the listener serves anything. Serving first
+    // leaves a window where the earliest request signals work in flight into a
+    // handler that is not there yet, and that signal is never repeated, so the
+    // agent would idle out mid-pairing exactly as it did before this hold existed.
     let heldController = self.controller
     let runtime = self
     Task {
-      await heldController.setRelayActiveHandler { [weak runtime] active in
-        runtime?.setRelayActive(active)
+      await heldController.setAgentWorkHandler { [weak runtime] work in
+        runtime?.setAgentWork(work)
       }
+      let checkedController = heldController
+      // Confined to idleQueue like every other mutable field here, because the
+      // timer handler reads them from that queue and this runs on an arbitrary one.
+      runtime.idleQueue.async {
+        runtime.phoneToStrandCheck = { await checkedController.hasPhoneToStrand() }
+        runtime.relayHostedCheck = { await checkedController.isRelayHosted() }
+      }
+      listener.start()
+      logger.notice(
+        "agent listener resumed machService=\(agentMachServiceName, privacy: .public)"
+      )
     }
   }
 
@@ -129,25 +154,18 @@ final class AgentRuntime: @unchecked Sendable {
     }
   }
 
-  // MARK: - Relay activity hold
+  // MARK: - Idle hold
 
-  /// Holds or releases the idle countdown. While the relay is active the agent
-  /// must not exit, so the timer is cancelled and not rescheduled; when the
-  /// relay stops the 60 second countdown resumes.
-  func setRelayActive(_ active: Bool) {
+  /// Records what the agent is doing and re-arms the countdown to match.
+  func setAgentWork(_ newWork: AgentWork) {
     idleQueue.async { [weak self] in
       guard let self else {
         return
       }
-      relayActive = active
-      if active {
-        idleTimer?.cancel()
-        idleTimer = nil
-        logger.notice("agent idle timer held: relay active")
-      } else {
-        logger.notice("agent idle timer resumed: relay inactive")
-        scheduleIdleTimerOnQueue()
-      }
+      work = newWork
+      logger.notice(
+        "agent idle countdown rescheduled work=\(String(describing: newWork), privacy: .public)")
+      scheduleIdleTimerOnQueue()
     }
   }
 
@@ -159,23 +177,82 @@ final class AgentRuntime: @unchecked Sendable {
     }
   }
 
-  /// Runs only on `idleQueue`. Does nothing while the relay-active hold is set,
-  /// so the agent stays alive for the life of the relay.
+  /// Runs only on `idleQueue`. The countdown is always armed, and hosting only
+  /// lengthens it, because a timer that is never armed cannot recover if the state
+  /// it trusted turns out to be stale. Whether the agent actually exits is decided
+  /// when the timer fires, by asking whether a relay is hosted at that moment: a
+  /// live relay reschedules, since the agent owns that bridge in memory and the
+  /// phone's link surfaces no drop, while a stale claim exits as it should.
   private func scheduleIdleTimerOnQueue() {
+    let timeout = work.idleCountdownSeconds(
+      idle: agentIdleTimeoutSeconds, advertising: agentAdvertisingTimeoutSeconds)
+    armTimerOnQueue(after: timeout)
+  }
+
+  /// Runs only on `idleQueue`. Each arming takes the next generation, so an answer
+  /// that arrives after a newer wait began can tell, and leaves the decision to
+  /// that newer wait rather than acting on facts gathered before it.
+  private func armTimerOnQueue(after timeout: Double) {
     idleTimer?.cancel()
-    guard !relayActive else {
-      idleTimer = nil
-      return
-    }
+    countdownGeneration &+= 1
     let timer = DispatchSource.makeTimerSource(queue: idleQueue)
-    timer.schedule(deadline: .now() + agentIdleTimeoutSeconds)
+    timer.schedule(deadline: .now() + timeout)
     timer.setEventHandler { [weak self] in
-      logger.notice("agent idle timeout reached, terminating")
-      self?.shutdown(reason: "idle-timeout")
-      exit(EXIT_SUCCESS)
+      self?.exitIfNoPhoneToStrand()
     }
     timer.resume()
     idleTimer = timer
+  }
+
+  /// Asks the controller what is true right now, rather than reading the work
+  /// state recorded when a start began, because a bridge can fail and a phone can
+  /// leave with nothing announcing either.
+  private func exitIfNoPhoneToStrand() {
+    let strandCheck = phoneToStrandCheck
+    let hostedCheck = relayHostedCheck
+    // Arm the next countdown before asking, so a question that never comes back
+    // leaves a timer running rather than no timer at all. The answer carries the
+    // generation it was asked under, so this re-arming supersedes a late reply
+    // rather than racing it.
+    armTimerOnQueue(after: agentLinkGraceSeconds)
+    let askedUnder = countdownGeneration
+    Task { [weak self] in
+      let strands = await strandCheck?() ?? false
+      let hosted = await hostedCheck?() ?? false
+      guard let self else {
+        return
+      }
+      idleQueue.async {
+        self.decideExitOnQueue(generation: askedUnder, strands: strands, hosted: hosted)
+      }
+    }
+  }
+
+  /// Runs only on `idleQueue`, so the generation it compares cannot change under
+  /// it. A newer generation means a request arrived while the check was in flight,
+  /// and that newer wait is the one entitled to decide.
+  private func decideExitOnQueue(generation: UInt64, strands: Bool, hosted: Bool) {
+    guard generation == countdownGeneration else {
+      return
+    }
+    if strands {
+      linkGraceRounds = 0
+      logger.notice("agent countdown reached, phone linked, waiting again")
+      scheduleIdleTimerOnQueue()
+      return
+    }
+    // A hosted relay whose phone link is momentarily down is usually failing over
+    // between interfaces, which recovers in seconds. Exiting then would kill a
+    // working bridge, so wait briefly a bounded number of times before deciding.
+    if hosted, linkGraceRounds < agentLinkGraceRounds {
+      linkGraceRounds += 1
+      logger.notice("agent countdown reached, relay hosted with no link, waiting briefly")
+      armTimerOnQueue(after: agentLinkGraceSeconds)
+      return
+    }
+    logger.notice("agent countdown reached, nothing to strand, terminating")
+    shutdown(reason: "idle-timeout")
+    exit(EXIT_SUCCESS)
   }
 }
 
