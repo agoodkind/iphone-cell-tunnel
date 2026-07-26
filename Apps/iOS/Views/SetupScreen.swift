@@ -146,7 +146,7 @@
       switch model.status {
       case .noAgent:
         return "Install the background agent"
-      case .noTunnelInstalled:
+      case .noConfigImported:
         return "Import a tunnel configuration"
       case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
         .routing:
@@ -159,7 +159,7 @@
       case .noAgent:
         return "The agent runs in the background so it keeps working "
           + "after the app closes."
-      case .noTunnelInstalled:
+      case .noConfigImported:
         return "Choose a WireGuard configuration file to set up the tunnel."
       case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
         .routing:

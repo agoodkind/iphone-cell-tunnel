@@ -60,180 +60,6 @@ struct ConnectionSection: Identifiable, Equatable {
   var id: String { title }
 }
 
-// MARK: - RelayUITier
-
-/// Which screen the status renders. The two setup states take over the whole screen
-/// with a single guided action; every other state shows the reduced dashboard with
-/// its rows, peers, and action.
-enum RelayUITier: Equatable {
-  case full
-  case reduced
-}
-
-// MARK: - RelayStatus
-
-/// The relay status, the single value the whole status screen renders from. The eight
-/// cases are the canonical states shared by the iPhone and the Mac, a set rather than
-/// a precedence chain. The type owns its UI tier, its label, whether the live speed
-/// shows, and the offered action, so the views never infer state from a pile of
-/// separate flags. The model is peer-keyed: the relay carries nothing until the peer
-/// link is up, so the peer is the gate and a local interface running flag never drives
-/// the status. The labels are neutral placeholders, not final copy, and never use the
-/// banned words.
-enum RelayStatus: Equatable {
-  case error(String)
-  case noActiveConfig
-  case noAgent
-  case noPeerSelected
-  case noPeersFound
-  case noTunnelInstalled
-  case readyToRoute
-  case routing
-
-  /// Builds the status from named, single-purpose inputs. A failure wins; then the
-  /// agent must be present, then a tunnel must be set up: a saved profile on the
-  /// iPhone, an imported configuration on the Mac. An established peer link decides the
-  /// rest before discovery, since a live link means the screen is connected whether or
-  /// not this side browsed for it: a connected peer with no active config is the
-  /// choose-a-config state, then routes installed is the routing state and routes
-  /// withdrawn is ready to route. The split is the agent-confirmed routes, never a
-  /// local running flag, so
-  /// the iPhone and the Mac land on the same state for the same reality. Without a
-  /// link, no discovered peer is the searching state and a discovered-but-unconnected
-  /// peer is the select state. `isAgentInstalled` and `isActiveConfigPresent` (mirrored
-  /// from the saved tunnel) are always true on the iPhone.
-  init(
-    errorMessage: String?,
-    isAgentInstalled: Bool,
-    isTunnelInstalled: Bool,
-    isActiveConfigPresent: Bool,
-    peersFound: Bool,
-    isPeerConnected: Bool,
-    isRouting: Bool
-  ) {
-    if let errorMessage, !errorMessage.isEmpty {
-      self = .error(errorMessage)
-    } else if !isAgentInstalled {
-      self = .noAgent
-    } else if !isTunnelInstalled {
-      self = .noTunnelInstalled
-    } else if isPeerConnected, !isActiveConfigPresent {
-      self = .noActiveConfig
-    } else if isPeerConnected {
-      self = isRouting ? .routing : .readyToRoute
-    } else if !peersFound {
-      self = .noPeersFound
-    } else {
-      self = .noPeerSelected
-    }
-  }
-
-  /// Which screen renders this state: a full guided setup for the two setup states,
-  /// the reduced dashboard for everything else.
-  var uiTier: RelayUITier {
-    switch self {
-    case .noAgent, .noTunnelInstalled:
-      return .full
-    case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
-      .routing:
-      return .reduced
-    }
-  }
-
-  /// The neutral status word shown as the switch's left label and the reduced-tier
-  /// status line.
-  var label: String {
-    switch self {
-    case .error:
-      return "Error"
-    case .noAgent:
-      return "Agent not installed"
-    case .noActiveConfig:
-      return "No config selected"
-    case .noPeerSelected:
-      return "No peer selected"
-    case .noPeersFound:
-      return "Searching for peers"
-    case .noTunnelInstalled:
-      return "No configuration imported"
-    case .readyToRoute:
-      return "Ready to route traffic"
-    case .routing:
-      return "Routing traffic"
-    }
-  }
-
-  /// Whether the live `Current Speed` section shows, only while routing.
-  var showsSpeed: Bool {
-    self == .routing
-  }
-
-  /// The optional offered action for the current state. The ready-to-route and
-  /// routing states offer no action beyond the routing switch itself.
-  var action: RelayHeroAction? {
-    switch self {
-    case .error:
-      return .retry
-    case .noAgent:
-      return .installAgent
-    case .noTunnelInstalled:
-      return .importConfig
-    case .noPeerSelected:
-      return .selectPeer
-    case .noActiveConfig, .noPeersFound, .readyToRoute, .routing:
-      return nil
-    }
-  }
-
-  /// The error message when the status is an error, otherwise nil.
-  var errorMessage: String? {
-    guard case .error(let message) = self else {
-      return nil
-    }
-    return message
-  }
-}
-
-// MARK: - RelayHeroAction
-
-/// The offered call to action for the current state. Each case maps to one controller
-/// operation, so the view holds no branching of its own. `selectPeer` is offered by
-/// the reduced-tier peers list rather than a single button.
-enum RelayHeroAction: Equatable {
-  case importConfig
-  case installAgent
-  case retry
-  case selectPeer
-
-  /// The button title shown in the action row.
-  var title: String {
-    switch self {
-    case .importConfig:
-      return "Import Configuration"
-    case .installAgent:
-      return "Install Agent"
-    case .retry:
-      return "Retry"
-    case .selectPeer:
-      return "Select Peer"
-    }
-  }
-
-  /// The SF Symbol shown beside the action on the setup screen.
-  var systemImage: String {
-    switch self {
-    case .importConfig:
-      return "arrow.down.doc"
-    case .installAgent:
-      return "gearshape.2"
-    case .retry:
-      return "arrow.clockwise"
-    case .selectPeer:
-      return "person.crop.circle.badge.checkmark"
-    }
-  }
-}
-
 // MARK: - RelayScreenModel
 
 /// The one source the status screen renders from, on both the iPhone and the Mac.
@@ -243,32 +69,6 @@ enum RelayHeroAction: Equatable {
 @MainActor
 struct RelayScreenModel {
   let controller: RelayController
-
-  // MARK: - Status
-
-  /// The relay status, built from the controller's published signals through named,
-  /// single-purpose inputs. The relay can carry traffic only with the peer, so the
-  /// peer is the gate; the local interface flag (`isRunning`) is not an input. Both
-  /// screens read `statusLabel` and `status.showsSpeed`.
-  var status: RelayStatus {
-    RelayStatus(
-      errorMessage: controller.lastError,
-      isAgentInstalled: isAgentInstalled,
-      isTunnelInstalled: controller.isTunnelInstalled,
-      isActiveConfigPresent: controller.hasActiveConfig,
-      peersFound: peersAvailable,
-      isPeerConnected: controller.connectedPeerName != nil,
-      isRouting: controller.routeState == .installed
-    )
-  }
-
-  private var isAgentInstalled: Bool {
-    #if targetEnvironment(macCatalyst)
-      return controller.isAgentInstalled
-    #else
-      return true
-    #endif
-  }
 
   /// The status word the screens show, the state's label except while a turn-on
   /// request is in flight, when it reads `Connecting` so the switch and the word
@@ -297,10 +97,16 @@ struct RelayScreenModel {
     controller.isTunnelInstalled
   }
 
-  /// Which screen the status renders: full guided setup or the reduced dashboard.
-  var uiTier: RelayUITier {
-    status.uiTier
-  }
+  #if targetEnvironment(macCatalyst)
+
+    /// Which screen the status renders: full guided setup or the reduced dashboard.
+    /// Only the Mac chooses its screen this way; the iPhone shows its setup screen
+    /// directly from whether a tunnel is saved.
+    var uiTier: RelayUITier {
+      status.uiTier
+    }
+
+  #endif
 
   /// How the single Route traffic switch presents: hidden when no peer can carry
   /// traffic, disabled with a choose-a-config hint when a peer is connected but no
@@ -388,16 +194,22 @@ struct RelayScreenModel {
   /// and the roster count. None selected with no peers reuses the `Searching for peers`
   /// label; none selected with one or more reuses the `No peer selected` label; a
   /// selected peer leaves the subtitle to the screen's own status word, so the tile
-  /// shows only the checked roster. Both strings come from `RelayStatus`, so the
-  /// selector copy cannot drift from the status chokepoint.
+  /// shows only the checked roster. Both strings come from the status, so the
+  /// selector copy cannot drift from the status chokepoint. The roster is a Mac
+  /// surface, so it reads the Mac status; the iPhone hosts no roster and shows no
+  /// subtitle.
   var rosterSubtitle: String? {
     if connectedPeers.contains(where: \.isSelected) {
       return nil
     }
-    if connectedPeers.isEmpty {
-      return RelayStatus.noPeersFound.label
-    }
-    return RelayStatus.noPeerSelected.label
+    #if targetEnvironment(macCatalyst)
+      if connectedPeers.isEmpty {
+        return MacRelayStatus.noPeersFound.label
+      }
+      return MacRelayStatus.noPeerSelected.label
+    #else
+      return nil
+    #endif
   }
 
   /// Selects which dialed-in iPhone the Mac routes egress through, the reduced-tier
@@ -710,4 +522,47 @@ struct RelayScreenModel {
     }
     return value
   }
+}
+
+// MARK: - Status
+
+/// Each platform derives its own status, because the two reach different states from
+/// different facts. The extension keeps that derivation beside the model without
+/// widening the model's own body.
+extension RelayScreenModel {
+  #if targetEnvironment(macCatalyst)
+
+    /// The Mac's status, built from the controller's published signals through named,
+    /// single-purpose inputs. The relay can carry traffic only with the peer, so the
+    /// peer is the gate and the local interface flag is not an input. The screens read
+    /// `statusLabel` and `status.showsSpeed` rather than the cases themselves wherever
+    /// the display does not depend on which case it is.
+    var status: MacRelayStatus {
+      MacRelayStatus(
+        errorMessage: controller.lastError,
+        isAgentInstalled: controller.isAgentInstalled,
+        isConfigImported: controller.isTunnelInstalled,
+        isActiveConfigPresent: controller.hasActiveConfig,
+        peersFound: peersAvailable,
+        isPeerConnected: controller.connectedPeerName != nil,
+        isRouting: controller.routeState == .installed
+      )
+    }
+
+  #else
+
+    /// The iPhone's status, built the same way from the signals the iPhone has. It
+    /// carries no agent or configuration-library input, because the iPhone holds
+    /// neither.
+    var status: PhoneRelayStatus {
+      PhoneRelayStatus(
+        errorMessage: controller.lastError,
+        isTunnelProvisioned: controller.isTunnelInstalled,
+        peersFound: peersAvailable,
+        isPeerConnected: controller.connectedPeerName != nil,
+        isRouting: controller.routeState == .installed
+      )
+    }
+
+  #endif
 }
