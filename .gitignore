@@ -5,6 +5,9 @@ Derived/
 Generated/
 DerivedData/
 dist/
+# Staging directory for a virtual-machine run. Holds built products and, for a
+# live run, WireGuard configs that carry private keys.
+vm-products/
 Products/
 .make/
 **/.make/
