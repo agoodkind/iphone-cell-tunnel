@@ -14,6 +14,7 @@ import Foundation
 /// operation, so the view holds no branching of its own. `selectPeer` is offered by
 /// the reduced-tier peers list rather than a single button.
 enum RelayHeroAction: Equatable {
+  case enableVPN
   case importConfig
   case installAgent
   case retry
@@ -22,6 +23,8 @@ enum RelayHeroAction: Equatable {
   /// The button title shown in the action row.
   var title: String {
     switch self {
+    case .enableVPN:
+      return "Open System Settings"
     case .importConfig:
       return "Import Configuration"
     case .installAgent:
@@ -36,6 +39,8 @@ enum RelayHeroAction: Equatable {
   /// The SF Symbol shown beside the action on the setup screen.
   var systemImage: String {
     switch self {
+    case .enableVPN:
+      return "gearshape"
     case .importConfig:
       return "arrow.down.doc"
     case .installAgent:

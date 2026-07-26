@@ -12,8 +12,15 @@
   import Foundation
   import Observation
   import ServiceManagement
+  import UIKit
 
   private let logger = CellTunnelLog.logger(category: .app)
+
+  /// The System Settings pane that lists Network Extension VPN configurations,
+  /// which is what the tunnel saves. No pane has a documented way to open it, so this
+  /// identifier can stop resolving on a future system.
+  private let vpnSettingsURLString =
+    "x-apple.systempreferences:com.apple.NetworkExtensionSettingsUI.NESettingsUIExtension"
 
   // MARK: - InstallationState
 
@@ -55,6 +62,27 @@
     /// Opens Login Items so the user can approve a registered-but-pending agent.
     func openLoginItems() {
       SMAppService.openSystemSettingsLoginItems()
+    }
+
+    /// Opens Network settings, where a saved VPN profile is switched on and off. The
+    /// system offers no way for an app to switch a profile on for the user, so taking
+    /// them there is the whole of what the app can do.
+    func openVPNSettings() {
+      guard let url = URL(string: vpnSettingsURLString) else {
+        logger.error("vpn settings url malformed recovery=user-opens-settings-manually")
+        return
+      }
+      // The completion reports false only when nothing on the system handles the URL
+      // scheme at all. System Settings claims this scheme, so a stale pane identifier
+      // still reports success and simply lands the user on another pane. The screen's
+      // steps are what carry them the rest of the way, which is why they do not
+      // assume which pane opened.
+      UIApplication.shared.open(url) { opened in
+        guard !opened else {
+          return
+        }
+        logger.error("vpn settings open refused recovery=user-opens-settings-manually")
+      }
     }
   }
 

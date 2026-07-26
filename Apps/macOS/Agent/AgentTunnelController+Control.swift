@@ -257,9 +257,16 @@ extension AgentTunnelController {
 
   /// Fills the served snapshot with the agent-side link and public-address fields,
   /// the same `Connection`, `Device / Public`, and `Peer / Public` rows the iPhone
-  /// reports, which the Mac extension's snapshot does not carry.
-  func augmented(_ status: TunnelDaemonStatusSnapshot) -> TunnelDaemonStatusSnapshot {
+  /// reports, which the Mac extension's snapshot does not carry. The saved profile's
+  /// state belongs here for the same reason: the provider inside the tunnel cannot
+  /// see whether the profile is switched on, so a snapshot forwarded from a running
+  /// tunnel would otherwise report nothing for it.
+  func augmented(
+    _ status: TunnelDaemonStatusSnapshot,
+    profileState: TunnelVPNProfileState?
+  ) -> TunnelDaemonStatusSnapshot {
     var merged = status
+    merged.vpnProfileState = profileState
     let link = linkInfo.withLock { $0 }
     merged.localLinkInterfaceName = link.interfaceName
     merged.localLinkClass = link.linkClass
@@ -280,7 +287,10 @@ extension AgentTunnelController {
     merged.configDrift = configDriftMessage
     // Surface a failed detached relay start so the app reverts the switch and shows
     // the error. A provider-reported error already on the snapshot takes precedence.
-    if merged.lastError == nil {
+    // A switched-off profile explains the failure and carries an action of its own, so
+    // the stale start error is withheld there rather than outranking it and leaving a
+    // routing control the user cannot make work.
+    if merged.lastError == nil, profileState != .disabled {
       merged.lastError = lastStartError
     }
     return merged
@@ -342,6 +352,9 @@ extension AgentTunnelController {
         return
       }
       routingEnabled = true
+      // Claimed before the first suspension, so an unavailable-profile notification
+      // arriving while the intent is being announced cannot cancel this start.
+      settlingStartGeneration = generation
       lastStartError = nil
       await controlListener?.sendRoutingIntent(true)
       logger.notice(
@@ -359,6 +372,9 @@ extension AgentTunnelController {
   func disableRouting() async {
     routingGeneration += 1
     routingEnabled = false
+    // Any start this supersedes is no longer settling, and clearing here means a start
+    // that stalls before it runs cannot strand the routing-intent reconciliation.
+    settlingStartGeneration = nil
     lastStartError = nil
     await controlListener?.sendRoutingIntent(false)
     logger.notice("agent routing disabled recovery=stop-session-and-relay")
@@ -379,6 +395,7 @@ extension AgentTunnelController {
       "agent routing enable starting relay detached configID=\(configID.uuidString, privacy: .public)"
     )
     let previous = relayStartTask
+    settlingStartGeneration = generation
     relayStartTask = Task { [weak self] in
       await previous?.value
       await self?.runRelayStart(configText: configText, configID: configID, generation: generation)
@@ -389,6 +406,13 @@ extension AgentTunnelController {
   /// waited for the prior start to finish bows out here before doing any work, so two
   /// `startTunnel` runs never overlap.
   private func runRelayStart(configText: String, configID: UUID, generation: Int) async {
+    // Only the start that staked this claim releases it, so a superseded start cannot
+    // clear the claim a newer one is relying on.
+    defer {
+      if settlingStartGeneration == generation {
+        settlingStartGeneration = nil
+      }
+    }
     guard generation == routingGeneration else {
       return
     }

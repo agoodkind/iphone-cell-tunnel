@@ -29,6 +29,17 @@ public enum TunnelPeerState: String, Codable, Equatable, Sendable {
   case wireGuardConfigured = "wireguard-configured"
 }
 
+// MARK: - TunnelVPNProfileState
+
+/// The saved Mac VPN profile as the agent finds it. `absent` means no profile is
+/// saved, `disabled` means one exists but the user switched it off so routing
+/// cannot start, and `enabled` means it is ready to carry traffic.
+public enum TunnelVPNProfileState: String, Codable, Equatable, Sendable {
+  case absent
+  case disabled
+  case enabled
+}
+
 // MARK: - TunnelDiscoveryPhase
 
 public enum TunnelDiscoveryPhase: String, Codable, Equatable, Sendable {
@@ -243,6 +254,11 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
   /// library's active selection, or `nil` when they agree. Set only by the Mac
   /// agent's boot assertion; never indicates a mutation, only a surfaced drift.
   public var configDrift: String?
+  /// The saved Mac VPN profile's state, so the app can tell a profile the user
+  /// switched off from one ready to carry traffic and offer to re-enable it
+  /// rather than a routing switch that cannot take effect. `nil` from a producer
+  /// that predates the field or holds no profile.
+  public var vpnProfileState: TunnelVPNProfileState?
 
   public init(
     running: Bool = false,
@@ -275,7 +291,8 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     connectedPeers: [ConnectedPeer]? = nil,
     configLibrary: [TunnelConfigSummary]? = nil,
     activeConfigID: UUID? = nil,
-    configDrift: String? = nil
+    configDrift: String? = nil,
+    vpnProfileState: TunnelVPNProfileState? = nil
   ) {
     self.running = running
     self.routeState = routeState
@@ -308,6 +325,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     self.configLibrary = configLibrary
     self.activeConfigID = activeConfigID
     self.configDrift = configDrift
+    self.vpnProfileState = vpnProfileState
   }
 
   public var renderedOutput: String {
@@ -356,6 +374,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     }
     if let phoneCounters {
       lines.append(contentsOf: renderedCounterLines(phoneCounters, prefix: "phone"))
+    }
+    if let vpnProfileState {
+      lines.append("vpn_profile=\(vpnProfileState.rawValue)")
     }
     if let lastError, !lastError.isEmpty {
       lines.append("last_error=\(lastError)")

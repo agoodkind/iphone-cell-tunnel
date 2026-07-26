@@ -126,10 +126,16 @@ extension AgentTunnelController {
   func handleStatus() async -> AgentControlResponse {
     do {
       let loadedManager = try await loadOrCreateManager()
+      let profileState = await currentProfileState()
       guard isSessionActive(on: loadedManager) else {
-        return AgentControlResponse(status: augmented(snapshot(from: loadedManager)))
+        return AgentControlResponse(
+          status: augmented(
+            snapshot(from: loadedManager, profileState: profileState),
+            profileState: profileState
+          )
+        )
       }
-      return try await forwardStatus(on: loadedManager)
+      return try await forwardStatus(on: loadedManager, profileState: profileState)
     } catch {
       logger.error(
         """
@@ -266,7 +272,8 @@ extension AgentTunnelController {
         "agent tunnel start requested configID=\(configID.uuidString, privacy: .public)")
       await waitForSessionConnected(on: loadedManager)
       configDriftMessage = nil
-      return try await forwardStatus(on: loadedManager)
+      return try await forwardStatus(
+        on: loadedManager, profileState: await currentProfileState())
     } catch {
       logger.error(
         """
@@ -285,7 +292,13 @@ extension AgentTunnelController {
       stopSession(on: loadedManager)
       await stopRelay()
       logger.notice("agent tunnel stop requested")
-      return AgentControlResponse(status: augmented(snapshot(from: loadedManager)))
+      let profileState = await currentProfileState()
+      return AgentControlResponse(
+        status: augmented(
+          snapshot(from: loadedManager, profileState: profileState),
+          profileState: profileState
+        )
+      )
     } catch {
       logger.error(
         """
@@ -306,6 +319,7 @@ extension AgentTunnelController {
     // up, and awaiting the task leaves a stable stopped state.
     routingGeneration += 1
     routingEnabled = false
+    settlingStartGeneration = nil
     relayStartTask?.cancel()
     await relayStartTask?.value
     relayStartTask = nil
@@ -350,13 +364,22 @@ extension AgentTunnelController {
     }
   }
 
+  /// Serves the running tunnel's own status, filled out with the agent-side fields
+  /// the provider cannot see. The profile state is passed in rather than read here,
+  /// so one status request reads the saved profile once.
   func forwardStatus(
-    on manager: NETunnelProviderManager
+    on manager: NETunnelProviderManager,
+    profileState: TunnelVPNProfileState?
   ) async throws -> AgentControlResponse {
     let response = try await forward(request: .status, on: manager, operationName: "status")
     if let status = response.status {
-      return AgentControlResponse(status: augmented(status))
+      return AgentControlResponse(status: augmented(status, profileState: profileState))
     }
-    return AgentControlResponse(status: augmented(snapshot(from: manager)))
+    return AgentControlResponse(
+      status: augmented(
+        snapshot(from: manager, profileState: profileState),
+        profileState: profileState
+      )
+    )
   }
 }

@@ -129,6 +129,14 @@ actor AgentTunnelController {
   /// The in-flight detached relay start. The next start awaits it so two starts never
   /// run concurrently, and a superseded start bows out on the generation check.
   var relayStartTask: Task<Void, Never>?
+  /// The routing generation of the start that is between requested and settled, or nil
+  /// when none is. The saved profile can report itself unavailable partway through a
+  /// start, before the system has finished enabling it, so the observer that drops the
+  /// routing intent stands down while this is set rather than cancelling the start the
+  /// user just asked for. It records the generation rather than a plain flag so that an
+  /// on, off, on sequence cannot have the first start's cleanup clear the claim staked
+  /// by the third.
+  var settlingStartGeneration: Int?
 
   /// Whether a phone relay link is up, tracked from the relay bridge so a routing
   /// change installs or withdraws routes against the live link state.

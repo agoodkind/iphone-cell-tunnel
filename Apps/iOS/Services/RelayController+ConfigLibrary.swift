@@ -21,6 +21,12 @@
       Task { await installState.registerAgent() }
     }
 
+    /// Opens Network settings so the user can switch a disabled VPN profile back on.
+    func openVPNSettings() {
+      configLibraryLogger.notice("relay controller open vpn settings requested")
+      installState.openVPNSettings()
+    }
+
     /// Opens Login Items so the user can approve a registered-but-pending agent.
     func openLoginItems() {
       configLibraryLogger.notice("relay controller open login items requested")
