@@ -31,9 +31,9 @@
 
   /// The full-tier setup screen, shared by the iPhone and the Mac. It shows a single SF
   /// Symbol, a title, a one-sentence subtitle, and one primary button driven by the
-  /// status's offered action: install the agent or import and install the tunnel. The
-  /// reduced dashboards render every other state, so this view only handles the two
-  /// install states.
+  /// status's offered action: install the agent or import a configuration. The reduced
+  /// dashboards render every other state, so this view only handles the two setup
+  /// states.
   struct SetupScreen: View {
     @Environment(RelayController.self) private var controller
     @State private var isImportingConfig = false
@@ -114,10 +114,10 @@
 
     private func performAction() {
       switch model.heroAction {
+      case .importConfig:
+        isImportingConfig = true
       case .installAgent:
         model.installAgent()
-      case .installTunnel:
-        isImportingConfig = true
       case .retry, .selectPeer, .none:
         break
       }
@@ -147,7 +147,7 @@
       case .noAgent:
         return "Install the background agent"
       case .noTunnelInstalled:
-        return "Install the tunnel"
+        return "Import a tunnel configuration"
       case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
         .routing:
         return model.status.label
@@ -160,7 +160,7 @@
         return "The agent runs in the background so it keeps working "
           + "after the app closes."
       case .noTunnelInstalled:
-        return "Import a tunnel configuration to get started."
+        return "Choose a WireGuard configuration file to set up the tunnel."
       case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
         .routing:
         return ""
