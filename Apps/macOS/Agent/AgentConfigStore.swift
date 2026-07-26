@@ -124,6 +124,18 @@ final class AgentConfigStore: TunnelConfigStore {
     }
   }
 
+  /// Drops the active selection, keeping every stored config. Reset uses this so a
+  /// library that outlives the removed VPN profile reports none active.
+  func clearActive() {
+    do {
+      try deleteItem(account: agentConfigStoreActiveAccount)
+    } catch {
+      agentConfigStoreLogger.error(
+        "agent config store clear-active failed recovery=leave-active-unchanged"
+      )
+    }
+  }
+
   // MARK: - Keychain helpers
 
   /// Writes one generic-password item, updating it first and adding it if missing.

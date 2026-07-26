@@ -187,17 +187,6 @@ extension AgentTunnelController {
     }
   }
 
-  /// Removes every stored config, the factory-state clear the reset path uses.
-  func clearConfigLibrary() {
-    for config in configStore.list() {
-      do {
-        try configStore.delete(id: config.id)
-      } catch {
-        logger.error("agent config library clear failed recovery=continue")
-      }
-    }
-  }
-
   // MARK: - Helpers
 
   /// The default library name for a config started by path, the file basename

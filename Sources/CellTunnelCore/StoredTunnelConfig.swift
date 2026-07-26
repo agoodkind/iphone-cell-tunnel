@@ -67,6 +67,9 @@ public protocol TunnelConfigStore {
   func rename(id: UUID, name: String) throws
   func delete(id: UUID) throws
   func setActive(id: UUID)
+  /// Drops the active selection while keeping every stored config, so a library
+  /// with no running tunnel reports none active.
+  func clearActive()
 }
 
 // MARK: - TunnelConfigStore conveniences
@@ -180,6 +183,10 @@ public final class InMemoryTunnelConfigStore: TunnelConfigStore {
       return
     }
     active = id
+  }
+
+  public func clearActive() {
+    active = nil
   }
 }
 

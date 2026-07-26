@@ -319,7 +319,12 @@ extension AgentTunnelController {
       clearManager()
       lastStartError = nil
       EgressSelectionStore.clear()
-      clearConfigLibrary()
+      // Reset removes the saved VPN profile and session state but keeps the config
+      // library, so it does not lose the user's imported configs. The active
+      // selection is dropped because the profile it named is gone, so editing a
+      // config afterward cannot try to reload a tunnel that is not running.
+      // Activating a kept config recreates the profile from the library entry.
+      configStore.clearActive()
       replaceStatusObserver(nil)
       logger.notice(
         "agent tunnel reset removed managerCount=\(managers.count, privacy: .public)"
