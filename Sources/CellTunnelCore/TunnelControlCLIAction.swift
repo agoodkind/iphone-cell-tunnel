@@ -214,13 +214,16 @@ public enum ConfigsCommand: Equatable, Sendable {
 
 public struct TunnelControlCLIExecutor: Sendable {
   let client: any TunnelControlClientProtocol
+  let configImportFileLoader: any ConfigImportFileLoading
   let probeRunner: any SmokeProbeRunner
 
   public init(
     client: any TunnelControlClientProtocol,
+    configImportFileLoader: any ConfigImportFileLoading = DirectConfigImportFileLoader(),
     probeRunner: any SmokeProbeRunner = UnavailableSmokeProbeRunner()
   ) {
     self.client = client
+    self.configImportFileLoader = configImportFileLoader
     self.probeRunner = probeRunner
   }
 
@@ -286,11 +289,8 @@ public struct TunnelControlCLIExecutor: Sendable {
       return renderConfigListing(
         configs: snapshot.configLibrary ?? [], activeID: snapshot.activeConfigID)
     case .importFile(let path):
-      let expanded = (path as NSString).expandingTildeInPath
-      let url = URL(fileURLWithPath: expanded)
-      let text = try String(contentsOf: url, encoding: .utf8)
-      let name = url.deletingPathExtension().lastPathComponent
-      let snapshot = try await client.importConfig(name: name, text: text)
+      let file = try await configImportFileLoader.load(path: path)
+      let snapshot = try await client.importConfig(name: file.name, text: file.text)
       return renderConfigListing(
         configs: snapshot.configLibrary ?? [], activeID: snapshot.activeConfigID)
     }
