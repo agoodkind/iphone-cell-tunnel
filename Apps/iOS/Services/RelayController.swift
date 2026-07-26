@@ -99,6 +99,11 @@ struct RelayStatusSample: Sendable {
   /// lifetime figures share one mapping on both platforms.
   var uploadBytes: UInt64
   var downloadBytes: UInt64
+  /// The saved VPN profile as the producer found it, or nil when it could not be
+  /// read or the producer does not report it. Nil is deliberately not the same as
+  /// enabled: a read that failed says nothing about the profile, so the screen keeps
+  /// what it last knew rather than flipping away from the re-enable state.
+  var vpnProfileState: TunnelVPNProfileState?
 
   /// Maps a daemon status snapshot to one sample. Every backend builds its sample
   /// here, so the snapshot-to-sample mapping lives in one place; a backend applies
@@ -148,6 +153,7 @@ struct RelayStatusSample: Sendable {
       uploadBytes = macCounters.relayBytesOut
       downloadBytes = macCounters.relayBytesIn
     }
+    vpnProfileState = snapshot.vpnProfileState
   }
 }
 
@@ -220,6 +226,11 @@ final class RelayController {
 
   /// Whether a tunnel profile is saved, the gate to the install-tunnel setup tier.
   var isTunnelInstalled = false
+
+  /// Whether the saved VPN profile is switched off, the gate to the re-enable setup
+  /// tier. Routing cannot start until the user turns the profile back on, so the
+  /// screen offers that rather than the routing switch.
+  var isVPNProfileDisabled = false
 
   #if targetEnvironment(macCatalyst)
     /// Whether the agent install is registered but awaiting the user's Login Items
@@ -454,6 +465,12 @@ final class RelayController {
     reconcileRouteIntent()
     assign(\.peerState, sample.peerState)
     assign(\.isTunnelInstalled, sample.isTunnelInstalled)
+    // Only a state the producer actually read replaces what the screen knows, so one
+    // failed read cannot swap the re-enable screen for a routing switch that would not
+    // work.
+    if let vpnProfileState = sample.vpnProfileState {
+      assign(\.isVPNProfileDisabled, vpnProfileState == .disabled)
+    }
     assign(\.discoveredPeers, sample.discoveredPeers)
     assign(\.selectedPeerID, sample.selectedPeerID)
     assign(\.discoveryPhase, sample.discoveryPhase)
