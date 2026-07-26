@@ -31,8 +31,16 @@ struct LifetimeDataTotals: Equatable {
 /// plus the live session reading. A session reset shows as the live reading dropping
 /// below the last one.
 struct LifetimeDataStore {
-  private static let transferredKey = "lifetimeRelayBytesTransferredBase"
-  private static let receivedKey = "lifetimeRelayBytesReceivedBase"
+  /// The bases this store reads and writes, each already named for the direction
+  /// the screen shows.
+  private static let transferredKey = "lifetimeRelayBytesUploadBase"
+  private static let receivedKey = "lifetimeRelayBytesDownloadBase"
+
+  /// The bases written before the relay's byte directions were resolved per
+  /// producer. They are read once to seed the current bases and are never
+  /// written again.
+  private static let priorTransferredKey = "lifetimeRelayBytesTransferredBase"
+  private static let priorReceivedKey = "lifetimeRelayBytesReceivedBase"
 
   private let defaults: UserDefaults
   private var lastSessionTransferred: UInt64 = 0
@@ -40,6 +48,35 @@ struct LifetimeDataStore {
 
   init(suiteName: String = cellTunnelAppGroupIdentifier) {
     defaults = UserDefaults(suiteName: suiteName) ?? .standard
+    seedBasesIfNeeded()
+  }
+
+  /// Seeds both current bases from the earlier pair whenever either is missing.
+  /// The earlier pair is only read, so an interrupted seed leaves it intact and
+  /// the next launch simply seeds again from the same values. Seeding on either
+  /// key being absent, rather than on a separate completion marker, is what makes
+  /// a half-written pair repair itself.
+  private func seedBasesIfNeeded() {
+    let hasBothBases =
+      defaults.string(forKey: Self.transferredKey) != nil
+      && defaults.string(forKey: Self.receivedKey) != nil
+    guard !hasBothBases else {
+      return
+    }
+    let priorTransferred = storedBase(Self.priorTransferredKey)
+    let priorReceived = storedBase(Self.priorReceivedKey)
+    #if targetEnvironment(macCatalyst)
+      // The Mac folded its arriving bytes into the transferred base and its
+      // leaving bytes into the received base, the reverse of what the screen
+      // shows, so the two swap on the way across.
+      persistBase(Self.transferredKey, priorReceived)
+      persistBase(Self.receivedKey, priorTransferred)
+    #else
+      // The iPhone forwards for the Mac, so its bases already described the
+      // directions the screen shows and they carry across unchanged.
+      persistBase(Self.transferredKey, priorTransferred)
+      persistBase(Self.receivedKey, priorReceived)
+    #endif
   }
 
   /// Returns the lifetime transferred and received totals for a new per-session
