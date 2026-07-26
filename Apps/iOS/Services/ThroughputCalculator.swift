@@ -16,34 +16,41 @@ private let bitsPerMegabit: Double = 1_000_000
 
 // MARK: - ThroughputCalculator
 
-/// Converts successive relay byte counters into upload and download megabits per
+/// Converts successive relay byte totals into upload and download megabits per
 /// second. The poll cadence is one second, so each per-second byte delta is a
 /// rate directly. The first reading seeds the baseline and reports zero.
+///
+/// The totals arrive already resolved into user-facing directions, because the
+/// relay's two ends count opposite directions under the same names.
 struct ThroughputCalculator {
-  private var baseline = TunnelCounters()
+  private var baselineUpload: UInt64 = 0
+  private var baselineDownload: UInt64 = 0
   private var hasBaseline = false
 
   /// Drops the baseline so the next reading seeds afresh.
   mutating func reset() {
     hasBaseline = false
-    baseline = TunnelCounters()
+    baselineUpload = 0
+    baselineDownload = 0
   }
 
-  /// The upload and download rate implied by this counter reading against the
-  /// previous one.
+  /// The upload and download rate implied by these byte totals against the
+  /// previous ones.
   mutating func update(
-    with counters: TunnelCounters
+    uploadBytes: UInt64, downloadBytes: UInt64
   ) -> (upload: Double, download: Double) {
     guard hasBaseline else {
-      baseline = counters
+      baselineUpload = uploadBytes
+      baselineDownload = downloadBytes
       hasBaseline = true
       return (0, 0)
     }
-    let bytesInDelta = counters.relayBytesIn &- baseline.relayBytesIn
-    let bytesOutDelta = counters.relayBytesOut &- baseline.relayBytesOut
-    baseline = counters
-    let upload = Double(bytesInDelta) * bitsPerByte / bitsPerMegabit
-    let download = Double(bytesOutDelta) * bitsPerByte / bitsPerMegabit
+    let uploadDelta = uploadBytes &- baselineUpload
+    let downloadDelta = downloadBytes &- baselineDownload
+    baselineUpload = uploadBytes
+    baselineDownload = downloadBytes
+    let upload = Double(uploadDelta) * bitsPerByte / bitsPerMegabit
+    let download = Double(downloadDelta) * bitsPerByte / bitsPerMegabit
     return (upload, download)
   }
 }
