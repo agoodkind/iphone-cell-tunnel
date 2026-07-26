@@ -15,6 +15,7 @@
   // MARK: - Constants
 
   private let setupLogger = CellTunnelLog.logger(category: .app)
+  private let setupActionIdentifier = "cell-tunnel.setup-action"
   private let contentStackSpacing: CGFloat = 24
   private let contentMaxWidth: CGFloat = 480
   private let contentPadding: CGFloat = 32
@@ -96,6 +97,7 @@
         .buttonStyle(.borderedProminent)
         .controlSize(.large)
         .frame(minWidth: buttonMinWidth)
+        .accessibilityIdentifier(setupActionIdentifier)
       }
     }
 

@@ -27,17 +27,25 @@
 
     private static let provisionedArgument = "--cell-tunnel-ui-test-fixture"
     private static let approvalRequiredArgument = "--cell-tunnel-ui-test-approval-required"
+    private static let setupArgument = "--cell-tunnel-ui-test-setup"
     private static let approvalRequiredEnvironment =
       "CELL_TUNNEL_UI_TEST_APPROVAL_REQUIRED"
     private static let defaultsSuiteName = "CellTunnelPhoneUITests"
 
     static var isEnabled: Bool {
       let arguments = ProcessInfo.processInfo.arguments
-      return arguments.contains(provisionedArgument) || requiresApproval
+      return arguments.contains(provisionedArgument) || requiresApproval || showsSetup
+    }
+
+    /// Whether to render the first-run setup screen instead of the dashboard, so a UI
+    /// test can drive the setup screen's import action.
+    private static var showsSetup: Bool {
+      ProcessInfo.processInfo.arguments.contains(setupArgument)
     }
 
     @MainActor static func makeRelayController() -> RelayController {
-      let backend = UITestFixtureBackend(isTunnelProvisioned: !requiresApproval)
+      let backend = UITestFixtureBackend(
+        isTunnelProvisioned: !requiresApproval, showsSetup: showsSetup)
       #if targetEnvironment(macCatalyst)
         return RelayController(
           backend: backend,
@@ -70,14 +78,16 @@
   private final class UITestFixtureBackend: RelayControlBackend {
     private let isTunnelProvisioned: Bool
     private var configText = "[Interface]\nAddress = 10.0.0.2/32"
+    private let showsSetup: Bool
     private let config = TunnelConfigSummary(
       id: UITestFixture.fixtureConfigIdentifier,
       name: "Fixture Config",
       createdAt: UITestFixture.fixtureConfigCreationDate
     )
 
-    init(isTunnelProvisioned: Bool) {
+    init(isTunnelProvisioned: Bool, showsSetup: Bool) {
       self.isTunnelProvisioned = isTunnelProvisioned
+      self.showsSetup = showsSetup
     }
 
     func start() async {
@@ -148,6 +158,13 @@
 
     private var fixtureSnapshot: TunnelDaemonStatusSnapshot {
       #if targetEnvironment(macCatalyst)
+        if showsSetup {
+          return TunnelDaemonStatusSnapshot(
+            running: true,
+            peerState: .notSelected,
+            configLibrary: []
+          )
+        }
         return TunnelDaemonStatusSnapshot(
           running: true,
           peerState: .wireGuardConfigured,
