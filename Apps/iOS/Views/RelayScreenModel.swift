@@ -97,10 +97,16 @@ struct RelayScreenModel {
     controller.isTunnelInstalled
   }
 
-  /// Which screen the status renders: full guided setup or the reduced dashboard.
-  var uiTier: RelayUITier {
-    status.uiTier
-  }
+  #if targetEnvironment(macCatalyst)
+
+    /// Which screen the status renders: full guided setup or the reduced dashboard.
+    /// Only the Mac chooses its screen this way; the iPhone shows its setup screen
+    /// directly from whether a tunnel is saved.
+    var uiTier: RelayUITier {
+      status.uiTier
+    }
+
+  #endif
 
   /// How the single Route traffic switch presents: hidden when no peer can carry
   /// traffic, disabled with a choose-a-config hint when a peer is connected but no

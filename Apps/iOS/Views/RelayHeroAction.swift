@@ -47,13 +47,3 @@ enum RelayHeroAction: Equatable {
     }
   }
 }
-
-// MARK: - RelayUITier
-
-/// Which screen the status renders. A setup state takes over the whole screen with a
-/// single guided action; every other state shows the reduced dashboard with its rows,
-/// peers, and action.
-enum RelayUITier: Equatable {
-  case full
-  case reduced
-}

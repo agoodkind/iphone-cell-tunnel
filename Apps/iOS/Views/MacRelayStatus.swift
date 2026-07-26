@@ -12,6 +12,14 @@ import Foundation
 
 #if targetEnvironment(macCatalyst)
 
+  /// Which screen the Mac status renders. A setup state takes over the whole screen
+  /// with a single guided action; every other state shows the reduced dashboard with
+  /// its rows, peers, and action.
+  enum RelayUITier: Equatable {
+    case full
+    case reduced
+  }
+
   /// What the Mac can be doing, the single value its screens render from. The cases
   /// are a set rather than a precedence chain, and each owns its screen tier, status
   /// word, whether the live speed shows, and the offered action, so the screens never
@@ -79,7 +87,7 @@ import Foundation
     }
 
     /// The neutral status word shown as the switch's left label and the reduced-tier
-    /// status line.
+    /// status line. The labels are neutral placeholders rather than final copy.
     var label: String {
       switch self {
       case .error:

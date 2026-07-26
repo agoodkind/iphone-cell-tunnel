@@ -17,7 +17,8 @@ import Foundation
   /// word, whether the live speed shows, and the offered action, so the screen never
   /// infers state from a pile of separate flags. The status is peer-keyed: the relay
   /// carries nothing until the peer link is up, so the peer is the gate and a local
-  /// interface running flag never drives it.
+  /// interface running flag never drives it. It carries no screen tier, because the
+  /// iPhone shows its setup screen directly from whether a tunnel is saved.
   ///
   /// The iPhone holds its own saved VPN profile and dials Macs it discovers, so it
   /// names those two facts directly. It never installs a background agent and never
@@ -57,19 +58,8 @@ import Foundation
       }
     }
 
-    /// Which screen renders this state: the full guided setup while no profile is
-    /// saved, the reduced dashboard for everything else.
-    var uiTier: RelayUITier {
-      switch self {
-      case .notProvisioned:
-        return .full
-      case .error, .noPeerSelected, .noPeersFound, .readyToRoute, .routing:
-        return .reduced
-      }
-    }
-
-    /// The neutral status word shown as the switch's left label and the reduced-tier
-    /// status line.
+    /// The neutral status word shown as the switch's left label and the status line.
+    /// The labels are neutral placeholders rather than final copy.
     var label: String {
       switch self {
       case .error:
