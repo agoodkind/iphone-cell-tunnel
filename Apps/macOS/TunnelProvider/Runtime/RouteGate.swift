@@ -7,6 +7,7 @@
 //
 
 import Foundation
+import Network
 import NetworkExtension
 
 // MARK: - RouteGate
@@ -142,52 +143,83 @@ final class RouteGate: @unchecked Sendable {
   }
 
   /// The DNS servers to publish. A config `DNS =` line wins. When the config
-  /// supplies none, each address family whose traffic the tunnel captures gets a
-  /// public fallback resolver, because the system's own resolver for that family
-  /// is then reachable only through the tunnel exit, which cannot answer for a
-  /// private network. A family the tunnel does not capture keeps its system
-  /// resolver, so a single-stack config publishes only the family it captures and
-  /// never sends the other family's queries out an uncaptured path.
+  /// supplies none, an address family gets a public fallback resolver only when
+  /// the tunnel both carries an address in that family and captures all of that
+  /// family's traffic. Both conditions matter. Without a tunnel address in the
+  /// family the resolver has no source address to be reached from, so its queries
+  /// would leave over a physical interface, which is the leak this exists to
+  /// prevent. Without full capture the system's own resolver is still reachable
+  /// and keeps working, so publishing an override would only override something
+  /// that already answers.
   private func resolvedDNSServersLocked() -> [String] {
     if !programDNSServers.isEmpty {
       return programDNSServers
     }
     var servers: [String] = []
-    if capturesAllIPv4TrafficLocked() {
+    if tunnelCarriesIPv4Locked(), capturesAllIPv4TrafficLocked() {
       servers.append(Self.allTrafficFallbackIPv4DNSServer)
     }
-    if capturesAllIPv6TrafficLocked() {
+    if tunnelCarriesIPv6Locked(), capturesAllIPv6TrafficLocked() {
       servers.append(Self.allTrafficFallbackIPv6DNSServer)
     }
     return servers
   }
 
-  /// Whether the captured IPv4 routes cover the whole address space. A config may
-  /// write that as `0.0.0.0/0` or as the equivalent `0.0.0.0/1` and `128.0.0.0/1`
-  /// pair, so both forms count.
+  /// Whether the tunnel holds an IPv4 address, so an IPv4 resolver has a source
+  /// address to be reached from. A config whose interface declares only an IPv6
+  /// address yields no IPv4 tunnel address here.
+  private func tunnelCarriesIPv4Locked() -> Bool {
+    settings?.ipv4Settings?.addresses.isEmpty == false
+  }
+
+  /// Whether the tunnel holds an IPv6 address, the IPv6 counterpart of
+  /// `tunnelCarriesIPv4Locked()`.
+  private func tunnelCarriesIPv6Locked() -> Bool {
+    settings?.ipv6Settings?.addresses.isEmpty == false
+  }
+
+  /// Whether the captured IPv4 routes cover the whole address space, written as
+  /// `0.0.0.0/0` or as the equivalent `0.0.0.0/1` and `128.0.0.0/1` pair. The
+  /// subnet masks are generated from the prefix length rather than copied from
+  /// the config, so comparing them as text is exact.
   private func capturesAllIPv4TrafficLocked() -> Bool {
-    let hasDefault = programIPv4Routes.contains { $0.destinationSubnetMask == "0.0.0.0" }
-    let halfMask = "128.0.0.0"
-    let lowerHalf = programIPv4Routes.contains {
-      $0.destinationSubnetMask == halfMask && $0.destinationAddress == "0.0.0.0"
+    let hasDefaultRoute = programIPv4Routes.contains { route in
+      route.destinationSubnetMask == "0.0.0.0"
     }
-    let upperHalf = programIPv4Routes.contains {
-      $0.destinationSubnetMask == halfMask && $0.destinationAddress == "128.0.0.0"
+    if hasDefaultRoute {
+      return true
     }
-    return hasDefault || (lowerHalf && upperHalf)
+    let halfRoutes = programIPv4Routes.filter { $0.destinationSubnetMask == "128.0.0.0" }
+    let halfAddresses = halfRoutes.compactMap { IPv4Address($0.destinationAddress) }
+    let halfBits = halfAddresses.compactMap { Self.leadingBit(of: $0.rawValue) }
+    return halfBits.contains(0) && halfBits.contains(1)
   }
 
   /// Whether the captured IPv6 routes cover the whole address space, written as
   /// `::/0` or as the equivalent `::/1` and `8000::/1` pair.
   private func capturesAllIPv6TrafficLocked() -> Bool {
-    let hasDefault = programIPv6Routes.contains {
-      $0.destinationNetworkPrefixLength.intValue == 0
+    let hasDefaultRoute = programIPv6Routes.contains { route in
+      route.destinationNetworkPrefixLength.intValue == 0
     }
-    let halves = programIPv6Routes.filter {
-      $0.destinationNetworkPrefixLength.intValue == 1
+    if hasDefaultRoute {
+      return true
     }
-    let lowerHalf = halves.contains { $0.destinationAddress == "::" }
-    let upperHalf = halves.contains { $0.destinationAddress == "8000::" }
-    return hasDefault || (lowerHalf && upperHalf)
+    let halfRoutes = programIPv6Routes.filter { route in
+      route.destinationNetworkPrefixLength.intValue == 1
+    }
+    let halfAddresses = halfRoutes.compactMap { IPv6Address($0.destinationAddress) }
+    let halfBits = halfAddresses.compactMap { Self.leadingBit(of: $0.rawValue) }
+    return halfBits.contains(0) && halfBits.contains(1)
+  }
+
+  /// Which half of the address space a `/1` route covers, read from the parsed
+  /// address rather than its text. A config carries its addresses through
+  /// verbatim, so `::`, `0::`, and `0:0:0:0:0:0:0:0` all name the same address
+  /// and all have to be recognized.
+  private static func leadingBit(of rawValue: Data) -> Int? {
+    guard let firstByte = rawValue.first else {
+      return nil
+    }
+    return Int(firstByte >> 7)
   }
 }
