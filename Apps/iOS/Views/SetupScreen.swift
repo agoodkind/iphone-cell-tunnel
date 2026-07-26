@@ -16,11 +16,19 @@
 
   private let setupLogger = CellTunnelLog.logger(category: .app)
   private let setupActionIdentifier = "cell-tunnel.setup-action"
+  private let setupStepsIdentifier = "cell-tunnel.setup-steps"
   private let contentStackSpacing: CGFloat = 24
   private let contentMaxWidth: CGFloat = 480
   private let contentPadding: CGFloat = 32
   private let iconPointSize: CGFloat = 48
   private let buttonMinWidth: CGFloat = 200
+  private let stepSpacing: CGFloat = 10
+  private let stepNumberSpacing: CGFloat = 10
+  private let stepBlockPadding: CGFloat = 16
+  private let stepBackgroundOpacity: CGFloat = 0.5
+  private let stepBlockCornerRadius: CGFloat = 10
+  private let stepBlockShape = RoundedRectangle(
+    cornerRadius: stepBlockCornerRadius, style: .continuous)
   private let configContentTypes: [UTType] = [
     UTType(filenameExtension: "conf") ?? .plainText,
     .plainText,
@@ -49,6 +57,7 @@
         icon
         title
         subtitle
+        steps
         actionButton
         errorMessage
       }
@@ -89,6 +98,44 @@
         .fixedSize(horizontal: false, vertical: true)
     }
 
+    /// The ordered steps, left-aligned in their own grouped block so the numbers line
+    /// up and each step reads as one short instruction rather than a wall of centered
+    /// text. Nothing renders for a state that has no steps.
+    @ViewBuilder private var steps: some View {
+      let orderedSteps = setupSteps
+      if !orderedSteps.isEmpty {
+        VStack(alignment: .leading, spacing: stepSpacing) {
+          ForEach(Array(orderedSteps.enumerated()), id: \.offset) { index, step in
+            stepRow(number: index + 1, text: step)
+          }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(stepBlockPadding)
+        .background(.quaternary.opacity(stepBackgroundOpacity), in: stepBlockShape)
+        // Group the rows into one element so the block is addressable as a whole,
+        // both for VoiceOver and for the test that asserts the steps are shown.
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(Text(stepsAccessibilityLabel))
+        .accessibilityIdentifier(setupStepsIdentifier)
+      }
+    }
+
+    private var stepsAccessibilityLabel: String {
+      "Steps to turn the VPN back on"
+    }
+
+    private func stepRow(number: Int, text: String) -> some View {
+      HStack(alignment: .firstTextBaseline, spacing: stepNumberSpacing) {
+        Text("\(number).")
+          .font(.body.weight(.semibold))
+          .foregroundStyle(.tint)
+          .monospacedDigit()
+        Text(text)
+          .font(.body)
+          .fixedSize(horizontal: false, vertical: true)
+      }
+    }
+
     @ViewBuilder private var actionButton: some View {
       if model.heroAction != nil {
         Button(model.setupActionTitle) {
@@ -114,6 +161,8 @@
 
     private func performAction() {
       switch model.heroAction {
+      case .enableVPN:
+        model.openVPNSettings()
       case .importConfig:
         isImportingConfig = true
       case .installAgent:
@@ -148,6 +197,8 @@
         return "Install the background agent"
       case .noConfigImported:
         return "Import a tunnel configuration"
+      case .vpnProfileDisabled:
+        return "Turn the VPN back on"
       case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
         .routing:
         return model.status.label
@@ -161,9 +212,31 @@
           + "after the app closes."
       case .noConfigImported:
         return "Choose a WireGuard configuration file to set up the tunnel."
+      case .vpnProfileDisabled:
+        return "Cell Tunnel is switched off in System Settings, so it cannot "
+          + "route traffic until you turn it back on."
       case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
         .routing:
         return ""
+      }
+    }
+
+    /// What to do in System Settings, for a state the app cannot resolve on the
+    /// user's behalf. The steps stay on screen while System Settings is in front, so
+    /// they are readable at the moment they are followed, and they name the row by
+    /// the same title the system shows. They describe only this task, since the
+    /// button already covers opening System Settings and which pane it lands on
+    /// varies.
+    private var setupSteps: [String] {
+      switch model.status {
+      case .vpnProfileDisabled:
+        return [
+          "Click VPN in the sidebar.",
+          "Turn on Cell Tunnel.",
+        ]
+      case .error, .noActiveConfig, .noAgent, .noConfigImported, .noPeerSelected,
+        .noPeersFound, .readyToRoute, .routing:
+        return []
       }
     }
   }

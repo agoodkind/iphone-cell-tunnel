@@ -148,6 +148,13 @@ struct RelayScreenModel {
   }
 
   #if targetEnvironment(macCatalyst)
+    /// Opens Network settings so the user can switch a disabled VPN profile back on.
+    /// The system offers no way for the app to do it for them.
+    func openVPNSettings() {
+      logger.notice("relay screen open vpn settings requested")
+      controller.openVPNSettings()
+    }
+
     /// Installs the background agent, or opens Login Items when the agent is registered
     /// but awaiting approval. The install-agent setup action.
     func installAgent() {
@@ -541,6 +548,7 @@ extension RelayScreenModel {
       MacRelayStatus(
         errorMessage: controller.lastError,
         isAgentInstalled: controller.isAgentInstalled,
+        isVPNProfileDisabled: controller.isVPNProfileDisabled,
         isConfigImported: controller.isTunnelInstalled,
         isActiveConfigPresent: controller.hasActiveConfig,
         peersFound: peersAvailable,

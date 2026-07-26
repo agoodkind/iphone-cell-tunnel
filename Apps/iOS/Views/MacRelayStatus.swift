@@ -38,9 +38,13 @@ import Foundation
     case noPeersFound
     case readyToRoute
     case routing
+    case vpnProfileDisabled
 
     /// Builds the status from named, single-purpose inputs. A failure wins, then the
-    /// agent must be present, then the library must hold a configuration. An
+    /// agent must be present, then the library must hold a configuration, then the
+    /// saved VPN profile must be switched on. The library comes before the profile
+    /// because deleting every configuration leaves the profile in place, and
+    /// re-enabling a profile with nothing to route would accomplish nothing. An
     /// established peer link decides the rest before discovery, since a live link means
     /// the screen is connected whether or not this side browsed for it: a connected
     /// iPhone with no active configuration is the choose-a-configuration state, then
@@ -51,6 +55,7 @@ import Foundation
     init(
       errorMessage: String?,
       isAgentInstalled: Bool,
+      isVPNProfileDisabled: Bool,
       isConfigImported: Bool,
       isActiveConfigPresent: Bool,
       peersFound: Bool,
@@ -63,6 +68,8 @@ import Foundation
         self = .noAgent
       } else if !isConfigImported {
         self = .noConfigImported
+      } else if isVPNProfileDisabled {
+        self = .vpnProfileDisabled
       } else if isPeerConnected, !isActiveConfigPresent {
         self = .noActiveConfig
       } else if isPeerConnected {
@@ -78,7 +85,7 @@ import Foundation
     /// states, the reduced dashboard for everything else.
     var uiTier: RelayUITier {
       switch self {
-      case .noAgent, .noConfigImported:
+      case .noAgent, .noConfigImported, .vpnProfileDisabled:
         return .full
       case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
         .routing:
@@ -106,6 +113,8 @@ import Foundation
         return "Ready to route traffic"
       case .routing:
         return "Routing traffic"
+      case .vpnProfileDisabled:
+        return "VPN turned off"
       }
     }
 
@@ -126,6 +135,8 @@ import Foundation
         return .importConfig
       case .noPeerSelected:
         return .selectPeer
+      case .vpnProfileDisabled:
+        return .enableVPN
       case .noActiveConfig, .noPeersFound, .readyToRoute, .routing:
         return nil
       }

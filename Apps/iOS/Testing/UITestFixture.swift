@@ -28,6 +28,7 @@
     private static let provisionedArgument = "--cell-tunnel-ui-test-fixture"
     private static let approvalRequiredArgument = "--cell-tunnel-ui-test-approval-required"
     private static let setupArgument = "--cell-tunnel-ui-test-setup"
+    private static let vpnDisabledArgument = "--cell-tunnel-ui-test-vpn-disabled"
     private static let approvalRequiredEnvironment =
       "CELL_TUNNEL_UI_TEST_APPROVAL_REQUIRED"
     private static let defaultsSuiteName = "CellTunnelPhoneUITests"
@@ -35,6 +36,13 @@
     static var isEnabled: Bool {
       let arguments = ProcessInfo.processInfo.arguments
       return arguments.contains(provisionedArgument) || requiresApproval || showsSetup
+        || showsVPNDisabled
+    }
+
+    /// Whether to report the saved VPN profile as switched off, so a UI test can drive
+    /// the re-enable screen.
+    private static var showsVPNDisabled: Bool {
+      ProcessInfo.processInfo.arguments.contains(vpnDisabledArgument)
     }
 
     /// Whether to render the first-run setup screen instead of the dashboard, so a UI
@@ -45,7 +53,9 @@
 
     @MainActor static func makeRelayController() -> RelayController {
       let backend = UITestFixtureBackend(
-        isTunnelProvisioned: !requiresApproval, showsSetup: showsSetup)
+        isTunnelProvisioned: !requiresApproval,
+        showsSetup: showsSetup,
+        showsVPNDisabled: showsVPNDisabled)
       #if targetEnvironment(macCatalyst)
         return RelayController(
           backend: backend,
@@ -79,15 +89,17 @@
     private let isTunnelProvisioned: Bool
     private var configText = "[Interface]\nAddress = 10.0.0.2/32"
     private let showsSetup: Bool
+    private let showsVPNDisabled: Bool
     private let config = TunnelConfigSummary(
       id: UITestFixture.fixtureConfigIdentifier,
       name: "Fixture Config",
       createdAt: UITestFixture.fixtureConfigCreationDate
     )
 
-    init(isTunnelProvisioned: Bool, showsSetup: Bool) {
+    init(isTunnelProvisioned: Bool, showsSetup: Bool, showsVPNDisabled: Bool) {
       self.isTunnelProvisioned = isTunnelProvisioned
       self.showsSetup = showsSetup
+      self.showsVPNDisabled = showsVPNDisabled
     }
 
     func start() async {
@@ -163,6 +175,23 @@
             running: true,
             peerState: .notSelected,
             configLibrary: []
+          )
+        }
+        // A dialed-in iPhone and an active config, so every input the routing switch
+        // needs is present and only the switched-off profile withholds it. Without the
+        // peer the switch would be hidden anyway and the test could not tell the
+        // difference.
+        if showsVPNDisabled {
+          return TunnelDaemonStatusSnapshot(
+            running: false,
+            peerState: .wireGuardConfigured,
+            connectedPeerName: "Fixture iPhone",
+            connectedPeers: [
+              ConnectedPeer(id: "fixture-phone", name: "Fixture iPhone", isSelected: true)
+            ],
+            configLibrary: [config],
+            activeConfigID: config.id,
+            vpnProfileState: .disabled
           )
         }
         return TunnelDaemonStatusSnapshot(
