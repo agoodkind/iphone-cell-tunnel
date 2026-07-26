@@ -33,10 +33,12 @@ final class RouteGate: @unchecked Sendable {
   private var programDNSSearchDomains: [String] = []
   private var installed = false
 
-  /// The public resolver published for an all-traffic config that supplies no
+  /// The public resolvers published for an all-traffic config that supplies no
   /// `DNS =` line, so names resolve over the tunnel. Cloudflare's anycast
-  /// addresses are reachable from any full-tunnel exit.
-  private static let allTrafficFallbackDNSServers = ["1.1.1.1", "2606:4700:4700::1111"]
+  /// addresses are reachable from any full-tunnel exit. Each is published only
+  /// when the tunnel captures that address family.
+  private static let allTrafficFallbackIPv4DNSServer = "1.1.1.1"
+  private static let allTrafficFallbackIPv6DNSServer = "2606:4700:4700::1111"
 
   /// Records the adapter's requested settings, keeping its tunnel addresses and
   /// replacing its captured routes with the program's scoped set gated by the
@@ -140,27 +142,52 @@ final class RouteGate: @unchecked Sendable {
   }
 
   /// The DNS servers to publish. A config `DNS =` line wins. When the config
-  /// supplies none but the captured routes include a default route, the config is
-  /// all-traffic and the system would otherwise have no resolver reachable over
-  /// the tunnel, so a public fallback resolver is published. A scoped config with
-  /// no default route keeps the system resolver by publishing none.
+  /// supplies none, each address family whose traffic the tunnel captures gets a
+  /// public fallback resolver, because the system's own resolver for that family
+  /// is then reachable only through the tunnel exit, which cannot answer for a
+  /// private network. A family the tunnel does not capture keeps its system
+  /// resolver, so a single-stack config publishes only the family it captures and
+  /// never sends the other family's queries out an uncaptured path.
   private func resolvedDNSServersLocked() -> [String] {
     if !programDNSServers.isEmpty {
       return programDNSServers
     }
-    if programRoutesIncludeDefaultLocked() {
-      return Self.allTrafficFallbackDNSServers
+    var servers: [String] = []
+    if capturesAllIPv4TrafficLocked() {
+      servers.append(Self.allTrafficFallbackIPv4DNSServer)
     }
-    return []
+    if capturesAllIPv6TrafficLocked() {
+      servers.append(Self.allTrafficFallbackIPv6DNSServer)
+    }
+    return servers
   }
 
-  /// Whether the captured routes include an IPv4 or IPv6 default route, the mark
-  /// of an all-traffic config.
-  private func programRoutesIncludeDefaultLocked() -> Bool {
-    let hasIPv4Default = programIPv4Routes.contains { $0.destinationSubnetMask == "0.0.0.0" }
-    let hasIPv6Default = programIPv6Routes.contains {
+  /// Whether the captured IPv4 routes cover the whole address space. A config may
+  /// write that as `0.0.0.0/0` or as the equivalent `0.0.0.0/1` and `128.0.0.0/1`
+  /// pair, so both forms count.
+  private func capturesAllIPv4TrafficLocked() -> Bool {
+    let hasDefault = programIPv4Routes.contains { $0.destinationSubnetMask == "0.0.0.0" }
+    let halfMask = "128.0.0.0"
+    let lowerHalf = programIPv4Routes.contains {
+      $0.destinationSubnetMask == halfMask && $0.destinationAddress == "0.0.0.0"
+    }
+    let upperHalf = programIPv4Routes.contains {
+      $0.destinationSubnetMask == halfMask && $0.destinationAddress == "128.0.0.0"
+    }
+    return hasDefault || (lowerHalf && upperHalf)
+  }
+
+  /// Whether the captured IPv6 routes cover the whole address space, written as
+  /// `::/0` or as the equivalent `::/1` and `8000::/1` pair.
+  private func capturesAllIPv6TrafficLocked() -> Bool {
+    let hasDefault = programIPv6Routes.contains {
       $0.destinationNetworkPrefixLength.intValue == 0
     }
-    return hasIPv4Default || hasIPv6Default
+    let halves = programIPv6Routes.filter {
+      $0.destinationNetworkPrefixLength.intValue == 1
+    }
+    let lowerHalf = halves.contains { $0.destinationAddress == "::" }
+    let upperHalf = halves.contains { $0.destinationAddress == "8000::" }
+    return hasDefault || (lowerHalf && upperHalf)
   }
 }
