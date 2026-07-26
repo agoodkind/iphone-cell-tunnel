@@ -192,7 +192,24 @@ public final class InMemoryTunnelConfigStore: TunnelConfigStore {
 
 // MARK: - TunnelConfigStoreError
 
-public enum TunnelConfigStoreError: Error, Equatable {
+public enum TunnelConfigStoreError: Error, Equatable, LocalizedError {
   case keychainFailure(OSStatus)
   case notFound
+
+  /// Names the keychain status rather than only the fact that something failed.
+  /// A store write can fail for reasons the caller can act on, such as the process
+  /// lacking the entitlement that grants keychain access, and a bare "failed" hides
+  /// which one it was.
+  public var errorDescription: String? {
+    switch self {
+    case .keychainFailure(let status):
+      let detail = SecCopyErrorMessageString(status, nil) as String?
+      if let detail {
+        return "keychain failed with status \(status): \(detail)"
+      }
+      return "keychain failed with status \(status)"
+    case .notFound:
+      return "no stored config for that identifier"
+    }
+  }
 }
