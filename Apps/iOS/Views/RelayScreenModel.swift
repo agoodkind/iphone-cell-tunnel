@@ -91,7 +91,8 @@ enum RelayStatus: Equatable {
   case routing
 
   /// Builds the status from named, single-purpose inputs. A failure wins; then the
-  /// agent must be present, then a saved tunnel. An established peer link decides the
+  /// agent must be present, then a tunnel must be set up: a saved profile on the
+  /// iPhone, an imported configuration on the Mac. An established peer link decides the
   /// rest before discovery, since a live link means the screen is connected whether or
   /// not this side browsed for it: a connected peer with no active config is the
   /// choose-a-config state, then routes installed is the routing state and routes
@@ -127,7 +128,7 @@ enum RelayStatus: Equatable {
     }
   }
 
-  /// Which screen renders this state: a full guided setup for the two install states,
+  /// Which screen renders this state: a full guided setup for the two setup states,
   /// the reduced dashboard for everything else.
   var uiTier: RelayUITier {
     switch self {
@@ -154,7 +155,7 @@ enum RelayStatus: Equatable {
     case .noPeersFound:
       return "Searching for peers"
     case .noTunnelInstalled:
-      return "Tunnel not installed"
+      return "No configuration imported"
     case .readyToRoute:
       return "Ready to route traffic"
     case .routing:
@@ -176,7 +177,7 @@ enum RelayStatus: Equatable {
     case .noAgent:
       return .installAgent
     case .noTunnelInstalled:
-      return .installTunnel
+      return .importConfig
     case .noPeerSelected:
       return .selectPeer
     case .noActiveConfig, .noPeersFound, .readyToRoute, .routing:
@@ -199,18 +200,18 @@ enum RelayStatus: Equatable {
 /// operation, so the view holds no branching of its own. `selectPeer` is offered by
 /// the reduced-tier peers list rather than a single button.
 enum RelayHeroAction: Equatable {
+  case importConfig
   case installAgent
-  case installTunnel
   case retry
   case selectPeer
 
   /// The button title shown in the action row.
   var title: String {
     switch self {
+    case .importConfig:
+      return "Import Configuration"
     case .installAgent:
       return "Install Agent"
-    case .installTunnel:
-      return "Install Tunnel"
     case .retry:
       return "Retry"
     case .selectPeer:
@@ -221,10 +222,10 @@ enum RelayHeroAction: Equatable {
   /// The SF Symbol shown beside the action on the setup screen.
   var systemImage: String {
     switch self {
+    case .importConfig:
+      return "arrow.down.doc"
     case .installAgent:
       return "gearshape.2"
-    case .installTunnel:
-      return "arrow.down.doc"
     case .retry:
       return "arrow.clockwise"
     case .selectPeer:
