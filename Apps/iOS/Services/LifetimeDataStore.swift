@@ -33,7 +33,12 @@ struct LifetimeDataTotals: Equatable {
 struct LifetimeDataStore {
   private static let transferredKey = "lifetimeRelayBytesTransferredBase"
   private static let receivedKey = "lifetimeRelayBytesReceivedBase"
-  private static let directionsCorrectedKey = "lifetimeRelayBytesDirectionsCorrected"
+
+  #if targetEnvironment(macCatalyst)
+
+    private static let directionsCorrectedKey = "lifetimeRelayBytesDirectionsCorrected"
+
+  #endif
 
   private let defaults: UserDefaults
   private var lastSessionTransferred: UInt64 = 0
@@ -41,24 +46,31 @@ struct LifetimeDataStore {
 
   init(suiteName: String = cellTunnelAppGroupIdentifier) {
     defaults = UserDefaults(suiteName: suiteName) ?? .standard
-    correctStoredDirectionsIfNeeded()
+    #if targetEnvironment(macCatalyst)
+      correctStoredDirectionsIfNeeded()
+    #endif
   }
 
-  /// Moves already-stored totals to the direction they actually describe, once.
-  /// Earlier readings accumulated bytes arriving at this device under the
-  /// transferred base and bytes leaving it under the received base, so without
-  /// this the historical figures stay attached to the wrong direction and mix
-  /// with correctly directed new traffic.
-  private func correctStoredDirectionsIfNeeded() {
-    guard !defaults.bool(forKey: Self.directionsCorrectedKey) else {
-      return
+  #if targetEnvironment(macCatalyst)
+    /// Moves the Mac's already-stored totals to the direction they actually
+    /// describe, once. The relay's two ends count opposite directions under the
+    /// same names, and earlier readings folded the Mac's arriving bytes into the
+    /// transferred base and its leaving bytes into the received base. Without this
+    /// the Mac's historical figures stay attached to the wrong direction and mix
+    /// with correctly directed new traffic. The iPhone needs no correction, since
+    /// it forwards for the Mac and its counters already matched the displayed
+    /// directions, so correcting there would reverse figures that were right.
+    private func correctStoredDirectionsIfNeeded() {
+      guard !defaults.bool(forKey: Self.directionsCorrectedKey) else {
+        return
+      }
+      let storedTransferred = storedBase(Self.transferredKey)
+      let storedReceived = storedBase(Self.receivedKey)
+      persistBase(Self.transferredKey, storedReceived)
+      persistBase(Self.receivedKey, storedTransferred)
+      defaults.set(true, forKey: Self.directionsCorrectedKey)
     }
-    let storedTransferred = storedBase(Self.transferredKey)
-    let storedReceived = storedBase(Self.receivedKey)
-    persistBase(Self.transferredKey, storedReceived)
-    persistBase(Self.receivedKey, storedTransferred)
-    defaults.set(true, forKey: Self.directionsCorrectedKey)
-  }
+  #endif
 
   /// Returns the lifetime transferred and received totals for a new per-session
   /// reading, folding a detected per-direction session reset into the persisted
