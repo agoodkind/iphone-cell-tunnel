@@ -16,61 +16,73 @@ private let optionAndValueArgumentStride = 2
 
 // MARK: - Help
 
-func printHelp() {
-  let helpText = """
-    usage: swift Tools/cell-tunnel-dev.swift <command>
+// The help text lives at file scope so it stays one readable block as commands are
+// added, rather than growing the body of the function that prints it.
+private let helpText = """
+  usage: swift Tools/cell-tunnel-dev.swift <command>
 
-    commands:
-      help        Show this help text.
-      generate    Install Tuist dependencies and generate CellTunnel.xcworkspace.
-      build       Run lint, then build the named target.
-                  Targets: daemon|mac|iphone-simulator|iphone-device|all
-                  Bare `build` with no target prints this and exits non-zero.
-      activate    Install, register, and launch the requested target from built products.
-                  Pass --port <listener-port> to override the iPhone relay listener port at launch.
-      install-mac Copy the built CellTunnelAgent.app into /Applications/CellTunnel and launch it
-                  so its first run registers the LaunchAgent.
-                  Options: --config Debug|Release, --app <path>, --destination <dir>.
-      test        Run SwiftPM tests.
-      lint        Run Swift lint gates.
-      format      Format Swift sources.
-      analyze     Run Xcode analyze, SwiftLint analyze, and Periphery.
-      build-phone-device
-                  Build CellTunnelPhone for a connected physical iPhone.
-      install-phone-device
-                  Build and install CellTunnelPhone on a connected physical iPhone.
-      launch-phone-device
-                  Launch CellTunnelPhone on a connected physical iPhone.
-      iphone-logs Show (and optionally --follow) the iPhone unified log for the
-                  io.goodkind.celltunnel subsystem. See `iphone-logs --help`.
-      mac-logs    Show or stream Mac agent and tunnel-provider logs. See `mac-logs --help`.
-      logs        Stream Mac and iPhone celltunnel logs together. See `logs --help`.
-      ui-test     Run the Debug UI tests without using a physical device.
-                   Target: iphone-simulator|mac-catalyst.
-      relay-browse
-                  Foreground Bonjour browse for the iPhone relay service.
-                  Optional positional duration in seconds (default 8).
-      relay-discover
-                  Start agent discovery and wait for the relay device.
-                  Options: --discover-timeout <s>.
-      relay-up    Bring the relay tunnel up end to end (discover, select,
-                  start, wait for connected). Required: --config <path>.
-                  Options: --relay <name>, --discover-timeout <s>,
-                  --connect-timeout <s>.
-      relay-reload
-                  Apply an edited WireGuard config to the running tunnel in
-                  place, with no restart and no VPN profile save. Required:
-                  --config <path>.
-      relay-status
-                  Print the current tunnel daemon status snapshot.
-      relay-down  Stop the relay tunnel.
-      reset-mac   Remove the saved Mac VPN configuration through the agent.
-      clean       Remove build and product outputs.
-      clean-reinstall
-                  Stop the agent, rebuild both apps, reinstall and relaunch the
-                  agent, run reset-mac, then reinstall and launch the iPhone app.
-                  Optional positional configuration: [Debug|Release] (default Debug).
-    """
+  commands:
+    help        Show this help text.
+    generate    Install Tuist dependencies and generate CellTunnel.xcworkspace.
+    build       Run lint, then build the named target.
+                Targets: daemon|mac|iphone-simulator|iphone-device|all
+                Bare `build` with no target prints this and exits non-zero.
+    activate    Install, register, and launch the requested target from built products.
+                Pass --port <listener-port> to override the iPhone relay listener port at launch.
+    install-mac Copy the built CellTunnelAgent.app into /Applications/CellTunnel and launch it
+                Copy the built products into a running tart machine
+                so its first run registers the LaunchAgent.
+                Options: --config Debug|Release, --app <path>, --destination <dir>.
+    test        Run SwiftPM tests.
+    lint        Run Swift lint gates.
+    format      Format Swift sources.
+    analyze     Run Xcode analyze, SwiftLint analyze, and Periphery.
+    build-phone-device
+                Build CellTunnelPhone for a connected physical iPhone.
+    install-phone-device
+                Build and install CellTunnelPhone on a connected physical iPhone.
+    launch-phone-device
+                Launch CellTunnelPhone on a connected physical iPhone.
+    iphone-logs Show (and optionally --follow) the iPhone unified log for the
+                io.goodkind.celltunnel subsystem. See `iphone-logs --help`.
+    mac-logs    Show or stream Mac agent and tunnel-provider logs. See `mac-logs --help`.
+    logs        Stream Mac and iPhone celltunnel logs together. See `logs --help`.
+    ui-test     Run the Debug UI tests without using a physical device.
+                 Target: iphone-simulator|mac-catalyst.
+    guest       Run the whole virtual-machine validation in one command: build
+                every target signed, verify each signature, clone or reuse the
+                named guest, transfer the products, run the agent under launchd,
+                launch the phone app in a guest simulator, wait for the two to
+                pair, and confirm the loaded tunnel provider is this build.
+                Usage: guest <guest-name> [Debug|Release]
+                [--base-image <image>] [--pair-timeout <s>]
+                [--browse-timeout <s>].
+    relay-browse
+                Foreground Bonjour browse for the iPhone relay service.
+                Optional positional duration in seconds (default 8).
+    relay-discover
+                Start agent discovery and wait for the relay device.
+                Options: --discover-timeout <s>.
+    relay-up    Bring the relay tunnel up end to end (discover, select,
+                start, wait for connected). Required: --config <path>.
+                Options: --relay <name>, --discover-timeout <s>,
+                --connect-timeout <s>.
+    relay-reload
+                Apply an edited WireGuard config to the running tunnel in
+                place, with no restart and no VPN profile save. Required:
+                --config <path>.
+    relay-status
+                Print the current tunnel daemon status snapshot.
+    relay-down  Stop the relay tunnel.
+    reset-mac   Remove the saved Mac VPN configuration through the agent.
+    clean       Remove build and product outputs.
+    clean-reinstall
+                Stop the agent, rebuild both apps, reinstall and relaunch the
+                agent, run reset-mac, then reinstall and launch the iPhone app.
+                Optional positional configuration: [Debug|Release] (default Debug).
+  """
+
+func printHelp() {
   FileHandle.standardOutput.write(Data((helpText + "\n").utf8))
 }
 
@@ -157,6 +169,9 @@ func runCommand(_ command: String) throws {
     return
   }
   if try runDeviceCommand(command) {
+    return
+  }
+  if try runGuestCommand(command) {
     return
   }
   if try runDiagnosticCommand(command) {
@@ -264,6 +279,17 @@ func runDeviceCommand(_ command: String) throws -> Bool {
   default:
     return false
   }
+}
+
+// MARK: - Guest command
+
+func runGuestCommand(_ command: String) throws -> Bool {
+  guard command == "guest" else {
+    return false
+  }
+  let arguments = Array(CommandLine.arguments.dropFirst(programAndCommandArgumentCount))
+  try runGuestHarness(arguments)
+  return true
 }
 
 // MARK: - Diagnostic commands
