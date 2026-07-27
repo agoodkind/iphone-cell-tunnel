@@ -8,11 +8,25 @@
 
 #if os(macOS)
   @testable import CellTunnelCore
+  import AppKit
   import Foundation
   import Testing
   import UniformTypeIdentifiers
 
   struct MacOSConfigImportFileLoaderTests {
+    @MainActor
+    @Test func pickerMakesCommandLineProcessActivatable() throws {
+      let application = FakeConfigImportApplication()
+      let process = FakeConfigImportProcess()
+
+      try activateConfigImportApplication(application, process: process)
+
+      #expect(application.activationPolicy() == .accessory)
+      #expect(application.didFinishLaunching)
+      #expect(application.activationIgnoredOtherApps)
+      #expect(process.automaticTerminationReasons == [configImportAutomaticTerminationReason])
+    }
+
     @Test func pickerAcceptsUnknownDataExtension() throws {
       let unknownType = try #require(UTType(filenameExtension: "wg"))
 
@@ -45,6 +59,44 @@
           .read(selectedURL),
           .stopSecurityScope(selectedURL),
         ])
+    }
+  }
+
+  // MARK: - FakeConfigImportApplication
+
+  @MainActor
+  private final class FakeConfigImportApplication: ConfigImportApplicationAccessing {
+    private var policy = NSApplication.ActivationPolicy.prohibited
+    private(set) var didFinishLaunching = false
+    private(set) var activationIgnoredOtherApps = false
+
+    func activationPolicy() -> NSApplication.ActivationPolicy {
+      policy
+    }
+
+    func setActivationPolicy(
+      _ activationPolicy: NSApplication.ActivationPolicy
+    ) -> Bool {
+      policy = activationPolicy
+      return true
+    }
+
+    func finishLaunching() {
+      didFinishLaunching = true
+    }
+
+    func activate(ignoringOtherApps: Bool) {
+      activationIgnoredOtherApps = ignoringOtherApps
+    }
+  }
+
+  // MARK: - FakeConfigImportProcess
+
+  private final class FakeConfigImportProcess: ConfigImportProcessAccessing {
+    private(set) var automaticTerminationReasons: [String] = []
+
+    func disableAutomaticTermination(_ reason: String) {
+      automaticTerminationReasons.append(reason)
     }
   }
 

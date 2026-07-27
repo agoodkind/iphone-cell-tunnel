@@ -58,6 +58,40 @@ private func readConfigImportFile(at url: URL) throws -> ConfigImportFile {
 
 #if os(macOS)
   let configImportAllowedContentTypes = [UTType.data]
+  let configImportAutomaticTerminationReason = "config import file picker"
+
+  @MainActor
+  protocol ConfigImportApplicationAccessing {
+    func activationPolicy() -> NSApplication.ActivationPolicy
+    func setActivationPolicy(_ activationPolicy: NSApplication.ActivationPolicy) -> Bool
+    func finishLaunching()
+    func activate(ignoringOtherApps: Bool)
+  }
+
+  extension NSApplication: ConfigImportApplicationAccessing {}
+
+  protocol ConfigImportProcessAccessing {
+    func disableAutomaticTermination(_ reason: String)
+  }
+
+  extension ProcessInfo: ConfigImportProcessAccessing {}
+
+  @MainActor
+  func activateConfigImportApplication(
+    _ application: any ConfigImportApplicationAccessing,
+    process: any ConfigImportProcessAccessing
+  ) throws {
+    process.disableAutomaticTermination(configImportAutomaticTerminationReason)
+    if application.activationPolicy() == .prohibited {
+      guard application.setActivationPolicy(.accessory) else {
+        throw TunnelDaemonError.transportFailure(
+          "config import file picker could not activate"
+        )
+      }
+    }
+    application.finishLaunching()
+    application.activate(ignoringOtherApps: true)
+  }
 
   // MARK: - ConfigImportFileAccessing
 
@@ -136,6 +170,10 @@ private func readConfigImportFile(at url: URL) throws -> ConfigImportFile {
 
     func selectFile(suggestedURL: URL) async throws -> URL {
       try await MainActor.run {
+        try activateConfigImportApplication(
+          NSApplication.shared,
+          process: ProcessInfo.processInfo
+        )
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
