@@ -13,8 +13,19 @@
     </dict>
     <key>RunAtLoad</key>
     <true/>
+    <!-- Restart only after an unclean exit. A clean exit is deliberate, either a
+         logout or a stop the user asked for, and restarting it would undo the
+         thing they just did. -->
     <key>KeepAlive</key>
-    <true/>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+    <!-- A failure that repeats on every launch, such as a revoked signature or a
+         missing entitlement, would otherwise respawn forever on launchd's ten
+         second default without the process living long enough to log why. -->
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
     <key>AssociatedBundleIdentifiers</key>
     <array>
         <string>[[AGENT_BUNDLE_ID]]</string>
