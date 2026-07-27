@@ -188,8 +188,15 @@ extension AgentTunnelController {
     logger.notice("agent relay stopped; pairing listener left running")
   }
 
+  /// Tears down everything the agent owns, including the packet tunnel.
+  ///
+  /// The tunnel extension is a separate process that outlives this one and holds
+  /// the installed routes. Stopping only the relay would leave those routes
+  /// pointing at a bridge that no longer exists, so traffic would be dropped
+  /// rather than falling back to the physical interface. Routing intent is
+  /// cleared with it, so a restarted agent and the extension agree.
   func stopControlListener() async {
-    await stopRelay()
+    await disableRouting()
     await controlListener?.stop()
     controlListener = nil
     publicExchange = nil
