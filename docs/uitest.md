@@ -204,7 +204,18 @@ ssh ictguest 'dns-sd -t 12 -B _cellrelaycontrol._tcp local'
 tart exec <your-clone> open -a /Users/admin/ict/Debug-maccatalyst/CellTunnelPhone.app
 ```
 
-Running the Catalyst UI tests in the machine needs a test bundle and an `.xctestrun` test plan, and the build above produces neither. That path is not documented here because it has not been run end to end since the build layout changed, and the obvious shortcuts are both wrong: the engine refuses a build-for-testing outside a gated make flow, and calling `xcodebuild` directly skips the signing override this page depends on, which lands you back at the keychain failure the signing section exists to prevent. Completing this section means finding the gated route, transferring the resulting products the same way as above, and rewriting the absolute host paths the test plan records, since those paths are what let the machine find the app and the test bundle.
+The UI tests run through the dev tool's `ui-test` command, which takes one target and needs no make flow:
+
+```sh
+swift Tools/cell-tunnel-dev.swift ui-test mac-catalyst
+swift Tools/cell-tunnel-dev.swift ui-test iphone-simulator
+```
+
+The command generates the project, applies the same signing override the build steps above rely on, resolves the destination, and runs only the `CellTunnelPhoneUITests` suite. For the simulator target it also picks a phone simulator and boots it first. That suite is one cross-platform target built for both iPhone and Mac Catalyst. `Tests/CellTunnelPhoneUITests/CellTunnelPhoneUITests.swift` covers the status screen, its scrolling, and the config library, and `Tests/CellTunnelPhoneUITests/VPNProfileDisabledUITests.swift` covers the switched-off VPN profile screen.
+
+The tests drive a fixture rather than a live agent. `Apps/iOS/Testing/UITestFixture.swift` is a `#if DEBUG` backend the app substitutes when a launch argument such as `--cell-tunnel-ui-test-fixture` or `--cell-tunnel-ui-test-vpn-disabled` is present, so a run needs no phone, no agent, and no saved VPN profile. `Tools/CellTunnelDevTests/UITestCommandContractTests.swift` pins that boundary: it asserts the fixture stays behind `#if DEBUG` and never reaches `AgentClient`, `ServiceManagement`, the app group, or the device egress probe, and it asserts the `ui-test` command, the cross-platform test target, and the accessibility identifiers the tests tap all still exist.
+
+Run the command on the host, not in the machine. It compiles the app and the test bundle as part of the run, and the machine does not build. Running the tests inside the machine instead would need a test bundle and an `.xctestrun` test plan that the build steps above do not produce, plus rewriting the absolute host paths the plan records, since those paths are what let the machine find the app and the test bundle.
 
 Write test output to a file and copy it back over the network, since `tart exec` output is not always captured.
 
