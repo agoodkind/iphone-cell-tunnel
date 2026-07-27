@@ -45,9 +45,6 @@ extension AgentTunnelController {
     // Warm the cached device address so the first connection carries it, and a
     // late-completing probe re-sends to whatever connection is then current.
     Task { await self.refreshDeviceAddress() }
-    // Reported here rather than only at relay start: the wait for a phone sends no
-    // requests, so a countdown that ignored it would fire while still advertising.
-    onAgentWorkChange?(.advertising)
     logger.notice("agent control listener started for pairing")
   }
 
@@ -71,7 +68,6 @@ extension AgentTunnelController {
     await controlListener.setServerEndpoint(endpoint)
     configureRelayBridgeHandlers()
     relayBridge.start(serviceName: stableHostName())
-    onAgentWorkChange?(.hostingRelay)
     do {
       try await controlListener.armSelectedPeer()
     } catch {
@@ -189,18 +185,12 @@ extension AgentTunnelController {
     relayBridge.onAvailableLinksChange = nil
     relayBridge.onLinkSetChange = nil
     relayBridge.stop()
-    // Back to advertising rather than idle when the pairing listener is still up,
-    // so the agent stays discoverable for a phone about to reconnect, on the
-    // bounded countdown rather than none at all. With no listener there is nothing
-    // to be discovered through, so the short countdown is the honest one.
-    onAgentWorkChange?(controlListener == nil ? .idle : .advertising)
     logger.notice("agent relay stopped; pairing listener left running")
   }
 
   func stopControlListener() async {
     await stopRelay()
     await controlListener?.stop()
-    onAgentWorkChange?(.idle)
     controlListener = nil
     publicExchange = nil
     egressMonitor?.stop()

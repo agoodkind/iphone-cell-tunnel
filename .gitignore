@@ -27,3 +27,4 @@ xcuserdata/
 # authoritative copy is installed into Xcode's profiles folder.
 /AppStore_*.mobileprovision
 /AppStore_*.provisionprofile
+.superpowers/

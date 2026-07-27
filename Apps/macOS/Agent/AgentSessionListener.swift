@@ -23,12 +23,10 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 /// controller, and the reply carries an `AgentControlResponse` JSON.
 final class AgentSessionListener: @unchecked Sendable {
   private let controller: AgentTunnelController
-  private let onActivity: @Sendable () -> Void
   private var listenerConnection: xpc_connection_t?
 
-  init(controller: AgentTunnelController, onActivity: @escaping @Sendable () -> Void) {
+  init(controller: AgentTunnelController) {
     self.controller = controller
-    self.onActivity = onActivity
   }
 
   // MARK: - Lifecycle
@@ -91,7 +89,6 @@ final class AgentSessionListener: @unchecked Sendable {
       logger.notice("agent session listener ignored non-dictionary message")
       return
     }
-    onActivity()
     // The reply dictionary and the peer are non-Sendable libxpc handles, so
     // they are captured together in one box created on this queue. The async
     // controller call crosses the actor boundary with only Sendable values

@@ -142,35 +142,6 @@ actor AgentTunnelController {
   /// change installs or withdraws routes against the live link state.
   var phoneLinkUp = false
 
-  /// Called when what the agent is doing changes, so the runtime can choose how
-  /// long to wait before exiting. Set once at startup.
-  var onAgentWorkChange: (@Sendable (AgentWork) -> Void)?
-
-  // MARK: - Idle work reporting
-
-  func setAgentWorkHandler(_ handler: @escaping @Sendable (AgentWork) -> Void) {
-    onAgentWorkChange = handler
-  }
-
-  /// Whether there is a phone the agent would strand by exiting, asked at the
-  /// moment it is about to.
-  ///
-  /// This requires a live phone link, not merely a relay the agent once started.
-  /// A bridge can fail asynchronously after a start, and a phone can walk away,
-  /// with nothing in either case announcing it. Exiting on the start alone would
-  /// keep a dead agent resident forever; exiting without this check would cut off
-  /// a phone whose UDP link surfaces no drop.
-  func hasPhoneToStrand() -> Bool {
-    relayHosted && phoneLinkUp
-  }
-
-  /// Whether a relay bridge was started and has not been stopped. Weaker than
-  /// `hasPhoneToStrand()`, and used only to tell a momentary link gap apart from a
-  /// phone that has actually gone.
-  func isRelayHosted() -> Bool {
-    relayHosted
-  }
-
   // MARK: - Manager and observer access
 
   /// The resolved tunnel manager, or `nil` before the first resolve. The split-out
