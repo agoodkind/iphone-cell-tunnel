@@ -50,9 +50,9 @@ have.
 ## The interface
 
 **Subscribe.** A client opens one connection and receives a snapshot immediately,
-then a new one whenever the state changes. The snapshot is complete: the status word,
-what the user should do next, whether each control is available, the byte totals, and
-the link list. A client renders it without combining fields.
+then a new one whenever the state changes. The snapshot is complete: which situation
+the machine is in, what the user should do next, whether each control is available,
+the byte totals, and the link list. A client renders it without combining fields.
 
 **Command.** Each user action is one request that either succeeds or returns a reason
 the daemon has already phrased. Import a configuration, activate one, turn routing on
@@ -91,8 +91,8 @@ renders. The app's second copy of peer selection.
 
 ## How this is proven
 
-Every status word and every availability rule becomes a pure function over the
-snapshot, in shared code, with tests. None of them have tests today, and the single
+The rule that picks the situation, and every rule that decides whether a control is
+available, becomes a pure function over the snapshot, in shared code, with tests. None of them have tests today, and the single
 test guarding that boundary asserts that source files contain particular text.
 
 `celltunnelctl` gains a command for each user action, so every flow runs headless.
