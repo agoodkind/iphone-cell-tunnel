@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the Mac agent a real daemon that starts at login, advertises on its own, and remembers the user's routing choice, so an iPhone can find the Mac without the app being open.
+**Goal:** Make the Mac agent a real daemon that starts at login and advertises on its own, so an iPhone can find the Mac without the app being open.
 
-**Architecture:** The agent gains two launchd keys so launchd loads it at login and restarts it if it stops. Its startup path starts the control listener directly rather than waiting for a client request. The routing intent moves from a plain in-memory property to an app-group defaults store modelled on the existing `EgressSelectionStore`, and the agent restores it at boot.
+**Architecture:** The agent gains two launchd keys so launchd loads it at login and restarts it if it stops. Its startup path starts the control listener directly rather than waiting for a client request, which is what publishes the record the iPhone browses for. Routing stays off after any restart and the user turns it back on, so nothing about the routing choice is persisted or restored.
 
 **Tech Stack:** Swift 6, Swift Testing (`@Test` / `#expect`), SwiftPM for `Sources/CellTunnelCore` and `Tests/CellTunnelCoreTests`, Tuist for the app targets, launchd via `SMAppService`.
 
@@ -12,9 +12,7 @@
 
 - The app group identifier is `group.io.goodkind.CellTunnel`, available in Swift as `cellTunnelAppGroupIdentifier` from `CellTunnelCore`. Never hardcode the literal in Swift.
 - The mach service name is `io.goodkind.celltunnel-agent`, available as `agentMachServiceName`. Never hardcode it.
-- Defaults keys in this codebase are dotted reverse-DNS strings prefixed `io.goodkind.celltunnel.`, for example `io.goodkind.celltunnel.selectedEgressDeviceID`.
-- A new store in `Sources/CellTunnelCore` is `public`, is an `enum` with `static` members, and takes an injectable `UserDefaults?` parameter on every entry point defaulting to `nil`, matching `Sources/CellTunnelCore/EgressSelectionStore.swift`.
-- Tests live in `Tests/CellTunnelCoreTests` and use Swift Testing, not XCTest. Follow `Tests/CellTunnelCoreTests/StickyEgressSelectionTests.swift`, which tests a store against a throwaway `UserDefaults` suite.
+- Routing must be off after any restart of the agent, for any reason. Nothing about the routing choice is written to disk, and the agent never turns routing on by itself.
 - Build and gate with the repo's dev tool, not `swift build`:
   `SWIFT_MK_DEV_DIR=/Users/agoodkind/Sites/swift-makefile SWIFT_MK_REQUIRE_SIGNING=1 SWIFT_MK_SIGN_IDENTITY="Apple Development" SWIFT_MK_SIGN_TEAM=H3BMXM4W7H SWIFT_MK_SIGN_STYLE=Automatic swift Tools/cell-tunnel-dev.swift build mac Debug`
 - Run package tests with `swift test --filter <SuiteName>` from the repo root.
@@ -25,169 +23,7 @@
 
 ---
 
-### Task 1: Persist the routing intent
-
-The agent forgets whether the user wanted routing on. `AgentTunnelController.swift:110` declares `var routingEnabled = false` with a comment stating it is in-memory with no persistence, so every agent start resets it to off. This task adds the store and its tests only. Task 3 wires the agent to it.
-
-**Files:**
-- Create: `Sources/CellTunnelCore/RoutingIntentStore.swift`
-- Test: `Tests/CellTunnelCoreTests/RoutingIntentStoreTests.swift`
-
-**Interfaces:**
-- Consumes: `cellTunnelAppGroupIdentifier` from `Sources/CellTunnelCore/Generated/Config.generated.swift`.
-- Produces: `RoutingIntentStore.routingEnabled(from:) -> Bool?`, `RoutingIntentStore.setRoutingEnabled(_:to:)`, `RoutingIntentStore.clear(in:)`. Task 3 calls all three.
-
-- [ ] **Step 1: Write the failing test**
-
-Create `Tests/CellTunnelCoreTests/RoutingIntentStoreTests.swift`:
-
-```swift
-//
-//  RoutingIntentStoreTests.swift
-//  CellTunnelCoreTests
-//
-//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-07-26.
-//  Copyright © 2026, all rights reserved.
-//
-
-import Foundation
-import Testing
-
-@testable import CellTunnelCore
-
-@Suite("Routing intent store")
-struct RoutingIntentStoreTests {
-  private func makeDefaults() -> UserDefaults {
-    let suiteName = "io.goodkind.celltunnel.tests.routingintent.\(UUID().uuidString)"
-    guard let defaults = UserDefaults(suiteName: suiteName) else {
-      fatalError("could not create a throwaway defaults suite")
-    }
-    return defaults
-  }
-
-  /// A machine that has never chosen reports no choice, so the agent can tell
-  /// "never asked" apart from "asked for off".
-  @Test("an unset intent reads as no choice")
-  func unsetReadsAsNoChoice() {
-    let defaults = makeDefaults()
-    #expect(RoutingIntentStore.routingEnabled(from: defaults) == nil)
-  }
-
-  @Test("an intent to route survives being written and read back")
-  func storesEnabled() {
-    let defaults = makeDefaults()
-    RoutingIntentStore.setRoutingEnabled(true, to: defaults)
-    #expect(RoutingIntentStore.routingEnabled(from: defaults) == true)
-  }
-
-  /// Off must be stored rather than treated as absent, or a user who turns
-  /// routing off gets it turned back on at the next agent start.
-  @Test("an intent not to route is stored, not treated as absent")
-  func storesDisabled() {
-    let defaults = makeDefaults()
-    RoutingIntentStore.setRoutingEnabled(false, to: defaults)
-    #expect(RoutingIntentStore.routingEnabled(from: defaults) == false)
-  }
-
-  @Test("clearing returns the store to no choice")
-  func clearRemovesTheChoice() {
-    let defaults = makeDefaults()
-    RoutingIntentStore.setRoutingEnabled(true, to: defaults)
-    RoutingIntentStore.clear(in: defaults)
-    #expect(RoutingIntentStore.routingEnabled(from: defaults) == nil)
-  }
-}
-```
-
-- [ ] **Step 2: Run the test to verify it fails**
-
-Run: `swift test --filter RoutingIntentStoreTests`
-Expected: FAIL to compile, `cannot find 'RoutingIntentStore' in scope`.
-
-- [ ] **Step 3: Write the store**
-
-Create `Sources/CellTunnelCore/RoutingIntentStore.swift`:
-
-```swift
-//
-//  RoutingIntentStore.swift
-//  CellTunnelCore
-//
-//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-07-26.
-//  Copyright © 2026, all rights reserved.
-//
-
-import Foundation
-
-// MARK: - Constants
-
-private let routingIntentEnabledKey = "io.goodkind.celltunnel.routingIntentEnabled"
-
-// MARK: - RoutingIntentStore
-
-/// Remembers whether the user wants traffic routed through the tunnel.
-///
-/// The agent restarts for reasons the user did not ask for, such as a logout or
-/// an upgrade. Without a record of the choice, every restart silently turns
-/// routing off and the user has to notice and turn it back on.
-///
-/// The absence of a value is meaningful and is not the same as off: it means the
-/// user has never chosen, which lets the agent leave routing alone rather than
-/// assert a choice the user never made.
-public enum RoutingIntentStore {
-  private static func resolvedDefaults(_ defaults: UserDefaults?) -> UserDefaults {
-    defaults ?? UserDefaults(suiteName: cellTunnelAppGroupIdentifier) ?? .standard
-  }
-
-  /// The user's choice, or nil when they have never made one.
-  public static func routingEnabled(from defaults: UserDefaults? = nil) -> Bool? {
-    let store = resolvedDefaults(defaults)
-    guard store.object(forKey: routingIntentEnabledKey) != nil else {
-      return nil
-    }
-    return store.bool(forKey: routingIntentEnabledKey)
-  }
-
-  /// Records the user's choice, including a choice not to route.
-  public static func setRoutingEnabled(_ enabled: Bool, to defaults: UserDefaults? = nil) {
-    resolvedDefaults(defaults).set(enabled, forKey: routingIntentEnabledKey)
-  }
-
-  /// Forgets the choice, so the agent treats the machine as never having chosen.
-  public static func clear(in defaults: UserDefaults? = nil) {
-    resolvedDefaults(defaults).removeObject(forKey: routingIntentEnabledKey)
-  }
-}
-```
-
-- [ ] **Step 4: Run the test to verify it passes**
-
-Run: `swift test --filter RoutingIntentStoreTests`
-Expected: PASS, 4 tests.
-
-- [ ] **Step 5: Run the full gate**
-
-Run:
-```bash
-SWIFT_MK_DEV_DIR=/Users/agoodkind/Sites/swift-makefile \
-SWIFT_MK_REQUIRE_SIGNING=1 SWIFT_MK_SIGN_IDENTITY="Apple Development" \
-SWIFT_MK_SIGN_TEAM=H3BMXM4W7H SWIFT_MK_SIGN_STYLE=Automatic \
-swift Tools/cell-tunnel-dev.swift build mac Debug
-```
-Expected: every gate `ok`, exit 0.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add Sources/CellTunnelCore/RoutingIntentStore.swift Tests/CellTunnelCoreTests/RoutingIntentStoreTests.swift
-git commit -S -m "Remember whether the user wants traffic routed" \
-  -m "The choice lived only in agent memory, so every restart turned routing off without the user asking. An absent value stays distinct from off, so a machine that has never chosen is left alone." \
-  -m "Co-authored-by: Claude <noreply@anthropic.com>"
-```
-
----
-
-### Task 2: Load the agent at login and keep it loaded
+### Task 1: Load the agent at login and keep it loaded
 
 The launch agent plist declares a mach service but sets neither `RunAtLoad` nor `KeepAlive`, so launchd starts the agent only when a client dials the service and never restarts it. After a reboot with the app closed, no agent exists.
 
@@ -196,7 +32,7 @@ The launch agent plist declares a mach service but sets neither `RunAtLoad` nor 
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: a generated plist at `Generated/CellTunnelAgent/agent-launchd.plist` carrying `RunAtLoad` and `KeepAlive`. Task 3 relies on the agent being resident.
+- Produces: a generated plist at `Generated/CellTunnelAgent/agent-launchd.plist` carrying `RunAtLoad` and `KeepAlive`. Task 2 relies on the agent being resident.
 
 - [ ] **Step 1: Add the two keys**
 
@@ -245,69 +81,40 @@ git commit -S -m "Load the agent at login and restart it if it stops" \
 
 ---
 
-### Task 3: Advertise and restore the routing choice at startup
+### Task 2: Advertise at startup without waiting for a client
 
-`AgentRuntime.start()` in `Apps/macOS/Agent/main.swift:40-52` registers the launch agent and starts the XPC listener, then stops. It never calls `ensureControlListenerStarted()`, which is the only thing that publishes the Bonjour record the iPhone browses for. Its four callers are all client-request handlers, so a launchd-started agent is silent until a client asks it to pair.
+`AgentRuntime.start()` in `Apps/macOS/Agent/main.swift:40-52` registers the launch agent and starts the XPC listener, then stops. It never calls `ensureControlListenerStarted()`, which is the only thing that publishes the Bonjour record the iPhone browses for. That function's four callers are all client-request handlers, at `AgentTunnelController+Control.swift:63` and `AgentTunnelController+Requests.swift:104, 201, 257`, so a launchd-started agent stays silent until a client asks it to pair. The iPhone cannot send that request, because it reaches the Mac over the local network rather than through the mach service.
 
 **Files:**
-- Modify: `Apps/macOS/Agent/main.swift:40-52`
-- Modify: `Apps/macOS/Agent/AgentTunnelController.swift:103-110`
-- Modify: `Apps/macOS/Agent/AgentTunnelController+Control.swift:334, 344, 352, 372, 439`
-- Modify: `Apps/macOS/Agent/AgentTunnelController+Requests.swift:321`
+- Modify: `Apps/macOS/Agent/AgentTunnelController+Control.swift`
+- Modify: `Apps/macOS/Agent/main.swift:167-171`
 
 **Interfaces:**
-- Consumes: `RoutingIntentStore.routingEnabled(from:)`, `RoutingIntentStore.setRoutingEnabled(_:to:)`, and `RoutingIntentStore.clear(in:)` from Task 1. A resident agent from Task 2.
-- Produces: `AgentTunnelController.restoreStartupState()`, an `async` method taking no arguments and returning nothing, called once from the composition root.
+- Consumes: a resident agent from Task 1.
+- Produces: `AgentTunnelController.startAdvertising()`, an `async` method taking no arguments and returning nothing, called once from the composition root.
 
-- [ ] **Step 1: Make every routing-intent write persist**
+- [ ] **Step 1: Add the startup advertise**
 
-In `AgentTunnelController.swift`, replace the stored property and its comment at lines 103-110 with a computed property backed by the store, so no write site can forget to persist:
-
-```swift
-  /// Whether the user wants traffic routed through the tunnel.
-  ///
-  /// Backed by `RoutingIntentStore`, so the choice survives an agent restart the
-  /// user did not ask for. Reading before any choice has been made yields false,
-  /// which is the safe default: the agent asserts nothing the user did not.
-  var routingEnabled: Bool {
-    get { RoutingIntentStore.routingEnabled() ?? false }
-    set { RoutingIntentStore.setRoutingEnabled(newValue) }
-  }
-```
-
-Leave every existing assignment at `+Control.swift:334, 344, 352, 372, 439` and `+Requests.swift:321` unchanged; they now persist through the setter.
-
-- [ ] **Step 2: Clear the choice on reset**
-
-In `AgentTunnelController+Requests.swift`, in `handleReset()`, immediately after the existing `routingEnabled = false` at line 321, add:
+Add this method to `Apps/macOS/Agent/AgentTunnelController+Control.swift`, inside the existing `extension AgentTunnelController`, immediately after `ensureControlListenerStarted()` ends at line 49:
 
 ```swift
-    RoutingIntentStore.clear()
-```
-
-A reset returns the machine to never-chosen rather than chose-off.
-
-- [ ] **Step 3: Add the startup restore**
-
-Add to `AgentTunnelController+Control.swift`, inside the existing `extension AgentTunnelController`:
-
-```swift
-  /// Brings the agent to a usable state at launch without waiting for a client.
+  /// Publishes the record the iPhone browses for, without waiting to be asked.
   ///
-  /// The iPhone finds the Mac by browsing for the control listener's Bonjour
-  /// record, and nothing else publishes it, so an agent that waits for a request
-  /// is invisible to the one participant that cannot send one.
+  /// The iPhone finds the Mac by browsing for the control listener, and nothing
+  /// else publishes it. The iPhone reaches the Mac over the local network rather
+  /// than the mach service, so it cannot send the request that would start the
+  /// listener. An agent that waits for a request is therefore unreachable by the
+  /// one device it exists to serve.
   ///
-  /// Routing is not started here. The user's remembered choice is honoured only
-  /// once a phone connects, because routing without a relay would install routes
-  /// to nothing.
-  func restoreStartupState() async {
+  /// A failure here is not fatal. The agent keeps serving requests, and the first
+  /// client request retries the same call.
+  func startAdvertising() async {
     do {
       try await ensureControlListenerStarted()
     } catch {
       logger.error(
         """
-        agent startup listener failed \
+        agent startup advertise failed \
         details=\(String(describing: error), privacy: .public) \
         recovery=await-client-request
         """
@@ -316,18 +123,19 @@ Add to `AgentTunnelController+Control.swift`, inside the existing `extension Age
   }
 ```
 
-- [ ] **Step 4: Call it from the composition root**
+- [ ] **Step 2: Call it from the composition root**
 
-In `Apps/macOS/Agent/main.swift`, immediately after `agentRuntime.start()` at line 167 and before the existing `assertRunningConfigMatchesLibrary` task at line 171, add:
+In `Apps/macOS/Agent/main.swift`, immediately after `agentRuntime.start()` at line 167, add:
 
 ```swift
-  // Advertise without waiting for a client. The iPhone browses for the control
-  // listener's record and cannot dial the mach service, so an agent that starts
-  // silent is unreachable by the device it exists to serve.
-  Task { await controller.restoreStartupState() }
+  // Advertise without waiting for a client, because the iPhone browses for the
+  // control listener and cannot dial the mach service that would start it.
+  Task { await controller.startAdvertising() }
 ```
 
-- [ ] **Step 5: Build and gate**
+Leave the existing `assertRunningConfigMatchesLibrary` task that follows it unchanged.
+
+- [ ] **Step 3: Build and gate**
 
 Run:
 ```bash
@@ -338,11 +146,12 @@ swift Tools/cell-tunnel-dev.swift build mac Debug
 ```
 Expected: every gate `ok`, exit 0.
 
-- [ ] **Step 6: Verify the agent advertises with no client**
+- [ ] **Step 4: Verify the agent advertises with no client**
 
 Run:
 ```bash
 launchctl bootout gui/501/io.goodkind.celltunnel-agent 2>/dev/null
+rm -rf /tmp/agent-check.app
 cp -R Products/Debug/CellTunnelAgent.app /tmp/agent-check.app
 open -a /tmp/agent-check.app
 sleep 8
@@ -351,7 +160,7 @@ grep -c 'Add' /tmp/advertise-check.txt
 ```
 Expected: at least one `Add` line, meaning the record is published without any client having sent a request. `dns-sd` without `-t` never terminates over a non-interactive session, so the timeout is required.
 
-- [ ] **Step 7: Verify the routing choice survives a restart**
+- [ ] **Step 5: Verify routing is off after a restart**
 
 Run:
 ```bash
@@ -360,14 +169,14 @@ launchctl kickstart -k gui/501/io.goodkind.celltunnel-agent
 sleep 5
 Products/celltunnelctl status 2>&1 | grep routing_intent
 ```
-Expected: the same `routing_intent` value before and after the restart.
+Expected: `routing_intent=off` after the restart, whatever it was before. The agent must never turn routing on by itself.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add Apps/macOS/Agent/main.swift Apps/macOS/Agent/AgentTunnelController.swift Apps/macOS/Agent/AgentTunnelController+Control.swift Apps/macOS/Agent/AgentTunnelController+Requests.swift
-git commit -S -m "Advertise at startup and keep the routing choice across restarts" \
-  -m "Only a client request published the Bonjour record the iPhone browses for, and the iPhone cannot send one, so a freshly started agent was unreachable by the device it serves." \
+git add Apps/macOS/Agent/main.swift Apps/macOS/Agent/AgentTunnelController+Control.swift
+git commit -S -m "Advertise at startup instead of waiting to be asked" \
+  -m "Only a client request published the record the iPhone browses for, and the iPhone reaches the Mac over the local network rather than the mach service, so it could never send that request." \
   -m "Co-authored-by: Claude <noreply@anthropic.com>"
 ```
 
