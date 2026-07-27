@@ -26,8 +26,8 @@ closed.
 
 **The Mac agent** owns the configuration library, the routing intent, peer selection,
 the relay bridge and its advertisement, the decision to install or withdraw routes,
-byte totals, and the status word each client displays. It starts at login, advertises
-immediately, and runs until the user turns the tunnel off.
+byte totals, and which situation each client is showing. It starts at login,
+advertises immediately, and runs until the login session ends.
 
 **The iPhone tunnel extension** owns discovery, which Mac to dial, the cellular
 forwarder, and its own byte totals.
@@ -38,6 +38,11 @@ pointed at a bridge that no longer exists.
 
 **The app and `celltunnelctl`** own presentation and input. They subscribe to a
 snapshot, render it, and send commands. Neither computes anything.
+
+The daemon publishes which situation it is in rather than the words for it. Each
+client maps that situation to its own text, the app to a screen and the command-line
+tool to a printed line, so wording and translation stay where they belong while the
+decision does not.
 
 A change is out of bounds if it gives the app an ability `celltunnelctl` does not
 have.
@@ -59,13 +64,14 @@ timeouts counted by the client.
 The agent starts at login and keeps running. It stops when the user turns the tunnel
 off, or when the login session ends.
 
-If the agent goes away unexpectedly, launchd starts it again and the session resumes.
-The Mac tunnel extension notices the dropped connection and withdraws its routes, so
-traffic falls back to the physical interface rather than stopping. The app reports
-that the tunnel is no longer carrying traffic rather than showing a stale reading.
+If the agent goes away unexpectedly, launchd starts it again. The Mac tunnel
+extension notices the dropped connection and withdraws its routes, so traffic falls
+back to the physical interface rather than stopping. The app reports that the tunnel
+is no longer carrying traffic rather than showing a stale reading.
 
-The routing intent survives an agent restart, so a machine that was routing before a
-crash is routing again after it.
+Routing does not resume by itself. The agent never turns routing on without being
+asked, so any restart leaves it off and the user turns it back on. Nothing about the
+routing choice is written to disk.
 
 ## What moves out of the app
 
