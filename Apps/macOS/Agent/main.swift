@@ -166,6 +166,10 @@ private func runAgent() -> Never {
 
   agentRuntime.start()
 
+  // Advertise without waiting for a client, because the iPhone browses for the
+  // control listener and cannot dial the mach service that would start it.
+  Task { await controller.startAdvertising() }
+
   // Assert, without mutating the library, that the running tunnel's stamped config id
   // agrees with the library's active selection, surfacing any drift loudly on status.
   Task { await controller.assertRunningConfigMatchesLibrary() }

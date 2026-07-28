@@ -48,6 +48,30 @@ extension AgentTunnelController {
     logger.notice("agent control listener started for pairing")
   }
 
+  /// Publishes the record the iPhone browses for, without waiting to be asked.
+  ///
+  /// The iPhone finds the Mac by browsing for the control listener, and nothing
+  /// else publishes it. The iPhone reaches the Mac over the local network rather
+  /// than the mach service, so it cannot send the request that would start the
+  /// listener. An agent that waits for a request is therefore unreachable by the
+  /// one device it exists to serve.
+  ///
+  /// A failure here is not fatal. The agent keeps serving requests, and the first
+  /// client request retries the same call.
+  func startAdvertising() async {
+    do {
+      try await ensureControlListenerStarted()
+    } catch {
+      logger.error(
+        """
+        agent startup advertise failed \
+        details=\(String(describing: error), privacy: .public) \
+        recovery=await-client-request
+        """
+      )
+    }
+  }
+
   /// Arms the selected peer with the active WireGuard endpoint and starts the
   /// relay bridge, leaving route installation to the existing routing intent.
   func startRelay(wireGuardConfig: String) async throws {
