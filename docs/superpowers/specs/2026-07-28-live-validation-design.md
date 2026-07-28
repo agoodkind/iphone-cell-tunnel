@@ -3,6 +3,12 @@
 Validation runs against the app as it stands, before the daemon redesign changes it, so
 the findings are real today and become the baseline the redesign must not regress.
 
+Two changes belong to this work rather than the redesign, because the resolver claim
+cannot produce a truthful result without them. The tunnel stops inventing a resolver,
+and the app gains a section showing the live tunnel's values so a configuration that
+did not take effect is visible. Everything else here observes the app rather than
+changing it.
+
 ## What each item's evidence is
 
 Two claims are about what a person sees, so the app answers them.
