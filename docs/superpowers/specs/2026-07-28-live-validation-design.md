@@ -96,8 +96,8 @@ artifact. A disagreement is then catchable without a screen.
 
 ## The machine and the phone
 
-The machine runs from storage on an external volume, so the boot volume is untouched
-and removing one directory removes everything.
+The machine is disposable. It is created for a run and removed after it, and where its
+storage lives is a property of whoever runs it rather than of this design.
 
 An iPhone simulator boots inside the machine and runs the relay, so the Mac agent and
 the phone share one network and each finds the other by browsing. Products build on the
