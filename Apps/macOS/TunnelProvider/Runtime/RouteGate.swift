@@ -6,6 +6,7 @@
 //  Copyright © 2026, all rights reserved.
 //
 
+import CellTunnelCore
 import Foundation
 import Network
 import NetworkExtension
@@ -33,13 +34,6 @@ final class RouteGate: @unchecked Sendable {
   private var programDNSServers: [String] = []
   private var programDNSSearchDomains: [String] = []
   private var installed = false
-
-  /// The public resolvers published for an all-traffic config that supplies no
-  /// `DNS =` line, so names resolve over the tunnel. Cloudflare's anycast
-  /// addresses are reachable from any full-tunnel exit. Each is published only
-  /// when the tunnel captures that address family.
-  private static let allTrafficFallbackIPv4DNSServer = "1.1.1.1"
-  private static let allTrafficFallbackIPv6DNSServer = "2606:4700:4700::1111"
 
   /// Records the adapter's requested settings, keeping its tunnel addresses and
   /// replacing its captured routes with the program's scoped set gated by the
@@ -142,27 +136,15 @@ final class RouteGate: @unchecked Sendable {
     return dnsSettings
   }
 
-  /// The DNS servers to publish. A config `DNS =` line wins. When the config
-  /// supplies none, an address family gets a public fallback resolver only when
-  /// the tunnel both carries an address in that family and captures all of that
-  /// family's traffic. Both conditions matter. Without a tunnel address in the
-  /// family the resolver has no source address to be reached from, so its queries
-  /// would leave over a physical interface, which is the leak this exists to
-  /// prevent. Without full capture the system's own resolver is still reachable
-  /// and keeps working, so publishing an override would only override something
-  /// that already answers.
+  /// The resolvers to publish, which are the ones the configuration names and no
+  /// others. A named resolver whose family the tunnel does not carry is dropped,
+  /// since it would have no source address to be answered from.
   private func resolvedDNSServersLocked() -> [String] {
-    if !programDNSServers.isEmpty {
-      return programDNSServers
-    }
-    var servers: [String] = []
-    if tunnelCarriesIPv4Locked(), capturesAllIPv4TrafficLocked() {
-      servers.append(Self.allTrafficFallbackIPv4DNSServer)
-    }
-    if tunnelCarriesIPv6Locked(), capturesAllIPv6TrafficLocked() {
-      servers.append(Self.allTrafficFallbackIPv6DNSServer)
-    }
-    return servers
+    publishableResolvers(
+      named: programDNSServers,
+      tunnelCarriesIPv4: tunnelCarriesIPv4Locked(),
+      tunnelCarriesIPv6: tunnelCarriesIPv6Locked()
+    )
   }
 
   /// Whether the tunnel holds an IPv4 address, so an IPv4 resolver has a source
@@ -176,50 +158,5 @@ final class RouteGate: @unchecked Sendable {
   /// `tunnelCarriesIPv4Locked()`.
   private func tunnelCarriesIPv6Locked() -> Bool {
     settings?.ipv6Settings?.addresses.isEmpty == false
-  }
-
-  /// Whether the captured IPv4 routes cover the whole address space, written as
-  /// `0.0.0.0/0` or as the equivalent `0.0.0.0/1` and `128.0.0.0/1` pair. The
-  /// subnet masks are generated from the prefix length rather than copied from
-  /// the config, so comparing them as text is exact.
-  private func capturesAllIPv4TrafficLocked() -> Bool {
-    let hasDefaultRoute = programIPv4Routes.contains { route in
-      route.destinationSubnetMask == "0.0.0.0"
-    }
-    if hasDefaultRoute {
-      return true
-    }
-    let halfRoutes = programIPv4Routes.filter { $0.destinationSubnetMask == "128.0.0.0" }
-    let halfAddresses = halfRoutes.compactMap { IPv4Address($0.destinationAddress) }
-    let halfBits = halfAddresses.compactMap { Self.leadingBit(of: $0.rawValue) }
-    return halfBits.contains(0) && halfBits.contains(1)
-  }
-
-  /// Whether the captured IPv6 routes cover the whole address space, written as
-  /// `::/0` or as the equivalent `::/1` and `8000::/1` pair.
-  private func capturesAllIPv6TrafficLocked() -> Bool {
-    let hasDefaultRoute = programIPv6Routes.contains { route in
-      route.destinationNetworkPrefixLength.intValue == 0
-    }
-    if hasDefaultRoute {
-      return true
-    }
-    let halfRoutes = programIPv6Routes.filter { route in
-      route.destinationNetworkPrefixLength.intValue == 1
-    }
-    let halfAddresses = halfRoutes.compactMap { IPv6Address($0.destinationAddress) }
-    let halfBits = halfAddresses.compactMap { Self.leadingBit(of: $0.rawValue) }
-    return halfBits.contains(0) && halfBits.contains(1)
-  }
-
-  /// Which half of the address space a `/1` route covers, read from the parsed
-  /// address rather than its text. A config carries its addresses through
-  /// verbatim, so `::`, `0::`, and `0:0:0:0:0:0:0:0` all name the same address
-  /// and all have to be recognized.
-  private static func leadingBit(of rawValue: Data) -> Int? {
-    guard let firstByte = rawValue.first else {
-      return nil
-    }
-    return Int(firstByte >> 7)
   }
 }
