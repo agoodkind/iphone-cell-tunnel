@@ -197,6 +197,9 @@ actor AgentControlListener {
     nwListener.stateUpdateHandler = { state in
       applyListenerState(state)
     }
+    nwListener.serviceRegistrationUpdateHandler = { change in
+      applyServiceRegistrationChange(change)
+    }
     nwListener.newConnectionHandler = { [weak self] connection in
       Task { await self?.acceptConnection(connection) }
     }
