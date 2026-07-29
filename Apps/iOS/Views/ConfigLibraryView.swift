@@ -23,7 +23,7 @@
   private let configLibraryDeleteTitle = "Delete"
   private let configLibraryActionsAccessibilityLabel = "Config actions"
   private let configLibraryRenameSheetTitle = "Rename Config"
-  private let configLibraryImportFailureTitle = "Unable to Import Config"
+  private let configLibraryImportFailureTitle = "Unable to Import Configuration"
   private let configLibraryRenameFieldTitle = "Name"
   private let configLibraryRenameConfirmTitle = "Rename"
   private let configLibraryCancelTitle = "Cancel"

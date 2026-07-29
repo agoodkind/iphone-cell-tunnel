@@ -40,9 +40,9 @@ extension AgentTunnelController {
         details=\(String(describing: error), privacy: .public) recovery=return-failure
         """
       )
-      return failure(
-        errorCode: .internal,
-        message: "store config failed: \(error.localizedDescription)")
+      // The app shows this message to a person, so it carries the recovery and no
+      // internal prefix. The log line above keeps the underlying error verbatim.
+      return failure(errorCode: .internal, message: userFacingMessage(for: error))
     }
     return await handleStatus()
   }

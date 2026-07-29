@@ -113,7 +113,7 @@
       case .success:
         dismissImport()
       case .failure(let error):
-        failImport(message: error.localizedDescription)
+        failImport(message: userFacingMessage(for: error))
       }
     }
 
