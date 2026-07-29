@@ -31,7 +31,10 @@ enum CellTunnelCtl {
       return
     }
 
-    if arguments.first == helpSubcommand || arguments.first == helpShortSubcommand {
+    // Asking what a command does must never run it. Help was recognised only as the
+    // first argument, so `reset --help` reached the parser, which ignores trailing
+    // arguments and performed the reset.
+    if arguments.contains(helpSubcommand) || arguments.contains(helpShortSubcommand) {
       printUsage()
       return
     }

@@ -37,24 +37,33 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
       throw TunnelDaemonError.usage("missing command")
     }
 
+    let extraArguments = Array(arguments.dropFirst())
+
     switch command {
     case "status":
+      try rejectExtraArguments(extraArguments, command: command)
       return .status
     case "check":
+      try rejectExtraArguments(extraArguments, command: command)
       return .check
     case "peers":
+      try rejectExtraArguments(extraArguments, command: command)
       return .peers
     case "configs":
       return .configs(try ConfigsCommand.parse(arguments: Array(arguments.dropFirst())))
     case "start-discovery":
+      try rejectExtraArguments(extraArguments, command: command)
       return .startDiscovery
     case "stop-discovery":
+      try rejectExtraArguments(extraArguments, command: command)
       return .stopDiscovery
     case "select":
       return try .select(reference: parseSelect(arguments: Array(arguments.dropFirst())))
     case "stop":
+      try rejectExtraArguments(extraArguments, command: command)
       return .stop
     case "reset":
+      try rejectExtraArguments(extraArguments, command: command)
       return .reset
     case "start":
       return .start(try parseStart(arguments: Array(arguments.dropFirst())))
@@ -62,6 +71,17 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
       return .smoke(try parseSmoke(arguments: Array(arguments.dropFirst())))
     default:
       throw TunnelDaemonError.usage("unknown command: \(command)")
+    }
+  }
+
+  /// Refuses trailing arguments a command takes no meaning from.
+  ///
+  /// Silently ignoring them turns a typed flag into permission to proceed, which is
+  /// how asking a command what it does ran it instead.
+  private static func rejectExtraArguments(_ arguments: [String], command: String) throws {
+    guard arguments.isEmpty else {
+      throw TunnelDaemonError.usage(
+        "\(command) takes no arguments, got: \(arguments.joined(separator: " "))")
     }
   }
 
