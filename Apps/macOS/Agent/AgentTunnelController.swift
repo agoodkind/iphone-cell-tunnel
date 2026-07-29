@@ -36,6 +36,10 @@ actor AgentTunnelController {
   /// `replaceStatusObserver(_:)` so the lifecycle stays in one place.
   private var statusObserver: NSObjectProtocol?
   var controlListener: AgentControlListener?
+  /// The in-flight control-listener start, so concurrent callers share one listener.
+  /// This actor is re-entrant, so a nil check followed by an await is not enough on its
+  /// own to keep a second caller from starting a second listener on the same port.
+  var controlListenerStart: Task<Void, Error>?
   let relayBridge: AgentRelayBridge
   let relayBrowser: RelayDeviceBrowser
   /// The agent's config library, the single source of truth the Mac app and the
