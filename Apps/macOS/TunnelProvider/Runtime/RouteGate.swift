@@ -8,7 +8,6 @@
 
 import CellTunnelCore
 import Foundation
-import Network
 import NetworkExtension
 
 // MARK: - RouteGate
