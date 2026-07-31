@@ -34,8 +34,16 @@ extension AgentTunnelController {
         """
         agent discovery could not start the control listener \
         details=\(String(describing: error), privacy: .public) \
-        recovery=browser-only
+        recovery=report-to-client
         """
+      )
+      // Reporting the browser half as plain success would tell a person the Mac is
+      // discoverable when nothing is advertising it, which is the state they ran this
+      // to leave.
+      return failure(
+        errorCode: .internal,
+        message: "discovery started browsing, but this Mac is not advertising: "
+          + error.localizedDescription
       )
     }
     logger.notice("agent relay discovery started from browser")

@@ -64,6 +64,17 @@ actor AgentTunnelController {
   )
   /// The pending rebuild of a failed control listener, cancelled by a teardown.
   var listenerRestartTimer: DispatchSourceTimer?
+  /// Which control listener the controller is currently willing to hear from. It is
+  /// bumped whenever a listener is retired, so a report or a rebuild belonging to an
+  /// older one is ignored rather than tearing down its replacement.
+  var controlListenerGeneration = 0
+  /// Whether a rebuild is currently building a listener, read as that listener is
+  /// stored so a later report knows where it came from.
+  var isRebuildingControlListener = false
+  /// Whether the listener currently held came from a rebuild rather than from a
+  /// client request. A rebuilt listener that binds does not clear the run of
+  /// failures, so a listener that binds and fails repeatedly still reaches the bound.
+  var controlListenerFromRebuild = false
   let relayBridge: AgentRelayBridge
   let relayBrowser: RelayDeviceBrowser
   /// The agent's config library, the single source of truth the Mac app and the
