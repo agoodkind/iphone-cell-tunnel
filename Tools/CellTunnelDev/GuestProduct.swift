@@ -9,6 +9,7 @@
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
+import SwiftMkCore
 
 // MARK: - Constants
 
@@ -19,8 +20,6 @@ private let guestSigningTeamKey = "SWIFT_MK_SIGN_TEAM"
 private let guestSigningIdentityKey = "SWIFT_MK_SIGN_IDENTITY"
 private let guestSigningStyleKey = "SWIFT_MK_SIGN_STYLE"
 private let guestRequireSigningKey = "SWIFT_MK_REQUIRE_SIGNING"
-private let guestTeamIdentifierPrefix = "TeamIdentifier="
-private let guestTeamIdentifierAbsent = "not set"
 private let phoneAppBundleName = "CellTunnelPhone.app"
 private let providerBundleName = "CellTunnelTunnelProvider.appex"
 private let providerBinaryName = "CellTunnelTunnelProvider"
@@ -154,51 +153,28 @@ func verifyGuestProductSignatures(_ products: [GuestProduct], expectedTeam: Stri
         """
       )
     }
-    let result = try capture(
-      "codesign", ["-dv", "--verbose=2", product.hostPath.path], echoOutput: false)
-    guard result.status == 0 else {
-      throw ToolError.failure(
-        """
-        guest: `codesign -dv` failed for the \(product.label) product at \
-        \(product.hostPath.path) with status \(result.status); \
-        output: \(guestOutputExcerpt(result.output))
-        """
-      )
-    }
+    // Simulator products are ad-hoc by design and never reach a keychain, so only the
+    // products that must carry a team are checked, matching how the engine verifies a
+    // build's products.
     guard product.requiresTeamIdentifier else {
       continue
     }
-    let team = guestTeamIdentifier(in: result.output)
-    guard let team, team == expectedTeam else {
+    // Read the signature through the engine's verification channel rather than
+    // spawning codesign here. It compares the reported team against the same
+    // signing inputs this run builds with, and logs the found and expected values
+    // when they disagree.
+    guard SigningVerification.verifyArtifacts(paths: [product.hostPath.path]) else {
       throw ToolError.failure(
         """
-        guest: the \(product.label) product at \(product.hostPath.path) reports \
-        TeamIdentifier=\(team ?? guestTeamIdentifierAbsent) but this run needs \
-        \(expectedTeam); such a bundle launches normally and only fails later in the \
-        guest at the keychain with status -34018, so rebuild with \
+        guest: the \(product.label) product at \(product.hostPath.path) is not signed \
+        for team \(expectedTeam); such a bundle launches normally and only fails later \
+        in the guest at the keychain with status -34018, so rebuild with \
         \(guestSigningIdentityKey) and \(guestSigningTeamKey) set
         """
       )
     }
-    printToolOutput("guest: \(product.label) signed for team \(team)")
+    printToolOutput("guest: \(product.label) signed for team \(expectedTeam)")
   }
-}
-
-/// The team identifier `codesign -dv` reported, or nil when the signature carries none.
-func guestTeamIdentifier(in codesignOutput: String) -> String? {
-  for rawLine in codesignOutput.components(separatedBy: .newlines) {
-    let line = rawLine.trimmingCharacters(in: .whitespaces)
-    guard line.hasPrefix(guestTeamIdentifierPrefix) else {
-      continue
-    }
-    let value = String(line.dropFirst(guestTeamIdentifierPrefix.count))
-      .trimmingCharacters(in: .whitespaces)
-    if value.isEmpty || value == guestTeamIdentifierAbsent {
-      return nil
-    }
-    return value
-  }
-  return nil
 }
 
 // MARK: - Tunnel provider

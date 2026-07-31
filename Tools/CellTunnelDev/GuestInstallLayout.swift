@@ -114,7 +114,7 @@ private func transferGuestBundle(
     mkdir -p '\(remoteDirectory)'
     ditto -x -k '\(remoteArchive)' '\(remoteDirectory)'
     rm -f '\(remoteArchive)'
-    codesign -v --verbose=2 '\(remoteDirectory)/\(bundleName)'
+    codesign --verify --verbose=2 '\(remoteDirectory)/\(bundleName)'
     """
   try shell.runScript(
     script,

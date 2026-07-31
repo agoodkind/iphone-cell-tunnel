@@ -47,32 +47,6 @@ struct GuestHarnessContractTests {
     }
   }
 
-  // MARK: - Signing
-
-  @Test func adHocSignatureReportsNoTeam() {
-    // An ad-hoc bundle reaches the keychain nowhere, and this is the wording codesign
-    // uses for it, so reading it as "no team" is what stops the run.
-    let output = """
-      Executable=/tmp/CellTunnelAgent.app/Contents/MacOS/CellTunnelAgent
-      Identifier=io.goodkind.CellTunnel.Agent
-      Signature=adhoc
-      TeamIdentifier=not set
-      """
-
-    #expect(guestTeamIdentifier(in: output) == nil)
-  }
-
-  @Test func developmentSignatureReportsItsTeam() {
-    let output = """
-      Executable=/tmp/CellTunnelAgent.app/Contents/MacOS/CellTunnelAgent
-      Identifier=io.goodkind.CellTunnel.Agent
-      Authority=Apple Development: Alexander Goodkind
-      TeamIdentifier=H3BMXM4W7H
-      """
-
-    #expect(guestTeamIdentifier(in: output) == "H3BMXM4W7H")
-  }
-
   // MARK: - Launch agent
 
   @Test func launchAgentRunsTheTransferredBinaryUnderTheRequestedServiceName() throws {
