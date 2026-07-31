@@ -104,3 +104,33 @@ struct ListenerRestartTests {
     #expect(subject.recordFailure() == .giveUp)
   }
 }
+
+// MARK: - AdvertisingStatusTests
+
+/// Covers the status field that says whether an iPhone can find this Mac.
+///
+/// A control listener that lost its port is invisible in every other field, so a
+/// person sees no peers with nothing naming the cause.
+@Suite("Advertising is reported in status")
+struct AdvertisingStatusTests {
+  @Test("a Mac that is advertising says so")
+  func advertisingMacSaysSo() {
+    var snapshot = TunnelDaemonStatusSnapshot()
+    snapshot.advertising = .advertising
+    #expect(snapshot.renderedOutput.contains("advertising=yes"))
+  }
+
+  @Test("a Mac that is not advertising says so")
+  func nonAdvertisingMacSaysSo() {
+    var snapshot = TunnelDaemonStatusSnapshot()
+    snapshot.advertising = .notAdvertising
+    #expect(snapshot.renderedOutput.contains("advertising=no"))
+  }
+
+  /// An agent that predates the field reports nothing rather than guessing, so a
+  /// reader tells "not advertising" from "did not say".
+  @Test("a producer that does not report it says nothing")
+  func silentProducerSaysNothing() {
+    #expect(!TunnelDaemonStatusSnapshot().renderedOutput.contains("advertising="))
+  }
+}

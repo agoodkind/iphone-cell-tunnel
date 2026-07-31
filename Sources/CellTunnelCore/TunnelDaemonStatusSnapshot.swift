@@ -40,6 +40,23 @@ public enum TunnelVPNProfileState: String, Codable, Equatable, Sendable {
   case enabled
 }
 
+// MARK: - TunnelAdvertisingState
+
+/// Whether this Mac is publishing the record an iPhone browses for.
+///
+/// An iPhone can only find a Mac that is advertising, so a Mac that is not says why
+/// no peer ever appears. The control listener binds a fixed port and can lose it to
+/// another process or an interface change, and that is invisible from every other
+/// field.
+public enum TunnelAdvertisingState: String, Codable, Equatable, Sendable {
+  case advertising = "yes"
+  case notAdvertising = "no"
+
+  public init(isAdvertising: Bool) {
+    self = isAdvertising ? .advertising : .notAdvertising
+  }
+}
+
 // MARK: - TunnelDiscoveryPhase
 
 public enum TunnelDiscoveryPhase: String, Codable, Equatable, Sendable {
@@ -243,6 +260,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
   /// the Mac lists and selects egress through, with the selected one flagged. `nil`
   /// from a producer that predates the field; only the Mac agent populates it.
   public var connectedPeers: [ConnectedPeer]?
+  /// Whether this Mac is publishing the record an iPhone browses for. `nil` from a
+  /// producer that predates the field, which a reader tells apart from not advertising.
+  public var advertising: TunnelAdvertisingState?
   /// The agent's whole config library as text-free summaries, so the Mac Configs
   /// card reads the same poll as the Relay tile and the two never diverge. `nil`
   /// from a producer that has no library (iPhone, simulator, preview).
@@ -289,6 +309,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     routingIntentEnabled: TunnelRoutingIntent? = nil,
     agentLinks: [AgentLinkStatus]? = nil,
     connectedPeers: [ConnectedPeer]? = nil,
+    advertising: TunnelAdvertisingState? = nil,
     configLibrary: [TunnelConfigSummary]? = nil,
     activeConfigID: UUID? = nil,
     configDrift: String? = nil,
@@ -322,6 +343,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     self.routingIntentEnabled = routingIntentEnabled
     self.agentLinks = agentLinks
     self.connectedPeers = connectedPeers
+    self.advertising = advertising
     self.configLibrary = configLibrary
     self.activeConfigID = activeConfigID
     self.configDrift = configDrift
@@ -347,6 +369,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
             + (link.isCarrying ? " carrying" : " warm")
         )
       }
+    }
+    if let advertising {
+      lines.append("advertising=\(advertising.rawValue)")
     }
     if let connectedPeers {
       lines.append("peers=\(connectedPeers.count)")

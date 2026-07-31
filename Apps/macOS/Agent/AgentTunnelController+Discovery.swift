@@ -39,7 +39,9 @@ extension AgentTunnelController {
       )
       // Reporting the browser half as plain success would tell a person the Mac is
       // discoverable when nothing is advertising it, which is the state they ran this
-      // to leave.
+      // to leave. This catches only a listener that could not be constructed. One that
+      // is built and then fails to bind reports asynchronously, and the snapshot's
+      // `advertising` field is what names that.
       return failure(
         errorCode: .internal,
         message: "discovery started browsing, but this Mac is not advertising: "

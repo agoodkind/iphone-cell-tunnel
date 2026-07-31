@@ -373,6 +373,9 @@ extension AgentTunnelController {
     merged.routingIntentEnabled = TunnelRoutingIntent(enabled: routingEnabled)
     merged.agentLinks = agentLinks.withLock { $0 }
     merged.connectedPeers = connectedPeers.withLock { $0 }
+    // Whether an iPhone can find this Mac at all. A listener that lost its port is
+    // invisible in every other field, so no peer ever appears and nothing says why.
+    merged.advertising = TunnelAdvertisingState(isAdvertising: controlListener != nil)
     merged.configLibrary = configStore.summaries()
     merged.activeConfigID = configStore.activeID
     merged.configDrift = configDriftMessage
