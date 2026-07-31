@@ -39,7 +39,6 @@ struct ProjectGenerationFingerprintTests {
   @Test("a new file changes the digest")
   func newFileChangesTheDigest() throws {
     let root = try makeRoot()
-    defer { try? FileManager.default.removeItem(at: root) }
     try write("enum Existing {}", to: root.appendingPathComponent("Existing.swift"))
 
     let before = try projectGenerationFileSetDigest(roots: [root])
@@ -47,6 +46,8 @@ struct ProjectGenerationFingerprintTests {
     let after = try projectGenerationFileSetDigest(roots: [root])
 
     #expect(before != after)
+
+    try FileManager.default.removeItem(at: root)
   }
 
   /// Editing a file leaves the generated project correct, so it must not force a
@@ -54,7 +55,6 @@ struct ProjectGenerationFingerprintTests {
   @Test("editing a file leaves the digest alone")
   func editingAFileLeavesTheDigestAlone() throws {
     let root = try makeRoot()
-    defer { try? FileManager.default.removeItem(at: root) }
     let file = root.appendingPathComponent("Edited.swift")
     try write("enum Edited {}", to: file)
 
@@ -63,12 +63,13 @@ struct ProjectGenerationFingerprintTests {
     let after = try projectGenerationFileSetDigest(roots: [root])
 
     #expect(before == after)
+
+    try FileManager.default.removeItem(at: root)
   }
 
   @Test("deleting a file changes the digest")
   func deletingAFileChangesTheDigest() throws {
     let root = try makeRoot()
-    defer { try? FileManager.default.removeItem(at: root) }
     let removed = root.appendingPathComponent("Removed.swift")
     try write("enum Kept {}", to: root.appendingPathComponent("Kept.swift"))
     try write("enum Removed {}", to: removed)
@@ -78,6 +79,8 @@ struct ProjectGenerationFingerprintTests {
     let after = try projectGenerationFileSetDigest(roots: [root])
 
     #expect(before != after)
+
+    try FileManager.default.removeItem(at: root)
   }
 
   /// A rename keeps the file count and the contents, so a digest built from either
@@ -85,7 +88,6 @@ struct ProjectGenerationFingerprintTests {
   @Test("renaming a file changes the digest")
   func renamingAFileChangesTheDigest() throws {
     let root = try makeRoot()
-    defer { try? FileManager.default.removeItem(at: root) }
     let original = root.appendingPathComponent("Original.swift")
     try write("enum Subject {}", to: original)
 
@@ -95,6 +97,8 @@ struct ProjectGenerationFingerprintTests {
     let after = try projectGenerationFileSetDigest(roots: [root])
 
     #expect(before != after)
+
+    try FileManager.default.removeItem(at: root)
   }
 
   /// The manifest globs nested directories, so a file added several levels down has to
@@ -102,7 +106,6 @@ struct ProjectGenerationFingerprintTests {
   @Test("a file in a nested directory counts")
   func aFileInANestedDirectoryCounts() throws {
     let root = try makeRoot()
-    defer { try? FileManager.default.removeItem(at: root) }
     try write("enum Top {}", to: root.appendingPathComponent("Top.swift"))
 
     let before = try projectGenerationFileSetDigest(roots: [root])
@@ -112,6 +115,8 @@ struct ProjectGenerationFingerprintTests {
     let after = try projectGenerationFileSetDigest(roots: [root])
 
     #expect(before != after)
+
+    try FileManager.default.removeItem(at: root)
   }
 
   /// A checkout can omit an optional directory, and generation still has to run rather
@@ -119,7 +124,6 @@ struct ProjectGenerationFingerprintTests {
   @Test("a missing root contributes nothing")
   func aMissingRootContributesNothing() throws {
     let root = try makeRoot()
-    defer { try? FileManager.default.removeItem(at: root) }
     try write("enum Present {}", to: root.appendingPathComponent("Present.swift"))
     let absent = root.appendingPathComponent("does-not-exist")
 
@@ -127,5 +131,7 @@ struct ProjectGenerationFingerprintTests {
     let withoutAbsent = try projectGenerationFileSetDigest(roots: [root])
 
     #expect(withAbsent == withoutAbsent)
+
+    try FileManager.default.removeItem(at: root)
   }
 }
