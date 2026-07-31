@@ -39,6 +39,23 @@ let package = Package(
       path: "Sources/CellTunnelSignalSupport",
       publicHeadersPath: "include"
     ),
+    // The tunnel extension's runtime is otherwise reachable only through the
+    // Tuist app target, which no test target depends on. These three files hold
+    // the route gate, the relay socket, and the liveness rule that withdraws
+    // routes, so they are mapped here to be driven from the package tests.
+    .target(
+      name: "CellTunnelTunnelRuntime",
+      dependencies: [
+        "CellTunnelCore",
+        "CellTunnelLog",
+      ],
+      path: "Apps/macOS/TunnelProvider/Runtime",
+      sources: [
+        "RelayLivenessMonitor.swift",
+        "RelayTransport.swift",
+        "RouteGate.swift",
+      ]
+    ),
     .executableTarget(
       name: "celltunnelctl",
       dependencies: [
@@ -54,6 +71,7 @@ let package = Package(
         "CellTunnelCatalystPresentation",
         "CellTunnelCore",
         "CellTunnelLog",
+        "CellTunnelTunnelRuntime",
       ]
     ),
   ]
