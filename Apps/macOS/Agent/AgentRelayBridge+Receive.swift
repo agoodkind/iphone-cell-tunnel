@@ -33,9 +33,9 @@ extension AgentRelayBridge {
     }
   }
 
-  // The Mac loopback receive: forward real data to the carrying phone link and
-  // tear the bridge down on a receive error, since the extension connection is
-  // the single downstream side.
+  // The Mac loopback receive: answer the extension's liveness keepalive, forward
+  // real data to the carrying phone link, and tear the bridge down on a receive
+  // error, since the extension connection is the single downstream side.
   private func handleMacReceive(_ connection: NWConnection, data: Data?, error: NWError?) {
     if let error {
       logger.error(
@@ -49,7 +49,15 @@ extension AgentRelayBridge {
       return
     }
     if let data, !data.isEmpty {
-      forward(data, fromMac: true)
+      // The extension keepalives this socket to decide whether this process is
+      // still alive, so the heartbeat is answered here. Forwarding it would send
+      // it to the iPhone, which echoes it back into the phone link, and the
+      // extension would never hear an answer.
+      if RelayHeartbeat.isHeartbeat(data) {
+        sendHeartbeatEcho(on: connection)
+      } else {
+        forward(data, fromMac: true)
+      }
     }
     receive(on: connection, fromMac: true)
   }

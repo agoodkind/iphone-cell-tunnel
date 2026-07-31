@@ -27,6 +27,14 @@ private let relayProtocolName = "WireGuard"
 // iPhone, because a listener inside this extension cannot receive inbound.
 private let agentLoopbackHost = "127.0.0.1"
 
+// The extension keepalives the agent over loopback and treats a run of
+// unanswered keepalives as the agent being gone. Loopback does not lose
+// datagrams, so a miss means the agent is not servicing its socket; three of them
+// at two seconds tolerates a briefly stalled agent while keeping the window in
+// which traffic is black holed to a few seconds.
+private let relayKeepaliveIntervalMilliseconds = 2_000
+private let relayMissedKeepalivesBeforeGone = 3
+
 // The completion handler arrives from Objective-C without a Sendable marking;
 // box it so the start Task can call it across the concurrency boundary.
 private struct UncheckedSendableBox<Value>: @unchecked Sendable {
@@ -75,6 +83,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
   }
   private var resolvedServerAddresses: HostAddressResolver.Resolved?
   private var throughputLogger: RelayThroughputLogger?
+  private var livenessMonitor: RelayLivenessMonitor?
 
   // The designated initializer takes the graph, so a test can build the provider
   // with fakes.
@@ -171,6 +180,8 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     self.throughputLogger = relayThroughputLogger
     relayThroughputLogger.start()
 
+    startLivenessMonitor()
+
     logger.notice("tunnel start completion handler called success=true")
   }
 
@@ -178,6 +189,7 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
     logger.notice(
       "tunnel stop request received reason=\(String(describing: reason), privacy: .public)"
     )
+    stopLivenessMonitor()
     throughputLogger?.stop()
     throughputLogger = nil
 
@@ -417,5 +429,44 @@ final class PacketTunnelProvider: NEPacketTunnelProvider, @unchecked Sendable {
       host: NWEndpoint.Host(agentLoopbackHost),
       port: resolvedRelayListenerPort()
     )
+  }
+}
+
+// MARK: - Agent liveness
+
+extension PacketTunnelProvider {
+  /// Starts watching the agent, so the captured routes come down when it goes away.
+  ///
+  /// This extension outlives the agent and holds the routes, so an agent that
+  /// crashed or was force quit would otherwise leave every captured packet pointed
+  /// at a relay bridge that no longer exists.
+  ///
+  /// The withdrawal callback runs on the monitor's queue. `applyRouteState` reads no
+  /// stored property of this class other than the lock-guarded route gate before it
+  /// hands the settings to NetworkExtension, so calling it from there leaves the
+  /// serialization of the lifecycle callbacks intact.
+  func startLivenessMonitor() {
+    // A second start must retire the first monitor. Two live monitors share one
+    // transport, so the newer one takes the keepalive handler and the older one stops
+    // seeing replies, reaches its own gone verdict, and withdraws the routes of a
+    // healthy tunnel.
+    stopLivenessMonitor()
+    let monitor = RelayLivenessMonitor(
+      transport: relayTransport,
+      missedRepliesBeforeGone: relayMissedKeepalivesBeforeGone,
+      intervalMilliseconds: relayKeepaliveIntervalMilliseconds
+    )
+    monitor.onAgentGone = { [weak self] in
+      self?.applyRouteState(false)
+    }
+    livenessMonitor = monitor
+    monitor.start()
+  }
+
+  /// Stops watching the agent. A shutdown calls this before closing the transport,
+  /// so a tick already in flight cannot redial the socket being closed.
+  func stopLivenessMonitor() {
+    livenessMonitor?.stop()
+    livenessMonitor = nil
   }
 }
