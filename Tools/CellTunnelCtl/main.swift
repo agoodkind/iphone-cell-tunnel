@@ -12,8 +12,6 @@ import CellTunnelSignalSupport
 import Foundation
 
 private let logger = CellTunnelLog.logger(category: .daemon)
-private let helpSubcommand = "--help"
-private let helpShortSubcommand = "-h"
 private let interruptExitStatus: Int32 = 130
 private let terminationExitStatus: Int32 = 143
 private let millisecondsPerSecond: TimeInterval = 1_000
@@ -31,10 +29,7 @@ enum CellTunnelCtl {
       return
     }
 
-    // Asking what a command does must never run it. Help was recognised only as the
-    // first argument, so `reset --help` reached the parser, which ignores trailing
-    // arguments and performed the reset.
-    if arguments.contains(helpSubcommand) || arguments.contains(helpShortSubcommand) {
+    if isHelpRequest(arguments: arguments) {
       printUsage()
       return
     }

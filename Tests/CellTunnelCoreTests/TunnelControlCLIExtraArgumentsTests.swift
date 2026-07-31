@@ -58,3 +58,37 @@ struct TunnelControlCLIExtraArgumentsTests {
     #expect(action == .select(reference: "2"))
   }
 }
+
+// MARK: - TunnelControlCLIHelpRequestTests
+
+/// Covers which argument vectors ask for help rather than for an action.
+@Suite("Asking for help is recognised")
+struct TunnelControlCLIHelpRequestTests {
+  /// A person who types the obvious word gets help, not an unknown-command error.
+  @Test("the bare word asks for help")
+  func bareWordAsksForHelp() {
+    #expect(isHelpRequest(arguments: ["help"]))
+  }
+
+  @Test("either flag asks for help from any position")
+  func eitherFlagAsksForHelpAnywhere() {
+    #expect(isHelpRequest(arguments: ["--help"]))
+    #expect(isHelpRequest(arguments: ["-h"]))
+    #expect(isHelpRequest(arguments: ["reset", "--help"]))
+    #expect(isHelpRequest(arguments: ["configs", "import", "-h"]))
+  }
+
+  /// A configuration can be named `help`, so the word counts only as the command
+  /// itself. Treating it as help anywhere would make that configuration unreachable.
+  @Test("the word later in the arguments is a value, not a request for help")
+  func wordLaterIsAValue() {
+    #expect(!isHelpRequest(arguments: ["configs", "rename", "1", "help"]))
+    #expect(!isHelpRequest(arguments: ["select", "help"]))
+  }
+
+  @Test("an ordinary command asks for nothing")
+  func ordinaryCommandAsksForNothing() {
+    #expect(!isHelpRequest(arguments: ["status"]))
+    #expect(!isHelpRequest(arguments: []))
+  }
+}

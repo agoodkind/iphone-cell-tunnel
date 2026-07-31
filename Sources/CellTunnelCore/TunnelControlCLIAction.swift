@@ -16,6 +16,25 @@ private let noRelayPeersMessage = "no peers found"
 private let noConfigsMessage = "no configs"
 private let singleArgumentCount = 1
 private let renameArgumentCount = 2
+private let helpFlag = "--help"
+private let helpShortFlag = "-h"
+private let helpWord = "help"
+
+/// Whether the person asked what the tool does rather than asking it to do something.
+///
+/// A help flag counts anywhere in the arguments, because asking what a command does must
+/// never run it, and `reset --help` would otherwise reach a parser that ignores trailing
+/// arguments and performs the reset.
+///
+/// The bare word counts only as the first argument. Counting it anywhere would make a
+/// configuration named `help` impossible to rename or import, since the request would
+/// print usage instead.
+public func isHelpRequest(arguments: [String]) -> Bool {
+  if arguments.first == helpWord {
+    return true
+  }
+  return arguments.contains(helpFlag) || arguments.contains(helpShortFlag)
+}
 
 public enum TunnelControlCLIAction: Equatable, Sendable {
   case check
