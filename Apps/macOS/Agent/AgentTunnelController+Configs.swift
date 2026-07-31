@@ -34,8 +34,15 @@ extension AgentTunnelController {
       saved = try configStore.addDeduplicated(name: name, text: text)
       configStore.setActive(id: saved.id)
     } catch {
-      logger.error("agent import config store failed recovery=return-failure")
-      return failure(errorCode: .internal, message: "store config failed")
+      logger.error(
+        """
+        agent import config store failed \
+        details=\(String(describing: error), privacy: .public) recovery=return-failure
+        """
+      )
+      // The app shows this message to a person, so it carries the recovery and no
+      // internal prefix. The log line above keeps the underlying error verbatim.
+      return failure(errorCode: .internal, message: userFacingMessage(for: error))
     }
     return await handleStatus()
   }

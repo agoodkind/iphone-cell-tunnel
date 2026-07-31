@@ -1,0 +1,9 @@
+version: 2
+
+secret:
+  ignored-matches:
+    # The name of the environment variable sshpass reads its password from. The
+    # value is never in the repository; only the variable name is, and the name
+    # contains "pass", which the generic-password detector matches on.
+    - name: SSHPASS environment variable name in the guest shell
+      match: dc04e55d6c822a4ce93f8c4e3c3fb028a1179adae965fc2e539b478d07df4137

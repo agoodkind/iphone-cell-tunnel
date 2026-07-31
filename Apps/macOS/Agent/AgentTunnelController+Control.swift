@@ -23,10 +23,34 @@ private let routeWithdrawGraceSeconds = 3
 extension AgentTunnelController {
   /// Starts the control listener the iPhone dials so the Mac can pair and show
   /// the peer roster before any relay session is armed.
+  ///
+  /// Concurrent callers share one start rather than each performing their own. This
+  /// type is an actor, so it is re-entrant: a guard that reads `controlListener` and
+  /// then awaits lets a second caller straight past it. Both would bind the same fixed
+  /// port, which succeeds rather than failing because the listener allows endpoint
+  /// reuse, and dials then land on either one. The controller keeps whichever finished
+  /// last, so the other is unreferenced and its connection handler drops every dial it
+  /// receives. The iPhone completes the handshake and calls itself connected while the
+  /// Mac's roster stays empty and nothing logs an error.
+  ///
+  /// Sharing the in-flight start also means a caller returns only once the listener is
+  /// actually up, so a caller that immediately arms a peer is not racing the bind.
   func ensureControlListenerStarted() async throws {
     if controlListener != nil {
       return
     }
+    if let inFlight = controlListenerStart {
+      try await inFlight.value
+      return
+    }
+    let start = Task { try await self.startControlListener() }
+    controlListenerStart = start
+    defer { controlListenerStart = nil }
+    try await start.value
+  }
+
+  /// Builds, wires, and starts one control listener, leaving the controller holding it.
+  private func startControlListener() async throws {
     let listener = AgentControlListener()
 
     // The public-address exchange holds this host's and the iPhone's measured
@@ -37,8 +61,8 @@ extension AgentTunnelController {
     publicExchange = exchange
     await configurePeerHandlers(on: listener, exchange: exchange)
 
-    controlListener = listener
     try await listener.start()
+    controlListener = listener
 
     startEgressMonitor()
     startPublicRefreshTimer()
@@ -46,6 +70,30 @@ extension AgentTunnelController {
     // late-completing probe re-sends to whatever connection is then current.
     Task { await self.refreshDeviceAddress() }
     logger.notice("agent control listener started for pairing")
+  }
+
+  /// Publishes the record the iPhone browses for, without waiting to be asked.
+  ///
+  /// The iPhone finds the Mac by browsing for the control listener, and nothing
+  /// else publishes it. The iPhone reaches the Mac over the local network rather
+  /// than the mach service, so it cannot send the request that would start the
+  /// listener. An agent that waits for a request is therefore unreachable by the
+  /// one device it exists to serve.
+  ///
+  /// A failure here is not fatal. The agent keeps serving requests, and the first
+  /// client request retries the same call.
+  func startAdvertising() async {
+    do {
+      try await ensureControlListenerStarted()
+    } catch {
+      logger.error(
+        """
+        agent startup advertise failed \
+        details=\(String(describing: error), privacy: .public) \
+        recovery=await-client-request
+        """
+      )
+    }
   }
 
   /// Arms the selected peer with the active WireGuard endpoint and starts the
@@ -68,7 +116,6 @@ extension AgentTunnelController {
     await controlListener.setServerEndpoint(endpoint)
     configureRelayBridgeHandlers()
     relayBridge.start(serviceName: stableHostName())
-    onRelayActiveChange?(true)
     do {
       try await controlListener.armSelectedPeer()
     } catch {
@@ -186,12 +233,30 @@ extension AgentTunnelController {
     relayBridge.onAvailableLinksChange = nil
     relayBridge.onLinkSetChange = nil
     relayBridge.stop()
-    onRelayActiveChange?(false)
     logger.notice("agent relay stopped; pairing listener left running")
   }
 
+  /// Tears down everything the agent owns, including the packet tunnel.
+  ///
+  /// The tunnel extension is a separate process that outlives this one and holds
+  /// the installed routes. Stopping only the relay would leave those routes
+  /// pointing at a bridge that no longer exists, so traffic would be dropped
+  /// rather than falling back to the physical interface. Routing intent is
+  /// cleared with it, so a restarted agent and the extension agree.
   func stopControlListener() async {
-    await stopRelay()
+    await disableRouting()
+    // A stop that lands mid-start would otherwise return before the start assigns its
+    // listener, leaving a bound port and a published record with nothing referencing
+    // them, which is the state the iPhone dials and nobody reads.
+    if let inFlight = controlListenerStart {
+      do {
+        try await inFlight.value
+      } catch {
+        // The start already logged why it failed, and a stop has nothing to add: there
+        // is no listener to tear down, which is the state this call wants anyway.
+        logger.notice("agent control listener stop found a failed start")
+      }
+    }
     await controlListener?.stop()
     controlListener = nil
     publicExchange = nil

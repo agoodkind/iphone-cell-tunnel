@@ -58,8 +58,10 @@ func runRelayDiscover(_ arguments: [String]) throws {
 
 /// Brings the relay tunnel up in one agent session: starts the tunnel with the
 /// given WireGuard config, then polls status until the tunnel reports running or
-/// the connect timeout elapses. The agent hosts the link and the extensions dial
-/// it, so no relay device discovery or selection is needed.
+/// the connect timeout elapses. The agent stores the config in its library and
+/// marks it active before starting. Starting needs an iPhone already dialed in and
+/// selected as the egress peer; without one the agent starts its pairing listener
+/// and fails the start with `relaySelectionRequired`.
 func runRelayUp(_ arguments: [String]) throws {
   let options = try parseRelayUpOptions(arguments)
   relayControlLogger.notice("relay-up starting")
@@ -97,8 +99,9 @@ func runRelayReload(_ arguments: [String]) throws {
 // MARK: - relay-status / relay-down
 
 /// Prints the current tunnel daemon status snapshot from the agent, followed by
-/// the full state dump: persisted and live routing intent, reported and kernel
-/// route state, control and tunnel sections, and the drift verdict. Exits
+/// the full state dump: the live routing intent, reported and kernel route state,
+/// control and tunnel sections, and the drift verdict. Routing intent is never
+/// persisted, so it reads as off after any restart of the agent. Exits
 /// non-zero when any pair of layers disagrees, so scripts can gate on drift.
 func runRelayStatus(_ arguments: [String]) throws {
   _ = arguments

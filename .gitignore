@@ -5,6 +5,9 @@ Derived/
 Generated/
 DerivedData/
 dist/
+# Staging directory for a virtual-machine run. Holds built products and, for a
+# live run, WireGuard configs that carry private keys.
+vm-products/
 Products/
 .make/
 **/.make/
@@ -24,3 +27,8 @@ xcuserdata/
 # authoritative copy is installed into Xcode's profiles folder.
 /AppStore_*.mobileprovision
 /AppStore_*.provisionprofile
+.superpowers/
+
+# Added by ggshield
+.cache_ggshield
+.cache_ggshield

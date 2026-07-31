@@ -192,7 +192,52 @@ public final class InMemoryTunnelConfigStore: TunnelConfigStore {
 
 // MARK: - TunnelConfigStoreError
 
-public enum TunnelConfigStoreError: Error, Equatable {
+public enum TunnelConfigStoreError: Error, Equatable, LocalizedError {
   case keychainFailure(OSStatus)
   case notFound
+
+  /// What happened, in a sentence a person can read.
+  ///
+  /// The keychain status itself stays out of this text. The agent already logs the
+  /// error verbatim, so the number survives for whoever diagnoses it, while a person
+  /// reading an alert gets a possible cause rather than a code to look up.
+  public var errorDescription: String? {
+    switch self {
+    case .keychainFailure:
+      return "Cell Tunnel couldn’t save the configuration to your keychain, "
+        + "user interaction may not be allowed."
+    case .notFound:
+      return "Cell Tunnel couldn’t find that configuration."
+    }
+  }
+
+  /// What to do about it.
+  public var recoverySuggestion: String? {
+    switch self {
+    case .keychainFailure:
+      return "Unlock your login keychain, then import the configuration again."
+    case .notFound:
+      return "It may have been removed. Import the configuration again."
+    }
+  }
+}
+
+// MARK: - User-facing text
+
+/// The full text a person should see for a failure: what happened, then what to do.
+///
+/// `localizedDescription` carries only the first half, so a message built from it alone
+/// names the failure and leaves the reader with no next step. Both sides of the daemon
+/// boundary compose the text the same way, because the agent sends this string onward
+/// to the app and the app has no typed error left to read a recovery from.
+public func userFacingMessage(for error: Error) -> String {
+  guard let localized = error as? LocalizedError,
+    let description = localized.errorDescription
+  else {
+    return error.localizedDescription
+  }
+  guard let recovery = localized.recoverySuggestion else {
+    return description
+  }
+  return "\(description) \(recovery)"
 }

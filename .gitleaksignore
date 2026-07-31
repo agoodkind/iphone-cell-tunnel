@@ -21,3 +21,9 @@ Tests/CellTunnelCoreTests/WireGuardConfigParserTests.swift:dotfiles-generic-secr
 # False positives: masking-helper test asserts on `PrivateKey = ...` lines; no real secret.
 Tests/CellTunnelCoreTests/ConfigSecretMaskingTests.swift:dotfiles-generic-secret-assignment:20
 Tests/CellTunnelCoreTests/ConfigSecretMaskingTests.swift:dotfiles-generic-secret-assignment:26
+
+# False positives: `password:` is an argument label carrying a value read from the
+# environment at run time, not a literal. The guest account password is never in
+# the repository.
+Tools/CellTunnelDev/GuestMachine.swift:dotfiles-generic-secret-assignment:252
+Tools/CellTunnelDev/GuestShell.swift:dotfiles-generic-secret-assignment:107

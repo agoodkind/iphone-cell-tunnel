@@ -17,15 +17,18 @@ import ServiceManagement
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 
-private let agentIdleTimeoutSeconds: Double = 60
-
 // MARK: - AgentRuntime
 
+/// Runs for as long as launchd keeps it loaded.
+///
+/// The agent does not stop itself. It owns the relay bridge, the Bonjour records
+/// the iPhone browses for, and the live link set, none of which survive the
+/// process or can be rebuilt without it. The iPhone reaches the agent over the
+/// local network and the packet tunnel over loopback, so neither can start it,
+/// and only the Mac app and the command-line tool can. A self-imposed exit would
+/// therefore end sessions that nothing present could restore.
 final class AgentRuntime: @unchecked Sendable {
   private let controller: AgentTunnelController
-  private let idleQueue = DispatchQueue(label: "io.goodkind.celltunnel.agent.idle")
-  private var idleTimer: DispatchSourceTimer?
-  private var relayActive = false
   private var sessionListener: AgentSessionListener?
 
   init(controller: AgentTunnelController) {
@@ -40,33 +43,24 @@ final class AgentRuntime: @unchecked Sendable {
     // command-line tool and the Mac app both dial it with the libxpc session
     // API. A Mac Catalyst app cannot open an NSXPCConnection to a mach service,
     // so this is the single transport.
-    let listener = AgentSessionListener(controller: controller) { [weak self] in
-      self?.resetIdleTimer()
-    }
+    let listener = AgentSessionListener(controller: controller)
     self.sessionListener = listener
     listener.start()
-    resetIdleTimer()
-    wireRelayActivityHold()
     logger.notice(
       "agent listener resumed machService=\(agentMachServiceName, privacy: .public)"
     )
   }
 
-  // Hands the controller a hold so the agent does not idle-terminate while it
-  // hosts an active relay. The agent owns the relay bridge in memory, so exiting
-  // mid-relay would kill the bridge and strand the iPhone link.
-  private func wireRelayActivityHold() {
-    let heldController = self.controller
-    let runtime = self
-    Task {
-      await heldController.setRelayActiveHandler { [weak runtime] active in
-        runtime?.setRelayActive(active)
-      }
-    }
-  }
-
-  func shutdown(reason: String) {
+  /// Tears the relay down before the process goes away.
+  ///
+  /// The packet tunnel is a separate process and outlives this one, so an exit
+  /// that only closed the listener would leave its routes and resolver pointing
+  /// at a bridge that no longer exists. Traffic would then be dropped rather than
+  /// fall back to the physical interface, which is silent and looks like a dead
+  /// network rather than a stopped tunnel.
+  func shutdown(reason: String) async {
     logger.notice("agent shutting down reason=\(reason, privacy: .public)")
+    await controller.stopControlListener()
     sessionListener?.stop()
   }
 
@@ -129,54 +123,6 @@ final class AgentRuntime: @unchecked Sendable {
     }
   }
 
-  // MARK: - Relay activity hold
-
-  /// Holds or releases the idle countdown. While the relay is active the agent
-  /// must not exit, so the timer is cancelled and not rescheduled; when the
-  /// relay stops the 60 second countdown resumes.
-  func setRelayActive(_ active: Bool) {
-    idleQueue.async { [weak self] in
-      guard let self else {
-        return
-      }
-      relayActive = active
-      if active {
-        idleTimer?.cancel()
-        idleTimer = nil
-        logger.notice("agent idle timer held: relay active")
-      } else {
-        logger.notice("agent idle timer resumed: relay inactive")
-        scheduleIdleTimerOnQueue()
-      }
-    }
-  }
-
-  // MARK: - Idle timer
-
-  private func resetIdleTimer() {
-    idleQueue.async { [weak self] in
-      self?.scheduleIdleTimerOnQueue()
-    }
-  }
-
-  /// Runs only on `idleQueue`. Does nothing while the relay-active hold is set,
-  /// so the agent stays alive for the life of the relay.
-  private func scheduleIdleTimerOnQueue() {
-    idleTimer?.cancel()
-    guard !relayActive else {
-      idleTimer = nil
-      return
-    }
-    let timer = DispatchSource.makeTimerSource(queue: idleQueue)
-    timer.schedule(deadline: .now() + agentIdleTimeoutSeconds)
-    timer.setEventHandler { [weak self] in
-      logger.notice("agent idle timeout reached, terminating")
-      self?.shutdown(reason: "idle-timeout")
-      exit(EXIT_SUCCESS)
-    }
-    timer.resume()
-    idleTimer = timer
-  }
 }
 
 // MARK: - Composition root
@@ -199,20 +145,30 @@ private func runAgent() -> Never {
   signal(SIGINT, SIG_IGN)
   signal(SIGTERM, SIG_IGN)
 
+  // Teardown is asynchronous, so the exit waits for it. Exiting immediately would
+  // leave the packet tunnel holding routes to a bridge that is already gone.
   interruptSource.setEventHandler {
-    agentRuntime.shutdown(reason: "SIGINT")
-    exit(EXIT_SUCCESS)
+    Task {
+      await agentRuntime.shutdown(reason: "SIGINT")
+      exit(EXIT_SUCCESS)
+    }
   }
 
   terminateSource.setEventHandler {
-    agentRuntime.shutdown(reason: "SIGTERM")
-    exit(EXIT_SUCCESS)
+    Task {
+      await agentRuntime.shutdown(reason: "SIGTERM")
+      exit(EXIT_SUCCESS)
+    }
   }
 
   interruptSource.resume()
   terminateSource.resume()
 
   agentRuntime.start()
+
+  // Advertise without waiting for a client, because the iPhone browses for the
+  // control listener and cannot dial the mach service that would start it.
+  Task { await controller.startAdvertising() }
 
   // Assert, without mutating the library, that the running tunnel's stamped config id
   // agrees with the library's active selection, surfacing any drift loudly on status.

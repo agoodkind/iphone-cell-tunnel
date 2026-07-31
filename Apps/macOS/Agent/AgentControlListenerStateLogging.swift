@@ -36,6 +36,34 @@ func applyListenerState(_ state: NWListener.State) {
   }
 }
 
+/// Logs whether the Bonjour record the iPhone browses for actually published.
+///
+/// A listener reaches `.ready` once its socket binds, which says nothing about
+/// whether the system accepted the service registration. Those two can disagree:
+/// a listener can hold its port while no record is published, and the iPhone then
+/// browses forever with no error anywhere. Reporting the registration separately
+/// is the only way that state names itself.
+func applyServiceRegistrationChange(_ change: NWListener.ServiceRegistrationChange) {
+  switch change {
+  case .add(let endpoint):
+    logger.notice(
+      """
+      agent control listener service registered \
+      endpoint=\(String(describing: endpoint), privacy: .public)
+      """
+    )
+  case .remove(let endpoint):
+    logger.notice(
+      """
+      agent control listener service unregistered \
+      endpoint=\(String(describing: endpoint), privacy: .public)
+      """
+    )
+  @unknown default:
+    logger.notice("agent control listener service registration changed unknown")
+  }
+}
+
 /// Logs the accepted connection lifecycle so an iPhone dial that reaches the
 /// agent is visible in the log.
 func applyAcceptedConnectionState(_ state: NWConnection.State) {

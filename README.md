@@ -72,8 +72,8 @@ The agent owns one config library, so a config you start is stored once and reus
 
 ```sh
 celltunnelctl configs list                 # list stored configs, active one flagged
-celltunnelctl configs import <path>        # import, activate, and start a config
-celltunnelctl configs activate <name|id>   # switch the running tunnel to a stored config
+celltunnelctl configs import <path>        # store a config and mark it active; starts nothing
+celltunnelctl configs activate <name|id>   # mark a stored config active; starts nothing
 ```
 
 Run `celltunnelctl --help` for the full command set, including `status`, `stop`, and the `peers`/`select` egress roster used when more than one iPhone is dialed in.

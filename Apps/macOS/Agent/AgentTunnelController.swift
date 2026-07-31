@@ -36,6 +36,10 @@ actor AgentTunnelController {
   /// `replaceStatusObserver(_:)` so the lifecycle stays in one place.
   private var statusObserver: NSObjectProtocol?
   var controlListener: AgentControlListener?
+  /// The in-flight control-listener start, so concurrent callers share one listener.
+  /// This actor is re-entrant, so a nil check followed by an await is not enough on its
+  /// own to keep a second caller from starting a second listener on the same port.
+  var controlListenerStart: Task<Void, Error>?
   let relayBridge: AgentRelayBridge
   let relayBrowser: RelayDeviceBrowser
   /// The agent's config library, the single source of truth the Mac app and the
@@ -141,16 +145,6 @@ actor AgentTunnelController {
   /// Whether a phone relay link is up, tracked from the relay bridge so a routing
   /// change installs or withdraws routes against the live link state.
   var phoneLinkUp = false
-
-  /// Called when the relay goes active or inactive so the runtime can hold the
-  /// agent idle timer while it hosts the relay bridge. Set once at startup.
-  var onRelayActiveChange: (@Sendable (Bool) -> Void)?
-
-  // MARK: - Relay activity hold
-
-  func setRelayActiveHandler(_ handler: @escaping @Sendable (Bool) -> Void) {
-    onRelayActiveChange = handler
-  }
 
   // MARK: - Manager and observer access
 
