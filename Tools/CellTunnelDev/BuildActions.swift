@@ -7,6 +7,7 @@
 //
 
 import CellTunnelLog
+import CryptoKit
 import Foundation
 import SwiftMkCore
 
@@ -76,6 +77,54 @@ private let projectGenerationSources: [URL] = [
   repoRoot.appendingPathComponent("Tuist/Package.swift"),
 ]
 
+/// Every directory the project manifest picks up by glob.
+///
+/// The manifest names no individual file, so the generated project's file list comes
+/// from whatever these directories hold at generation time. A file arriving with a pull
+/// changes that list while leaving every manifest untouched, and the generated project
+/// then compiles a file that uses a type without the file that declares it.
+private let projectGenerationSourceRoots: [String] = [
+  "Apps/PhoneTunnelProvider",
+  "Apps/iOS",
+  "Apps/macOS/Agent",
+  "Apps/macOS/TunnelProvider",
+  "Sources/CellTunnelCore",
+  "Sources/CellTunnelLog",
+  "Sources/CellTunnelRelay",
+  "Tests/CellTunnelPhoneUITests",
+]
+
+/// Digests which files the generation globs would pick up, ignoring what they contain.
+///
+/// Paths alone decide the generated project's file list, so editing a file must leave
+/// the digest unchanged and skip a regeneration that would produce an identical
+/// project. Adding, deleting, or renaming one changes the list and must force it.
+/// A root that does not exist contributes nothing rather than failing, so a checkout
+/// that omits an optional directory still generates.
+func projectGenerationFileSetDigest(roots: [URL]) throws -> String {
+  var paths: [String] = []
+  for root in roots {
+    let enumerator = fileManager.enumerator(
+      at: root,
+      includingPropertiesForKeys: [.isRegularFileKey],
+      options: [.skipsHiddenFiles]
+    )
+    guard let enumerator else {
+      continue
+    }
+    for case let fileURL as URL in enumerator {
+      let values = try fileURL.resourceValues(forKeys: [.isRegularFileKey])
+      guard values.isRegularFile == true else {
+        continue
+      }
+      paths.append(fileURL.standardizedFileURL.path)
+    }
+  }
+  paths.sort()
+  let digest = SHA256.hash(data: Data(paths.joined(separator: "\n").utf8))
+  return digest.map { byte in String(format: "%02x", byte) }.joined()
+}
+
 private let projectGenerationFingerprintURL: URL =
   repoRoot
   .appendingPathComponent(".build", isDirectory: true)
@@ -115,6 +164,11 @@ private func projectGenerationSourceFingerprint() throws -> String {
     let fingerprint = "\(modificationDate.timeIntervalSince1970):\(size)"
     parts.append("\(source.lastPathComponent):\(fingerprint)")
   }
+  let roots = projectGenerationSourceRoots.map { root in
+    repoRoot.appendingPathComponent(root)
+  }
+  let fileSet = try projectGenerationFileSetDigest(roots: roots)
+  parts.append("files:\(fileSet)")
   return parts.joined(separator: "|")
 }
 
