@@ -18,11 +18,10 @@ import Testing
 /// `reset` what it does performed the reset instead of printing help.
 @Suite("Control commands refuse arguments they cannot use")
 struct TunnelControlCLIExtraArgumentsTests {
-  @Test("reset with a trailing flag is refused rather than performed")
-  func resetWithTrailingFlagIsRefused() {
-    #expect(throws: TunnelDaemonError.self) {
-      _ = try TunnelControlCLIAction.parse(arguments: ["reset", "--help"])
-    }
+  /// Asking `reset` what it does prints help rather than removing the saved profile.
+  @Test("reset with a help flag asks for help rather than resetting")
+  func resetWithHelpFlagAsksForHelp() throws {
+    #expect(try TunnelControlCLIAction.parse(arguments: ["reset", "--help"]) == .help)
   }
 
   @Test("stop with a trailing flag is refused")
@@ -61,34 +60,46 @@ struct TunnelControlCLIExtraArgumentsTests {
 
 // MARK: - TunnelControlCLIHelpRequestTests
 
-/// Covers which argument vectors ask for help rather than for an action.
+/// Covers which argument vectors ask for help rather than for an action, driven through
+/// the parser the command-line tool actually calls.
 @Suite("Asking for help is recognised")
 struct TunnelControlCLIHelpRequestTests {
   /// A person who types the obvious word gets help, not an unknown-command error.
-  @Test("the bare word asks for help")
-  func bareWordAsksForHelp() {
-    #expect(isHelpRequest(arguments: ["help"]))
+  @Test("the bare word parses as help")
+  func bareWordParsesAsHelp() throws {
+    #expect(try TunnelControlCLIAction.parse(arguments: ["help"]) == .help)
   }
 
-  @Test("either flag asks for help from any position")
-  func eitherFlagAsksForHelpAnywhere() {
-    #expect(isHelpRequest(arguments: ["--help"]))
-    #expect(isHelpRequest(arguments: ["-h"]))
-    #expect(isHelpRequest(arguments: ["reset", "--help"]))
-    #expect(isHelpRequest(arguments: ["configs", "import", "-h"]))
+  @Test("either flag parses as help from any position")
+  func eitherFlagParsesAsHelpAnywhere() throws {
+    #expect(try TunnelControlCLIAction.parse(arguments: ["--help"]) == .help)
+    #expect(try TunnelControlCLIAction.parse(arguments: ["-h"]) == .help)
+    #expect(try TunnelControlCLIAction.parse(arguments: ["reset", "--help"]) == .help)
+    #expect(try TunnelControlCLIAction.parse(arguments: ["configs", "import", "-h"]) == .help)
   }
 
   /// A configuration can be named `help`, so the word counts only as the command
   /// itself. Treating it as help anywhere would make that configuration unreachable.
-  @Test("the word later in the arguments is a value, not a request for help")
-  func wordLaterIsAValue() {
-    #expect(!isHelpRequest(arguments: ["configs", "rename", "1", "help"]))
-    #expect(!isHelpRequest(arguments: ["select", "help"]))
+  @Test("the word later in the arguments stays a value")
+  func wordLaterStaysAValue() throws {
+    let action = try TunnelControlCLIAction.parse(arguments: ["select", "help"])
+    #expect(action == .select(reference: "help"))
   }
 
-  @Test("an ordinary command asks for nothing")
-  func ordinaryCommandAsksForNothing() {
-    #expect(!isHelpRequest(arguments: ["status"]))
-    #expect(!isHelpRequest(arguments: []))
+  @Test("an ordinary command does not parse as help")
+  func ordinaryCommandDoesNotParseAsHelp() throws {
+    #expect(try TunnelControlCLIAction.parse(arguments: ["status"]) == .status)
+  }
+
+  /// The text a person reads has to reach them through the same path every other
+  /// command's output takes, so the tool prints it without a branch of its own.
+  @Test("running the help action returns the usage text")
+  func helpActionReturnsUsage() async throws {
+    let executor = TunnelControlCLIExecutor(client: SmokeTunnelControlClient())
+    let output = try await executor.run(action: .help)
+
+    #expect(output == tunnelControlUsageText)
+    #expect(output.contains("usage: celltunnelctl <command> [options]"))
+    #expect(output.contains("help, --help, -h"))
   }
 }

@@ -24,13 +24,11 @@ enum CellTunnelCtl {
     logger.notice(
       "celltunnelctl invoked argumentCount=\(arguments.count, privacy: .public)")
 
+    // Running the tool with nothing to do prints what it can do. Every other route to
+    // the usage text goes through the parser, which returns the help action, so the
+    // decision that recognises help is exercised by the parser's own tests.
     if arguments.isEmpty {
-      printUsage()
-      return
-    }
-
-    if isHelpRequest(arguments: arguments) {
-      printUsage()
+      FileHandle.standardOutput.write(Data((tunnelControlUsageText + "\n").utf8))
       return
     }
 
@@ -56,33 +54,6 @@ enum CellTunnelCtl {
       exit(1)
     }
   }
-}
-
-private func printUsage() {
-  let usage = """
-    usage: celltunnelctl <command> [options]
-
-    commands:
-      status                       Print current tunnel daemon status.
-      check                        Print environment check report.
-      peers                        List dialed-in peers the Mac can route through.
-      select <n>                   Select the egress peer by 1-based index from peers.
-      start --config <path>        Start the tunnel using the given WireGuard config.
-                                   Optional: --relay <host:port>.
-      smoke --config <path> --peer <n>
-                                   Start pairing, wait for peers, select, stop,
-                                   start, wait for routes, then ping/curl.
-                                   Optional: --relay <host:port>.
-      stop                         Stop the tunnel.
-      reset                        Remove the saved Mac VPN profile; keeps stored configs.
-      configs list                 List the agent's config library.
-      configs activate <name|id>   Mark a stored config active; does not start the tunnel.
-      configs rename <id> <name>   Rename a stored config.
-      configs delete <id>          Delete a stored config (stops the tunnel if active).
-      configs import <path>        Import and mark a config active; does not start the tunnel.
-      --help, -h                   Print this help text.
-    """
-  FileHandle.standardOutput.write(Data((usage + "\n").utf8))
 }
 
 private func emit(error: Error) {

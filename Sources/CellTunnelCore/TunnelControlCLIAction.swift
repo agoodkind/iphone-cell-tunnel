@@ -36,9 +36,38 @@ public func isHelpRequest(arguments: [String]) -> Bool {
   return arguments.contains(helpFlag) || arguments.contains(helpShortFlag)
 }
 
+/// What the command-line tool prints when someone asks what it does.
+///
+/// The text lives beside the actions it describes, so a command added to the parser and
+/// a command listed here cannot drift apart.
+public let tunnelControlUsageText = """
+  usage: celltunnelctl <command> [options]
+
+  commands:
+    status                       Print current tunnel daemon status.
+    check                        Print environment check report.
+    peers                        List dialed-in peers the Mac can route through.
+    select <n>                   Select the egress peer by 1-based index from peers.
+    start --config <path>        Start the tunnel using the given WireGuard config.
+                                 Optional: --relay <host:port>.
+    smoke --config <path> --peer <n>
+                                 Start pairing, wait for peers, select, stop,
+                                 start, wait for routes, then ping/curl.
+                                 Optional: --relay <host:port>.
+    stop                         Stop the tunnel.
+    reset                        Remove the saved Mac VPN profile; keeps stored configs.
+    configs list                 List the agent's config library.
+    configs activate <name|id>   Mark a stored config active; does not start the tunnel.
+    configs rename <id> <name>   Rename a stored config.
+    configs delete <id>          Delete a stored config (stops the tunnel if active).
+    configs import <path>        Import and mark a config active; does not start the tunnel.
+    help, --help, -h             Print this help text.
+  """
+
 public enum TunnelControlCLIAction: Equatable, Sendable {
   case check
   case configs(ConfigsCommand)
+  case help
   case peers
   case reset
   case select(reference: String)
@@ -52,6 +81,9 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
   public static func parse(arguments: [String]) throws -> Self {
     logger.notice(
       "parsing tunnel control cli action argumentCount=\(arguments.count, privacy: .public)")
+    if isHelpRequest(arguments: arguments) {
+      return .help
+    }
     guard let command = arguments.first else {
       throw TunnelDaemonError.usage("missing command")
     }
@@ -275,6 +307,8 @@ public struct TunnelControlCLIExecutor: Sendable {
     case .check:
       let report = try await client.check()
       return report.renderedOutput
+    case .help:
+      return tunnelControlUsageText
     case .peers:
       return try await listPeers()
     case .configs(let command):
