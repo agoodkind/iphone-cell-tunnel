@@ -39,7 +39,7 @@ extension AgentTunnelController {
       logger.error(
         """
         agent control listener not rebuilt reason=repeated-failures \
-        recovery=await-client-request
+        recovery=celltunnelctl-start-discovery
         """
       )
     case .retry(let afterMilliseconds):

@@ -15,9 +15,29 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 // MARK: - Relay discovery
 
 extension AgentTunnelController {
-  /// Starts the relay device browser and returns the current discovery snapshot.
-  func startDiscovery() -> AgentControlResponse {
+  /// Starts discovery in both directions and returns the current discovery snapshot.
+  ///
+  /// Discovery has two halves. The browser finds other devices, and the control
+  /// listener publishes the record that lets an iPhone find this Mac. Starting only
+  /// the browser leaves a Mac that cannot be found, which is the state a person is
+  /// trying to leave when they run this. Starting the listener here is also the
+  /// documented way back from a listener the agent stopped rebuilding.
+  ///
+  /// A listener that will not start is reported and does not fail the request, because
+  /// the browser half still works and the snapshot still answers.
+  func startDiscovery() async -> AgentControlResponse {
     relayBrowser.start()
+    do {
+      try await ensureControlListenerStarted()
+    } catch {
+      logger.error(
+        """
+        agent discovery could not start the control listener \
+        details=\(String(describing: error), privacy: .public) \
+        recovery=browser-only
+        """
+      )
+    }
     logger.notice("agent relay discovery started from browser")
     return snapshotResponse()
   }
