@@ -446,6 +446,11 @@ extension PacketTunnelProvider {
   /// hands the settings to NetworkExtension, so calling it from there leaves the
   /// serialization of the lifecycle callbacks intact.
   func startLivenessMonitor() {
+    // A second start must retire the first monitor. Two live monitors share one
+    // transport, so the newer one takes the keepalive handler and the older one stops
+    // seeing replies, reaches its own gone verdict, and withdraws the routes of a
+    // healthy tunnel.
+    stopLivenessMonitor()
     let monitor = RelayLivenessMonitor(
       transport: relayTransport,
       missedRepliesBeforeGone: relayMissedKeepalivesBeforeGone,

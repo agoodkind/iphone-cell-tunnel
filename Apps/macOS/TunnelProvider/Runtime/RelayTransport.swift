@@ -41,9 +41,45 @@ final class RelayTransport: @unchecked Sendable {
   private let stateLock = NSLock()
   private var connection: NWConnection?
   private var endpoint: NWEndpoint?
-  var onReceive: ((Data) -> Void)?
+  private var storedOnReceive: ((Data) -> Void)?
+  private var storedOnKeepaliveReply: (() -> Void)?
+
+  /// Where an arriving datagram of relay traffic goes.
+  ///
+  /// The tunnel replaces this as it starts and clears it as it stops, on a different
+  /// thread from the receive queue that reads it, so both sides take the lock. Reading
+  /// a closure reference while another thread reassigns it is undefined, and this type
+  /// is `@unchecked Sendable`, so the compiler will not catch it.
+  var onReceive: ((Data) -> Void)? {
+    get {
+      stateLock.lock()
+      defer { stateLock.unlock() }
+      return storedOnReceive
+    }
+    set {
+      stateLock.lock()
+      defer { stateLock.unlock() }
+      storedOnReceive = newValue
+    }
+  }
+
   /// Called when the agent echoes the liveness keepalive.
-  var onKeepaliveReply: (() -> Void)?
+  ///
+  /// The liveness monitor sets this when it starts watching and clears it when it
+  /// stops, and a stop lands while datagrams can still be arriving, so it takes the
+  /// same lock as `onReceive`.
+  var onKeepaliveReply: (() -> Void)? {
+    get {
+      stateLock.lock()
+      defer { stateLock.unlock() }
+      return storedOnKeepaliveReply
+    }
+    set {
+      stateLock.lock()
+      defer { stateLock.unlock() }
+      storedOnKeepaliveReply = newValue
+    }
+  }
 
   init(metrics: RelayMetrics) {
     self.metrics = metrics
@@ -191,14 +227,18 @@ final class RelayTransport: @unchecked Sendable {
   // taken here rather than injected into WireGuard, which would be handed a
   // one-byte datagram it cannot parse and would count it as relay traffic.
   private func deliver(_ datagram: Data) {
+    // Copy each handler out before calling it. The accessor takes the lock and
+    // releases it, so the call itself runs with no lock held and a handler that
+    // reaches back into this transport cannot deadlock.
     if RelayHeartbeat.isHeartbeat(datagram) {
-      onKeepaliveReply?()
+      let keepaliveHandler = onKeepaliveReply
+      keepaliveHandler?()
       return
     }
-    guard let onReceive else {
+    guard let receiveHandler = onReceive else {
       metrics.addDropped()
       return
     }
-    onReceive(datagram)
+    receiveHandler(datagram)
   }
 }
