@@ -169,6 +169,11 @@ extension AgentTunnelController {
     await listener.setRosterChangedHandler { [weak self] roster in
       self?.connectedPeers.withLock { $0 = roster }
     }
+    // A listener binds its fixed port after its start call returns, so a failure
+    // arrives here rather than as a thrown error.
+    await listener.setServingChangedHandler { [weak self] isServing in
+      Task { await self?.applyListenerServingChange(isServing) }
+    }
     // Selecting an iPhone installs its id as the bridge admit token, so the bridge
     // admits relay links only from the selected peer and drops links stamped with a
     // prior selection's id.
@@ -244,6 +249,9 @@ extension AgentTunnelController {
   /// rather than falling back to the physical interface. Routing intent is
   /// cleared with it, so a restarted agent and the extension agree.
   func stopControlListener() async {
+    // A pending rebuild would otherwise raise a listener after this teardown asked
+    // for none.
+    cancelListenerRebuild()
     await disableRouting()
     // A stop that lands mid-start would otherwise return before the start assigns its
     // listener, leaving a bound port and a published record with nothing referencing
@@ -287,6 +295,10 @@ extension AgentTunnelController {
   // both stores the reading for the snapshot's `Device` rows and re-probes the
   // public address. The handler hops onto the actor for the re-probe.
   func startEgressMonitor() {
+    // Retire the previous monitor. A rebuilt listener starts one again, and an
+    // abandoned monitor keeps watching and re-probing the public address for the rest
+    // of the agent's life.
+    egressMonitor?.stop()
     let monitor = EgressPathMonitor(requiredInterfaceType: nil)
     monitor.onChange = { [weak self] path in
       self?.egressPath.withLock { $0 = path }
