@@ -13,6 +13,12 @@ import Foundation
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 
+/// How many times the tunnel is asked to follow before the attempt is reported instead of
+/// repeated. Each pass restarts because another request changed the active entry, so a run
+/// this long means requests are arriving faster than the tunnel can follow them, and
+/// looping further would keep a caller waiting with no end.
+private let maximumActiveConfigFollowPasses = 4
+
 // MARK: - Following the active config
 
 extension AgentTunnelController {
@@ -35,29 +41,74 @@ extension AgentTunnelController {
   /// caller reports what happened instead of returning a status that implies the named
   /// configuration is in force. Returns `nil` when the tunnel carries the active entry.
   func followActiveConfigOnRunningTunnel() async -> AgentControlResponse? {
-    guard let activeID = configStore.activeID, let text = configStore.text(forID: activeID)
-    else {
+    // This actor is re-entrant, so another request can make a different entry active
+    // while this one is suspended loading the manager or reloading. Each pass re-reads
+    // the active entry after every suspension and starts over when it changed, so the
+    // tunnel and the profile end on the entry the library actually holds rather than on
+    // whichever request happened to resume last.
+    for _ in 0..<maximumActiveConfigFollowPasses {
+      guard let activeID = configStore.activeID, let text = configStore.text(forID: activeID)
+      else {
+        return nil
+      }
+      let manager: NETunnelProviderManager
+      do {
+        manager = try await loadOrCreateManager()
+      } catch {
+        logger.error(
+          """
+          agent active config follow could not load the manager \
+          details=\(String(describing: error), privacy: .public) recovery=return-failure
+          """
+        )
+        return failure(from: error)
+      }
+      guard configStore.activeID == activeID else {
+        continue
+      }
+      guard isSessionActive(on: manager) else {
+        return nil
+      }
+      guard runningTunnelNeedsActiveConfig(on: manager, activeID: activeID) else {
+        return nil
+      }
+      if let followFailure = await reloadRunningTunnel(
+        text: text, configID: activeID, on: manager)
+      {
+        return followFailure
+      }
+      guard configStore.activeID == activeID else {
+        continue
+      }
       return nil
     }
-    let manager: NETunnelProviderManager
-    do {
-      manager = try await loadOrCreateManager()
-    } catch {
-      logger.error(
-        """
-        agent active config follow could not load the manager \
-        details=\(String(describing: error), privacy: .public) recovery=return-failure
-        """
-      )
-      return failure(from: error)
+    logger.error(
+      """
+      agent active config follow gave up while the active entry kept changing \
+      recovery=await-next-request
+      """
+    )
+    return failure(
+      errorCode: .internal,
+      message: "the active configuration kept changing; the tunnel may not carry it yet"
+    )
+  }
+
+  /// Makes the entry that was active before this request active again, after the tunnel
+  /// could not be made to follow the new one.
+  ///
+  /// Leaving the new entry selected would tell a person their choice took effect on a
+  /// request that just reported failure, and the library would name a configuration the
+  /// tunnel is not carrying, which is the disagreement this whole path exists to prevent.
+  ///
+  /// Only the selection is restored. A row that was added is kept, because deduplication
+  /// returns an entry that already existed whenever the text matches, so deleting it could
+  /// remove a configuration the person stored earlier.
+  func restoreActiveConfig(to previousID: UUID?) {
+    guard let previousID, configStore.text(forID: previousID) != nil else {
+      return
     }
-    guard isSessionActive(on: manager) else {
-      return nil
-    }
-    guard runningTunnelNeedsActiveConfig(on: manager, activeID: activeID) else {
-      return nil
-    }
-    return await reloadRunningTunnel(text: text, configID: activeID, on: manager)
+    configStore.setActive(id: previousID)
   }
 
   /// Whether the running tunnel carries something other than the active entry.

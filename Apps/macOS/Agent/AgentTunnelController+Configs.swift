@@ -30,6 +30,7 @@ extension AgentTunnelController {
       return failure(errorCode: .unspecified, message: error.localizedDescription)
     }
     let saved: StoredTunnelConfig
+    let previousActiveID = configStore.activeID
     do {
       saved = try configStore.addDeduplicated(name: name, text: text)
       configStore.setActive(id: saved.id)
@@ -47,6 +48,7 @@ extension AgentTunnelController {
     // Import leaves starting to the explicit start action, but a tunnel that is already
     // running must still carry what the library now calls active.
     if let followFailure = await followActiveConfigOnRunningTunnel() {
+      restoreActiveConfig(to: previousActiveID)
       return followFailure
     }
     return await handleStatus()
@@ -59,8 +61,10 @@ extension AgentTunnelController {
     guard configStore.text(forID: id) != nil else {
       return failure(errorCode: .internal, message: "no config with id \(id.uuidString)")
     }
+    let previousActiveID = configStore.activeID
     configStore.setActive(id: id)
     if let followFailure = await followActiveConfigOnRunningTunnel() {
+      restoreActiveConfig(to: previousActiveID)
       return followFailure
     }
     return await handleStatus()
@@ -73,8 +77,10 @@ extension AgentTunnelController {
     guard configStore.text(forID: id) != nil else {
       return failure(errorCode: .internal, message: "no config with id \(id.uuidString)")
     }
+    let previousActiveID = configStore.activeID
     configStore.setActive(id: id)
     if let followFailure = await followActiveConfigOnRunningTunnel() {
+      restoreActiveConfig(to: previousActiveID)
       return followFailure
     }
     return await handleStatus()

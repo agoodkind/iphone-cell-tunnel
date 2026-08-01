@@ -227,8 +227,13 @@ extension AgentTunnelController {
       )
     }
     let saved: StoredTunnelConfig
+    let previousActiveID = configStore.activeID
     do {
       let configText = try readConfigText(at: settings.wireGuardConfigPath)
+      // Reject an unparseable file before it reaches the library, the same as import.
+      // Storing it first would leave a row and an active selection the tunnel cannot
+      // carry, and the caller would have to undo both.
+      _ = try WireGuardConfigParser.parse(configText)
       saved = try configStore.addDeduplicated(
         name: Self.configName(fromPath: settings.wireGuardConfigPath),
         text: configText
@@ -248,6 +253,7 @@ extension AgentTunnelController {
     // with, so without this the named file would change only the library while the person
     // reads results from whatever was running before.
     if let followFailure = await followActiveConfigOnRunningTunnel() {
+      restoreActiveConfig(to: previousActiveID)
       return followFailure
     }
     // The config is now active, so start through the routing-enable path to keep the

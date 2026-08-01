@@ -59,6 +59,18 @@ extension AgentTunnelController {
         operationName: "reloadConfig"
       )
       logger.notice("agent tunnel reload requested")
+      // The extension reports a rejected config in this field and sends no status with
+      // it. Reading only the status would turn that rejection into a success, and the
+      // caller would record a configuration the tunnel refused to carry.
+      if let providerFailure = response.failureMessage {
+        logger.error(
+          """
+          agent tunnel reload rejected by the extension \
+          details=\(providerFailure, privacy: .public) recovery=return-failure-response
+          """
+        )
+        return failure(errorCode: .internal, message: providerFailure)
+      }
       if let status = response.status {
         return AgentControlResponse(
           status: augmented(status, profileState: await currentProfileState())
