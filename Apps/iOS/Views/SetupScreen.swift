@@ -194,7 +194,8 @@
     private var titleText: String {
       switch model.status {
       case .noAgent:
-        return "Install the background agent"
+        return model.isAwaitingBackgroundApproval
+          ? "Approve Cell Tunnel in Login Items" : "Finish setting up"
       case .noConfigImported:
         return "Import a tunnel configuration"
       case .vpnProfileDisabled:
@@ -208,8 +209,10 @@
     private var subtitleText: String {
       switch model.status {
       case .noAgent:
-        return "The agent runs in the background so it keeps working "
-          + "after the app closes."
+        return model.isAwaitingBackgroundApproval
+          ? "Turn Cell Tunnel on in Login Items to let it run in the background."
+          : "Cell Tunnel keeps running after you close this window, so it can route "
+            + "traffic whenever your iPhone is nearby."
       case .noConfigImported:
         return "Choose a WireGuard configuration file to set up the tunnel."
       case .vpnProfileDisabled:
