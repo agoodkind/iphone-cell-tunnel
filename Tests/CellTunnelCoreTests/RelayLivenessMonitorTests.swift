@@ -33,9 +33,11 @@ struct RelayLivenessMonitorTests {
       ipv6: []
     )
     _ = gate.setProgramDNS(servers: ["10.0.0.1"], searchDomains: [])
-    _ = gate.setInstalled(true)
-    #expect(settings.ipv4Settings?.includedRoutes?.isEmpty == false)
-    #expect(settings.dnsSettings != nil)
+    let installedSettings = gate.setInstalled(true)
+    // Assert on what the gate hands to the system, which is the contract, rather than on
+    // the object the tunnel supplied, which the gate leaves as its own record.
+    #expect(installedSettings?.ipv4Settings?.includedRoutes?.isEmpty == false)
+    #expect(installedSettings?.dnsSettings != nil)
 
     let transport = RelayTransport(metrics: RelayMetrics())
     try transport.connect(to: .hostPort(host: "127.0.0.1", port: port))
@@ -44,8 +46,9 @@ struct RelayLivenessMonitorTests {
       missedRepliesBeforeGone: 2,
       intervalMilliseconds: 100
     )
+    let withdrawnSettings = WithdrawnSettingsBox()
     monitor.onAgentGone = { [gate] in
-      _ = gate.setInstalled(false)
+      withdrawnSettings.value = gate.setInstalled(false)
     }
     monitor.start()
 
@@ -62,8 +65,8 @@ struct RelayLivenessMonitorTests {
 
     #expect(stayedInstalled)
     #expect(withdrew)
-    #expect(settings.ipv4Settings?.includedRoutes?.isEmpty == true)
-    #expect(settings.dnsSettings == nil)
+    #expect(withdrawnSettings.value?.ipv4Settings?.includedRoutes?.isEmpty == true)
+    #expect(withdrawnSettings.value?.dnsSettings == nil)
   }
 
   private static func makeSettings() -> NEPacketTunnelNetworkSettings {
@@ -86,5 +89,27 @@ struct RelayLivenessMonitorTests {
       try await Task.sleep(for: .milliseconds(20))
     }
     return condition()
+  }
+}
+
+// MARK: - WithdrawnSettingsBox
+
+/// Carries the settings the withdrawal produced out of the monitor's callback, which runs
+/// on the monitor's own queue rather than the test's.
+final class WithdrawnSettingsBox: @unchecked Sendable {
+  private let lock = NSLock()
+  private var stored: NEPacketTunnelNetworkSettings?
+
+  var value: NEPacketTunnelNetworkSettings? {
+    get {
+      lock.lock()
+      defer { lock.unlock() }
+      return stored
+    }
+    set {
+      lock.lock()
+      defer { lock.unlock() }
+      stored = newValue
+    }
   }
 }

@@ -110,14 +110,49 @@ final class RouteGate: @unchecked Sendable {
     return (ipv4, ipv6)
   }
 
+  /// The settings to hand to the system: what the tunnel asked for, with the captured
+  /// routes and the resolvers this gate owns written over it.
+  ///
+  /// Each call builds a separate object rather than editing the recorded one again. The
+  /// recorded settings stay as the tunnel supplied them, which is what makes them a
+  /// reliable record of the tunnel's own addresses, and the system is handed something it
+  /// has not already been given.
   private func gatedLocked() -> NEPacketTunnelNetworkSettings? {
     guard let settings else {
       return nil
     }
-    settings.ipv4Settings?.includedRoutes = installed ? programIPv4Routes : []
-    settings.ipv6Settings?.includedRoutes = installed ? programIPv6Routes : []
-    settings.dnsSettings = installed ? makeDNSSettingsLocked() : nil
-    return settings
+    let gated = NEPacketTunnelNetworkSettings(
+      tunnelRemoteAddress: settings.tunnelRemoteAddress)
+    gated.mtu = settings.mtu
+    gated.ipv4Settings = rebuiltIPv4(from: settings.ipv4Settings)
+    gated.ipv6Settings = rebuiltIPv6(from: settings.ipv6Settings)
+    gated.dnsSettings = installed ? makeDNSSettingsLocked() : nil
+    return gated
+  }
+
+  /// The tunnel's own IPv4 addresses with this gate's captured routes written over them,
+  /// or nil when the tunnel carries no IPv4.
+  private func rebuiltIPv4(from source: NEIPv4Settings?) -> NEIPv4Settings? {
+    guard let source else {
+      return nil
+    }
+    let rebuilt = NEIPv4Settings(
+      addresses: source.addresses, subnetMasks: source.subnetMasks)
+    rebuilt.includedRoutes = installed ? programIPv4Routes : []
+    rebuilt.excludedRoutes = source.excludedRoutes
+    return rebuilt
+  }
+
+  /// The IPv6 counterpart of `rebuiltIPv4(from:)`.
+  private func rebuiltIPv6(from source: NEIPv6Settings?) -> NEIPv6Settings? {
+    guard let source else {
+      return nil
+    }
+    let rebuilt = NEIPv6Settings(
+      addresses: source.addresses, networkPrefixLengths: source.networkPrefixLengths)
+    rebuilt.includedRoutes = installed ? programIPv6Routes : []
+    rebuilt.excludedRoutes = source.excludedRoutes
+    return rebuilt
   }
 
   /// The DNS settings to publish while the link is up, or nil when the tunnel
