@@ -98,21 +98,24 @@ actor AgentControlListener {
   var onPeerPublicAddress: (@Sendable (AddressPair) -> Void)?
   /// Invoked with the selected iPhone's device name carried in its status push, so
   /// the controller reports it as the connected peer name.
-  private var onPeerDeviceName: (@Sendable (String) -> Void)?
+  var onPeerDeviceName: (@Sendable (String) -> Void)?
   /// Invoked with the selected iPhone's relay-link candidates carried in its status
   /// push, so the controller reports them as the peer available links.
-  private var onPeerAvailableLinks: (@Sendable ([RelayLinkSummary]) -> Void)?
+  var onPeerAvailableLinks: (@Sendable ([RelayLinkSummary]) -> Void)?
   /// Invoked when the selected control connection ends, so the controller clears the
   /// connected peer name and the bridge's admit session. A non-selected peer ending
   /// does not fire it; the roster callback alone reflects that.
-  private var onConnectionDropped: (@Sendable () -> Void)?
+  var onConnectionDropped: (@Sendable () -> Void)?
   /// Invoked with the selected peer's id each time selection installs it, so the
   /// controller installs it into the relay bridge as the value relay primes must
   /// carry to be admitted.
-  private var onSessionEstablished: (@Sendable (UInt64) -> Void)?
+  var onSessionEstablished: (@Sendable (UInt64) -> Void)?
   /// Invoked whenever the roster of connected iPhones changes, so the controller
   /// surfaces it in the status snapshot for the Mac selector.
-  private var onRosterChanged: (@Sendable ([ConnectedPeer]) -> Void)?
+  var onRosterChanged: (@Sendable ([ConnectedPeer]) -> Void)?
+  /// Invoked with true once the socket binds and false once it fails, so the
+  /// controller can rebuild a listener that is no longer serving.
+  var onServingChanged: (@Sendable (Bool) -> Void)?
   /// This host's latest measured public address, set by the controller as it probes.
   /// It is sent on each accepted control connection once that connection's handshake
   /// completes, so a freshly connected peer receives it at once.
@@ -194,8 +197,16 @@ actor AgentControlListener {
       name: serviceName,
       type: relayControlServiceType
     )
-    nwListener.stateUpdateHandler = { state in
+    nwListener.stateUpdateHandler = { [weak self] state in
       applyListenerState(state)
+      switch state {
+      case .ready:
+        Task { await self?.reportServing(true) }
+      case .failed:
+        Task { await self?.reportServing(false) }
+      default:
+        break
+      }
     }
     nwListener.serviceRegistrationUpdateHandler = { change in
       applyServiceRegistrationChange(change)
@@ -212,6 +223,11 @@ actor AgentControlListener {
       port=\(relayControlListenerDefaultPort, privacy: .public)
       """
     )
+  }
+
+  /// Tells the controller whether this listener is serving, on the actor.
+  private func reportServing(_ isServing: Bool) {
+    onServingChanged?(isServing)
   }
 
   private func acceptConnection(_ newConnection: NWConnection) async {
@@ -369,45 +385,6 @@ extension AgentControlListener {
     options.keepaliveCount = tcpKeepaliveRetryCount
     options.noDelay = true
     return options
-  }
-
-  /// Registers the routing-choice handler before the listener starts.
-  func setRoutingHandler(_ handler: @escaping @Sendable (Bool) -> Void) {
-    onSetRoutingEnabled = handler
-  }
-
-  /// Registers the peer-public-address handler before the listener starts.
-  func setPeerPublicAddressHandler(_ handler: @escaping @Sendable (AddressPair) -> Void) {
-    onPeerPublicAddress = handler
-  }
-
-  /// Registers the peer-device-name handler before the listener starts.
-  func setPeerDeviceNameHandler(_ handler: @escaping @Sendable (String) -> Void) {
-    onPeerDeviceName = handler
-  }
-
-  /// Registers the peer link-inventory handler before the listener starts.
-  func setPeerAvailableLinksHandler(
-    _ handler: @escaping @Sendable ([RelayLinkSummary]) -> Void
-  ) {
-    onPeerAvailableLinks = handler
-  }
-
-  /// Registers the selected-connection-dropped handler before the listener starts.
-  func setConnectionDroppedHandler(_ handler: @escaping @Sendable () -> Void) {
-    onConnectionDropped = handler
-  }
-
-  /// Registers the session-established handler before the listener starts, fired with
-  /// the selected peer's id on each selection.
-  func setSessionEstablishedHandler(_ handler: @escaping @Sendable (UInt64) -> Void) {
-    onSessionEstablished = handler
-  }
-
-  /// Registers the roster-changed handler before the listener starts, fired with the
-  /// full set of connected iPhones whenever it changes.
-  func setRosterChangedHandler(_ handler: @escaping @Sendable ([ConnectedPeer]) -> Void) {
-    onRosterChanged = handler
   }
 
   /// Sets the WireGuard server endpoint the selected peer should relay to when the

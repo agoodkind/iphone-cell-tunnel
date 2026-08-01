@@ -11,6 +11,21 @@ import Foundation
 @preconcurrency import NetworkExtension
 import Synchronization
 
+/// How many times in a row a failed control listener is rebuilt before the agent
+/// stops trying. A port held by another process fails every attempt, so an unbounded
+/// loop would log and rebuild for the rest of the agent's life. A later client
+/// request starts a fresh run.
+private let controlListenerRestartMaxAttempts = 5
+
+/// How long to wait before the first rebuild. A port held by a previous instance is
+/// usually free within a second, so the first retry is quick.
+private let controlListenerRestartBaseDelayMs = 500
+
+/// The longest wait between rebuilds. Each attempt waits twice as long as the one
+/// before, up to this, which keeps a condition that has not cleared from being asked
+/// about constantly while still recovering within a time a person would wait.
+private let controlListenerRestartMaxDelayMs = 8_000
+
 // MARK: - AgentTunnelController
 
 actor AgentTunnelController {
@@ -40,6 +55,26 @@ actor AgentTunnelController {
   /// This actor is re-entrant, so a nil check followed by an await is not enough on its
   /// own to keep a second caller from starting a second listener on the same port.
   var controlListenerStart: Task<Void, Error>?
+  /// How long to wait before rebuilding a control listener that failed, and when to
+  /// stop rebuilding. A listener that binds clears the run of failures.
+  var listenerRestart = ListenerRestartPolicy(
+    maxAttempts: controlListenerRestartMaxAttempts,
+    baseDelayMilliseconds: controlListenerRestartBaseDelayMs,
+    maxDelayMilliseconds: controlListenerRestartMaxDelayMs
+  )
+  /// The pending rebuild of a failed control listener, cancelled by a teardown.
+  var listenerRestartTimer: DispatchSourceTimer?
+  /// Which control listener the controller is currently willing to hear from. It is
+  /// bumped whenever a listener is retired, so a report or a rebuild belonging to an
+  /// older one is ignored rather than tearing down its replacement.
+  var controlListenerGeneration = 0
+  /// Whether a rebuild is currently building a listener, read as that listener is
+  /// stored so a later report knows where it came from.
+  var isRebuildingControlListener = false
+  /// Whether the listener currently held came from a rebuild rather than from a
+  /// client request. A rebuilt listener that binds does not clear the run of
+  /// failures, so a listener that binds and fails repeatedly still reaches the bound.
+  var controlListenerFromRebuild = false
   let relayBridge: AgentRelayBridge
   let relayBrowser: RelayDeviceBrowser
   /// The agent's config library, the single source of truth the Mac app and the

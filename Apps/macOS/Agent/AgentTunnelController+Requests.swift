@@ -53,7 +53,7 @@ extension AgentTunnelController {
     case .startRelay:
       return await handleStartRelay()
     case .startRelayDiscovery:
-      return startDiscovery()
+      return await startDiscovery()
     case .startTunnel(let settings):
       return await handleStartTunnel(settings: settings)
     case .status:

@@ -15,9 +15,39 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 // MARK: - Relay discovery
 
 extension AgentTunnelController {
-  /// Starts the relay device browser and returns the current discovery snapshot.
-  func startDiscovery() -> AgentControlResponse {
+  /// Starts discovery in both directions and returns the current discovery snapshot.
+  ///
+  /// Discovery has two halves. The browser finds other devices, and the control
+  /// listener publishes the record that lets an iPhone find this Mac. Starting only
+  /// the browser leaves a Mac that cannot be found, which is the state a person is
+  /// trying to leave when they run this. Starting the listener here is also the
+  /// documented way back from a listener the agent stopped rebuilding.
+  ///
+  /// A listener that will not start is reported and does not fail the request, because
+  /// the browser half still works and the snapshot still answers.
+  func startDiscovery() async -> AgentControlResponse {
     relayBrowser.start()
+    do {
+      try await ensureControlListenerStarted()
+    } catch {
+      logger.error(
+        """
+        agent discovery could not start the control listener \
+        details=\(String(describing: error), privacy: .public) \
+        recovery=report-to-client
+        """
+      )
+      // Reporting the browser half as plain success would tell a person the Mac is
+      // discoverable when nothing is advertising it, which is the state they ran this
+      // to leave. This catches only a listener that could not be constructed. One that
+      // is built and then fails to bind reports asynchronously, and the snapshot's
+      // `advertising` field is what names that.
+      return failure(
+        errorCode: .internal,
+        message: "discovery started browsing, but this Mac is not advertising: "
+          + error.localizedDescription
+      )
+    }
     logger.notice("agent relay discovery started from browser")
     return snapshotResponse()
   }

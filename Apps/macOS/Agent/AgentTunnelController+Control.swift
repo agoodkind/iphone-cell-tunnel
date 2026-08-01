@@ -51,6 +51,9 @@ extension AgentTunnelController {
 
   /// Builds, wires, and starts one control listener, leaving the controller holding it.
   private func startControlListener() async throws {
+    controlListenerGeneration += 1
+    let generation = controlListenerGeneration
+    let fromRebuild = isRebuildingControlListener
     let listener = AgentControlListener()
 
     // The public-address exchange holds this host's and the iPhone's measured
@@ -59,10 +62,19 @@ extension AgentTunnelController {
     // the listener sends the result; the listener stores the iPhone's address here.
     let exchange = PublicAddressExchange()
     publicExchange = exchange
-    await configurePeerHandlers(on: listener, exchange: exchange)
+    await configurePeerHandlers(on: listener, exchange: exchange, generation: generation)
 
     try await listener.start()
+    // Binding happens after the start call returns, so this listener may already have
+    // failed and reported it while this method was suspended. Storing it then would
+    // install a listener that publishes nothing and block the replacement already on
+    // its way, because the start path returns early whenever a listener object exists.
+    guard generation == controlListenerGeneration else {
+      await listener.stop()
+      return
+    }
     controlListener = listener
+    controlListenerFromRebuild = fromRebuild
 
     startEgressMonitor()
     startPublicRefreshTimer()
@@ -138,7 +150,8 @@ extension AgentTunnelController {
   /// controller state.
   private func configurePeerHandlers(
     on listener: AgentControlListener,
-    exchange: PublicAddressExchange
+    exchange: PublicAddressExchange,
+    generation: Int
   ) async {
     await listener.setRoutingHandler { [weak self] enabled in
       Task { await self?.setRoutingEnabled(enabled) }
@@ -168,6 +181,12 @@ extension AgentTunnelController {
     // lists them and flags the selected one.
     await listener.setRosterChangedHandler { [weak self] roster in
       self?.connectedPeers.withLock { $0 = roster }
+    }
+    // A listener binds its fixed port after its start call returns, so a failure
+    // arrives here rather than as a thrown error. The generation travels with the
+    // report so a retired listener cannot tear down its replacement.
+    await listener.setServingChangedHandler { [weak self] isServing in
+      Task { await self?.applyListenerServingChange(generation: generation, isServing: isServing) }
     }
     // Selecting an iPhone installs its id as the bridge admit token, so the bridge
     // admits relay links only from the selected peer and drops links stamped with a
@@ -244,6 +263,9 @@ extension AgentTunnelController {
   /// rather than falling back to the physical interface. Routing intent is
   /// cleared with it, so a restarted agent and the extension agree.
   func stopControlListener() async {
+    // A pending rebuild would otherwise raise a listener after this teardown asked
+    // for none.
+    cancelListenerRebuild()
     await disableRouting()
     // A stop that lands mid-start would otherwise return before the start assigns its
     // listener, leaving a bound port and a published record with nothing referencing
@@ -287,6 +309,10 @@ extension AgentTunnelController {
   // both stores the reading for the snapshot's `Device` rows and re-probes the
   // public address. The handler hops onto the actor for the re-probe.
   func startEgressMonitor() {
+    // Retire the previous monitor. A rebuilt listener starts one again, and an
+    // abandoned monitor keeps watching and re-probing the public address for the rest
+    // of the agent's life.
+    egressMonitor?.stop()
     let monitor = EgressPathMonitor(requiredInterfaceType: nil)
     monitor.onChange = { [weak self] path in
       self?.egressPath.withLock { $0 = path }
@@ -347,6 +373,9 @@ extension AgentTunnelController {
     merged.routingIntentEnabled = TunnelRoutingIntent(enabled: routingEnabled)
     merged.agentLinks = agentLinks.withLock { $0 }
     merged.connectedPeers = connectedPeers.withLock { $0 }
+    // Whether an iPhone can find this Mac at all. A listener that lost its port is
+    // invisible in every other field, so no peer ever appears and nothing says why.
+    merged.advertising = TunnelAdvertisingState(isAdvertising: controlListener != nil)
     merged.configLibrary = configStore.summaries()
     merged.activeConfigID = configStore.activeID
     merged.configDrift = configDriftMessage

@@ -42,6 +42,22 @@ Do not hand-assemble the disk image. tart decompresses Apple-framed LZ4 layers i
 sparse image at offsets derived from each layer's uncompressed-size annotation, and
 serving a local registry gets the same result without reproducing that logic.
 
+## Copying the build in
+
+The machine needs two products copied in, the agent app and `celltunnelctl`. The packet
+tunnel extension is bundled inside the agent app and needs no copy of its own, though
+registering it is a separate step covered below.
+
+A stale `celltunnelctl` fails silently rather than reporting a mismatch, because it is
+the component that renders the status snapshot the agent sends. A field the client does
+not know is simply absent from the output even though the agent set it, and that gap
+reads as a missing feature in the agent.
+
+Confirm each product separately: compare `shasum -a 256` on the agent binary between the
+host and the machine, and search the machine's `celltunnelctl` for a string only the new
+build carries. When the agent binaries match and a status line is still missing, the
+client is the stale one.
+
 ## Three approvals a tunnel needs
 
 A machine created for a run has answered no prompts, so a tunnel cannot carry traffic
