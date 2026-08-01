@@ -18,6 +18,24 @@ private let guestAgentCodeSigningMarker = "OS_REASON_CODESIGNING"
 private let guestAgentReadyTimeoutSeconds: Double = 60
 private let guestAgentPollIntervalSeconds: Double = 2
 
+/// How long to wait for a previously loaded service to disappear before giving up.
+///
+/// Unloading is not instant, and bootstrapping while the old service is still going away
+/// fails. Ten seconds is far longer than the teardown observed in practice, so reaching
+/// this limit means something other than ordinary slowness is holding the service.
+private let guestAgentUnloadTimeoutSeconds: Double = 10
+
+/// What launchd returns when asked to describe a service it does not have. Measured on
+/// macOS: describing an absent service reports `Could not find service` and exits 113.
+/// This is the one failure that means the service is gone rather than that something went
+/// wrong, so any other failure is reported instead of being read as success.
+private let guestServiceNotFoundStatus = 113
+
+/// What launchd returns when asked to unload a service it does not have. Measured on
+/// macOS: unloading an absent service reports `No such process` and exits 3. A first run
+/// against a fresh machine hits this every time, so it is expected rather than a failure.
+private let guestServiceNoSuchProcessStatus = 3
+
 // MARK: - GuestAgentService
 
 /// Namesake type so SwiftLint `file_name` matches `GuestAgentService.swift`.
@@ -47,14 +65,17 @@ func startGuestAgent(shell: GuestShell, layout: GuestInstallLayout) throws {
   try shell.copyIn([localPlist], to: plistPath)
 
   let serviceTarget = "gui/\(userIdentifier)/\(label)"
+  // Unload whatever a previous run left behind, then wait for it to actually be gone.
+  // Unloading returns before the service has finished going away, and bootstrapping into
+  // that gap fails with an input or output error that names neither the cause nor the
+  // remedy. Waiting is what makes a second run of this command work.
+  try unloadGuestAgent(shell: shell, serviceTarget: serviceTarget)
+  try awaitGuestAgentUnloaded(shell: shell, serviceTarget: serviceTarget)
+
   // The guest has no dev tool of its own, so the load sequence runs as a script there.
   let script = """
     #!/usr/bin/env bash
-    set -uo pipefail
-    # A previous run may have left the service loaded; booting it out first is the only
-    # way to replace its plist, and it is expected to fail when nothing is loaded.
-    launchctl bootout '\(serviceTarget)' || true
-    set -e
+    set -euo pipefail
     launchctl bootstrap 'gui/\(userIdentifier)' '\(plistPath)'
     launchctl kickstart -k '\(serviceTarget)'
     """
@@ -72,6 +93,69 @@ func startGuestAgent(shell: GuestShell, layout: GuestInstallLayout) throws {
   guestAgentLogger.notice(
     "guest agent running target=\(serviceTarget, privacy: .public)")
   printToolOutput("guest: agent running as \(serviceTarget)")
+}
+
+/// Unload whatever a previous run left loaded, tolerating only the absence of it.
+///
+/// A first run against a fresh machine has nothing to unload, which launchd reports as no
+/// such process. Every other failure means the unload did not happen, and continuing would
+/// load a second copy over the first, so it is reported here with what launchd said.
+private func unloadGuestAgent(shell: GuestShell, serviceTarget: String) throws {
+  guestAgentLogger.debug(
+    "guest agent unload requested target=\(serviceTarget, privacy: .public)")
+  let result = try shell.captureRemote("launchctl bootout '\(serviceTarget)'")
+  if result.status == 0 || result.status == guestServiceNoSuchProcessStatus {
+    return
+  }
+  throw ToolError.failure(
+    """
+    guest: unloading \(serviceTarget) failed with status \(result.status), so loading it \
+    again would run a second copy alongside the first; launchd said: \
+    \(guestOutputExcerpt(result.output))
+    """
+  )
+}
+
+/// Wait for the service to disappear from launchd after it was unloaded.
+///
+/// Unloading returns as soon as launchd accepts the request, not once the service is gone,
+/// so loading a replacement immediately afterwards can land while the old one is still
+/// tearing down. Asking launchd to describe the service is how the caller can tell: a
+/// service that is gone cannot be described.
+private func awaitGuestAgentUnloaded(shell: GuestShell, serviceTarget: String) throws {
+  guestAgentLogger.debug(
+    "guest agent unload poll starting target=\(serviceTarget, privacy: .public)")
+  let deadline = Date().addingTimeInterval(guestAgentUnloadTimeoutSeconds)
+  var lastOutput = "launchd was never asked"
+  while Date() < deadline {
+    let result = try shell.captureRemote("launchctl print '\(serviceTarget)'")
+    // Only launchd's own "no such service" answer means the service is gone. Reading any
+    // failure that way would let a wrong target or a refused connection look like a clean
+    // teardown, and the load that follows would fail with the error this wait exists to
+    // prevent.
+    if result.status == guestServiceNotFoundStatus {
+      return
+    }
+    if result.status != 0 {
+      throw ToolError.failure(
+        """
+        guest: asking launchd about \(serviceTarget) failed with status \(result.status), \
+        so whether it finished unloading is unknown; launchd said: \
+        \(guestOutputExcerpt(result.output))
+        """
+      )
+    }
+    lastOutput = result.output
+    guestPollDelay(seconds: guestAgentPollIntervalSeconds)
+  }
+  throw ToolError.failure(
+    """
+    guest: \(serviceTarget) was still loaded \(Int(guestAgentUnloadTimeoutSeconds))s after \
+    being unloaded, so loading it again would fail; stop whatever is holding it, or reboot \
+    the guest, then run this command again; last `launchctl print` output: \
+    \(guestOutputExcerpt(lastOutput))
+    """
+  )
 }
 
 /// Poll launchd until the service reports a running state, failing with the reason
