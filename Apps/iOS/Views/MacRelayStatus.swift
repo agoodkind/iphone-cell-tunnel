@@ -102,7 +102,7 @@ import Foundation
       case .noActiveConfig:
         return "No config selected"
       case .noAgent:
-        return "Agent not installed"
+        return "Setup not finished"
       case .noConfigImported:
         return "No configuration imported"
       case .noPeerSelected:
