@@ -30,6 +30,7 @@ extension AgentTunnelController {
       return failure(errorCode: .unspecified, message: error.localizedDescription)
     }
     let saved: StoredTunnelConfig
+    let previousActiveID = configStore.activeID
     do {
       saved = try configStore.addDeduplicated(name: name, text: text)
       configStore.setActive(id: saved.id)
@@ -44,26 +45,45 @@ extension AgentTunnelController {
       // internal prefix. The log line above keeps the underlying error verbatim.
       return failure(errorCode: .internal, message: userFacingMessage(for: error))
     }
+    // Import leaves starting to the explicit start action, but a tunnel that is already
+    // running must still carry what the library now calls active.
+    if let followFailure = await followActiveConfigOnRunningTunnel() {
+      restoreActiveConfig(to: previousActiveID)
+      return followFailure
+    }
     return await handleStatus()
   }
 
   /// Marks a stored config active without starting the tunnel.
   func handleSetActiveConfig(id: UUID) async -> AgentControlResponse {
-    guard configStore.text(forID: id) != nil else {
-      return failure(errorCode: .internal, message: "no config with id \(id.uuidString)")
-    }
-    configStore.setActive(id: id)
-    return await handleStatus()
+    await activate(id: id)
   }
 
-  /// Makes a stored config active without starting the tunnel. The relay session now
-  /// starts only through the routing-enable path, so activation just records the
-  /// selection and returns the refreshed status.
+  /// Makes a stored config active without starting the tunnel. The relay session starts
+  /// only through the routing-enable path, so this records the selection rather than
+  /// starting anything.
   func handleActivateConfig(id: UUID) async -> AgentControlResponse {
+    await activate(id: id)
+  }
+
+  /// Records which stored config is active and asks a running tunnel to carry it.
+  ///
+  /// Both activation requests do the same thing, so they share this rather than keeping
+  /// two copies that can drift apart.
+  ///
+  /// A tunnel that cannot be made to carry the new selection puts the previous selection
+  /// back before the failure is returned, so the library keeps naming the configuration
+  /// the tunnel is actually running rather than the one that was asked for.
+  private func activate(id: UUID) async -> AgentControlResponse {
     guard configStore.text(forID: id) != nil else {
       return failure(errorCode: .internal, message: "no config with id \(id.uuidString)")
     }
+    let previousActiveID = configStore.activeID
     configStore.setActive(id: id)
+    if let followFailure = await followActiveConfigOnRunningTunnel() {
+      restoreActiveConfig(to: previousActiveID)
+      return followFailure
+    }
     return await handleStatus()
   }
 

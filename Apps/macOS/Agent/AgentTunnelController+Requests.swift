@@ -227,8 +227,37 @@ extension AgentTunnelController {
       )
     }
     let saved: StoredTunnelConfig
+    let previousActiveID = configStore.activeID
+    let configText: String
     do {
-      let configText = try readConfigText(at: settings.wireGuardConfigPath)
+      configText = try readConfigText(at: settings.wireGuardConfigPath)
+    } catch {
+      logger.error(
+        """
+        startTunnel config read failed \
+        details=\(String(describing: error), privacy: .public) \
+        recovery=return-failure-response
+        """
+      )
+      return failure(from: error)
+    }
+    // Reject an unparseable file before it reaches the library, the same as import.
+    // Storing it first would leave a row and an active selection the tunnel cannot carry,
+    // and the caller would have to undo both.
+    //
+    // The parse error is not logged, matching import and validate. It names the value it
+    // choked on, and for a key or a whole line that value is the secret itself. The caller
+    // still receives it, because the person holding the config is who needs to know which
+    // line is wrong.
+    do {
+      _ = try WireGuardConfigParser.parse(configText)
+    } catch {
+      logger.notice(
+        "startTunnel rejected config as unparseable recovery=return-invalid-without-logging-config"
+      )
+      return failure(errorCode: .unspecified, message: error.localizedDescription)
+    }
+    do {
       saved = try configStore.addDeduplicated(
         name: Self.configName(fromPath: settings.wireGuardConfigPath),
         text: configText
@@ -237,12 +266,19 @@ extension AgentTunnelController {
     } catch {
       logger.error(
         """
-        startTunnel config resolve failed \
+        startTunnel config store failed \
         details=\(String(describing: error), privacy: .public) \
         recovery=return-failure-response
         """
       )
       return failure(from: error)
+    }
+    // A tunnel that is already running keeps carrying the configuration it was started
+    // with, so without this the named file would change only the library while the person
+    // reads results from whatever was running before.
+    if let followFailure = await followActiveConfigOnRunningTunnel() {
+      restoreActiveConfig(to: previousActiveID)
+      return followFailure
     }
     // The config is now active, so start through the routing-enable path to keep the
     // relay-hosted and routing states consistent across every start entry point.

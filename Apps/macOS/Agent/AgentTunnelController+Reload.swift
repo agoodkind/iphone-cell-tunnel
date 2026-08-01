@@ -59,6 +59,20 @@ extension AgentTunnelController {
         operationName: "reloadConfig"
       )
       logger.notice("agent tunnel reload requested")
+      // The extension reports a rejection in this field and sends no status with it.
+      // Reading only the status would turn that rejection into a success, and the caller
+      // would record a configuration the tunnel refused to carry.
+      //
+      // The rejection text stays out of the log. It quotes the input line it could not
+      // read, and those lines are the part of the file that must not be written to a
+      // system-wide log. The caller still receives it, because whoever holds the file is
+      // who needs to know which line is wrong.
+      if let providerFailure = response.failureMessage {
+        logger.error(
+          "agent tunnel reload rejected by the extension recovery=return-failure-response"
+        )
+        return failure(errorCode: .internal, message: providerFailure)
+      }
       if let status = response.status {
         return AgentControlResponse(
           status: augmented(status, profileState: await currentProfileState())
