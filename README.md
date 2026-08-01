@@ -1,6 +1,6 @@
 # Cell Tunnel
 
-Cell Tunnel routes a Mac's internet traffic through an iPhone's native cellular modem over WireGuard. See [docs/architecture.md](docs/architecture.md) for the data path and components.
+Cell Tunnel routes a Mac's internet traffic through an iPhone's native cellular modem over WireGuard. See [docs/run.md](docs/run.md) for what running it takes today, and [docs/architecture.md](docs/architecture.md) for the data path and components.
 
 ## Build
 
