@@ -176,7 +176,9 @@ final class RelayController {
   #endif
 
   private let deviceProbe: DeviceEgressProbe?
-  private var pollTask: Task<Void, Never>?
+  /// The one task reading status, whichever way the backend supplies it: reading a
+  /// stream the source sends, or asking a source that has to be asked.
+  private var statusTask: Task<Void, Never>?
   private var throughput: ThroughputCalculator
   private var lifetimeStore: LifetimeDataStore
   // The latest device egress and public address from the backend snapshot and from
@@ -318,7 +320,7 @@ final class RelayController {
     logger.notice("relay controller start requested")
     startDeviceProbe()
     await backend.start()
-    startPolling()
+    startStatusUpdates()
   }
 
   /// Starts the relay only when the platform's own required setup is complete.
@@ -341,7 +343,7 @@ final class RelayController {
   func refreshProvisioned() async {
     logger.notice("relay controller provisioned refresh requested")
     #if targetEnvironment(macCatalyst)
-      if pollTask == nil {
+      if statusTask == nil {
         await start()
       }
     #else
@@ -351,7 +353,7 @@ final class RelayController {
         logger.notice("relay controller provisioned refresh found no saved tunnel")
         return
       }
-      if pollTask == nil {
+      if statusTask == nil {
         await start()
       }
     #endif
@@ -399,39 +401,32 @@ final class RelayController {
     assign(\.interfaceAddresses, all)
   }
 
-  /// Suspends the status poll without touching the session, for backgrounding.
+  /// Stops reading status without touching the session, for backgrounding. Where the
+  /// source sends readings, this ends the subscription, so it stops sending to a screen
+  /// nobody is looking at.
   func suspendPolling() {
-    logger.notice("relay controller suspending status poll")
-    stopPolling()
+    logger.notice("relay controller suspending status updates")
+    stopStatusUpdates()
   }
 
-  /// Resumes the status poll after foregrounding.
+  /// Resumes reading status after the app comes back to the front.
   func resumePolling() {
-    logger.notice("relay controller resuming status poll")
-    startPolling()
+    logger.notice("relay controller resuming status updates")
+    startStatusUpdates()
   }
 
-  // MARK: - Poll loop
+  // MARK: - Status updates
 
-  private func startPolling() {
-    pollTask?.cancel()
+  private func startStatusUpdates() {
+    statusTask?.cancel()
     throughput.reset()
-    logger.notice("relay controller status poll starting")
-    pollTask = Task { @MainActor [weak self] in
+    logger.notice("relay controller status updates starting")
+    statusTask = Task { @MainActor [weak self] in
       while !Task.isCancelled {
         guard let self else {
           return
         }
-        if let sample = await backend.sample() {
-          apply(sample)
-          #if targetEnvironment(macCatalyst)
-            await refreshInstallState(agentReachable: true)
-          #endif
-        } else {
-          #if targetEnvironment(macCatalyst)
-            await refreshInstallState(agentReachable: false)
-          #endif
-        }
+        await readStatusRound()
         guard !Task.isCancelled else {
           return
         }
@@ -440,10 +435,42 @@ final class RelayController {
     }
   }
 
-  private func stopPolling() {
-    logger.notice("relay controller status poll stopping")
-    pollTask?.cancel()
-    pollTask = nil
+  /// One round is either the whole life of a subscription or a single reading, whichever
+  /// the backend offers.
+  ///
+  /// A subscription that finishes means the source went away, so the loop waits and
+  /// opens another rather than giving up. That retry is what brings the screen back by
+  /// itself once the source returns.
+  private func readStatusRound() async {
+    if let updates = backend.statusUpdates() {
+      for await sample in updates {
+        apply(sample)
+        #if targetEnvironment(macCatalyst)
+          await refreshInstallState(agentReachable: true)
+        #endif
+      }
+      logger.notice("relay controller status stream ended")
+      #if targetEnvironment(macCatalyst)
+        await refreshInstallState(agentReachable: false)
+      #endif
+      return
+    }
+    if let sample = await backend.sample() {
+      apply(sample)
+      #if targetEnvironment(macCatalyst)
+        await refreshInstallState(agentReachable: true)
+      #endif
+    } else {
+      #if targetEnvironment(macCatalyst)
+        await refreshInstallState(agentReachable: false)
+      #endif
+    }
+  }
+
+  private func stopStatusUpdates() {
+    logger.notice("relay controller status updates stopping")
+    statusTask?.cancel()
+    statusTask = nil
   }
 
   private func apply(_ sample: RelayStatusSample) {
