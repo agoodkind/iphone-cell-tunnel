@@ -177,6 +177,8 @@ extension AgentTunnelController {
       "agent observed vpn status=\(self.statusDescription(status), privacy: .public)"
     )
     await reconcileRoutingIntent(with: status)
+    // Nothing asked for this change, so nothing else would tell the screens about it.
+    await broadcastStatus()
   }
 
   /// Drops the routing intent when the system takes the tunnel away underneath the

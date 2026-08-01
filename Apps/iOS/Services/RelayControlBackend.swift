@@ -19,8 +19,15 @@ protocol RelayControlBackend {
   /// Brings the platform relay session up.
   func start() async
 
-  /// One status reading, or `nil` when the source is briefly unavailable.
+  /// One status reading, or `nil` when the source is briefly unavailable. A backend
+  /// whose source sends readings on its own leaves this alone and offers
+  /// `statusUpdates()` instead.
   func sample() async -> RelayStatusSample?
+
+  /// A stream of readings the source sends on its own, or `nil` from a source that has
+  /// to be asked. The stream finishing means the source is unreachable, which is how a
+  /// caller learns that without asking.
+  func statusUpdates() -> AsyncStream<RelayStatusSample>?
 
   /// Sets the routing choice through the platform control path.
   func setRouting(enabled: Bool) async
@@ -41,6 +48,14 @@ protocol RelayControlBackend {
 // MARK: - Defaults
 
 extension RelayControlBackend {
+  func sample() -> RelayStatusSample? {
+    nil
+  }
+
+  func statusUpdates() -> AsyncStream<RelayStatusSample>? {
+    nil
+  }
+
   var autoSelectsDiscoveredPeer: Bool {
     false
   }

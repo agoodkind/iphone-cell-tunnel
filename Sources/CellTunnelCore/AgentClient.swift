@@ -22,6 +22,9 @@ import Foundation
   /// caller's thread, which the synchronous libxpc reply call requires.
   public actor AgentClient: TunnelControlClientProtocol {
     private var session: XPCSession?
+    /// Where pushed snapshots go. Held across sessions so opening a new one keeps
+    /// delivering to the same consumer.
+    nonisolated private let pushDelivery = AgentPushDelivery()
 
     public init(
       endpointPath: String = "",
@@ -42,6 +45,33 @@ import Foundation
       logger.notice("agent client invoked rpc=status")
       let response = try await send(request: .status, operationName: "status")
       return try requireStatus(from: response, operationName: "status")
+    }
+
+    /// Asks the agent to send a fresh snapshot whenever the state changes, and returns
+    /// the snapshot as it stands now.
+    ///
+    /// `onSnapshot` runs for every later push and `onDisconnect` once when the session
+    /// ends, whichever side ended it. Both run off the main thread, so a caller that
+    /// updates a screen has to hop for itself.
+    ///
+    /// The subscription lasts for the life of the session. There is no message to end
+    /// it: shutting the client down ends it, and so does the agent going away.
+    @preconcurrency
+    public func subscribe(
+      onSnapshot: @escaping @Sendable (TunnelDaemonStatusSnapshot) -> Void,
+      onDisconnect: @escaping @Sendable () -> Void
+    ) async throws -> TunnelDaemonStatusSnapshot {
+      logger.notice("agent client invoked rpc=subscribe")
+      // The handlers go in before the request, so a snapshot the agent pushes between
+      // the send and the reply is delivered rather than dropped.
+      pushDelivery.setHandlers(onSnapshot: onSnapshot, onDisconnect: onDisconnect)
+      do {
+        let response = try await send(request: .subscribe, operationName: "subscribe")
+        return try requireStatus(from: response, operationName: "subscribe")
+      } catch {
+        pushDelivery.clearHandlers()
+        throw error
+      }
     }
 
     public func check() async throws -> TunnelEnvironmentReport {
@@ -364,8 +394,21 @@ import Foundation
       if let session {
         return session
       }
+      let delivery = pushDelivery
       do {
-        let created = try XPCSession(machService: agentMachServiceName)
+        // The handlers go in as the session opens. Adding them afterwards would race
+        // the first push, which can arrive before this method returns.
+        let created = try XPCSession(
+          machService: agentMachServiceName,
+          incomingMessageHandler: { (message: XPCDictionary) -> XPCDictionary? in
+            // A push answers nothing, so there is no reply to return.
+            delivery.deliver(payload: Self.payloadData(from: message))
+            return nil
+          },
+          cancellationHandler: { (_: XPCRichError) in
+            delivery.reportDisconnected()
+          }
+        )
         session = created
         logger.notice(
           "agent xpc session opened machServiceName=\(agentMachServiceName, privacy: .public)"
@@ -397,11 +440,9 @@ import Foundation
       return XPCDictionary(raw)
     }
 
-    private func replyData(
-      from reply: XPCDictionary,
-      operationName: String
-    ) throws -> Data {
-      let data = reply.withUnsafeUnderlyingDictionary { raw -> Data? in
+    /// The payload carried on one message, shared by the reply path and the pushes.
+    nonisolated private static func payloadData(from message: XPCDictionary) -> Data? {
+      message.withUnsafeUnderlyingDictionary { raw -> Data? in
         var length = 0
         guard
           let pointer = xpc_dictionary_get_data(raw, agentControlPayloadKey, &length),
@@ -411,7 +452,13 @@ import Foundation
         }
         return Data(bytes: pointer, count: length)
       }
-      guard let data else {
+    }
+
+    private func replyData(
+      from reply: XPCDictionary,
+      operationName: String
+    ) throws -> Data {
+      guard let data = Self.payloadData(from: reply) else {
         throw TunnelDaemonError.transportFailure(
           "agent returned no payload for \(operationName)"
         )
@@ -425,6 +472,9 @@ import Foundation
       }
       active.cancel(reason: reason)
       session = nil
+      // A session cancelled from this side may or may not run its cancellation handler,
+      // so the disconnect is reported here too. It is reported once either way.
+      pushDelivery.reportDisconnected()
       logger.notice("agent xpc session torn down reason=\(reason, privacy: .public)")
     }
 
