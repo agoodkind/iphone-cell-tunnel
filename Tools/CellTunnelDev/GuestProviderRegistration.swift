@@ -43,6 +43,8 @@ func registerGuestTunnelProvider(shell: GuestShell, layout: GuestInstallLayout) 
   providerRegistrationLogger.debug(
     "guest tunnel provider registration starting bundle=\(bundlePath, privacy: .public)")
 
+  var lastStatus = -1
+  var lastOutput = "the registration was never read back"
   for attempt in 1...providerRegistrationAttempts {
     try shell.runRemote(
       "pluginkit -a '\(bundlePath)'",
@@ -50,6 +52,8 @@ func registerGuestTunnelProvider(shell: GuestShell, layout: GuestInstallLayout) 
     )
     guestPollDelay(seconds: providerRegistrationWaitSeconds)
     let listing = try shell.captureRemote("pluginkit -m -v -i '\(identifier)'")
+    lastStatus = Int(listing.status)
+    lastOutput = listing.output
     if listing.output.contains(identifier) {
       providerRegistrationLogger.notice(
         "guest tunnel provider registered attempt=\(attempt, privacy: .public)")
@@ -58,11 +62,15 @@ func registerGuestTunnelProvider(shell: GuestShell, layout: GuestInstallLayout) 
     }
   }
 
+  // The last reading is carried into the failure. A registration that is merely not
+  // there yet and a reader that is itself failing produce the same silence otherwise,
+  // and the difference is what tells someone where to look.
   throw ToolError.failure(
     """
     guest: the tunnel provider at \(bundlePath) is still not registered after \
     \(providerRegistrationAttempts) attempts, so the tunnel cannot start and anything \
-    measured here would describe a machine with no tunnel; check that the bundle is \
+    measured here would describe a machine with no tunnel; the last read exited \
+    \(lastStatus) and said: \(guestOutputExcerpt(lastOutput)); check that the bundle is \
     present and signed, then run this command again
     """
   )
