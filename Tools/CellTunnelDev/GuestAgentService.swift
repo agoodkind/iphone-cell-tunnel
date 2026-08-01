@@ -25,6 +25,17 @@ private let guestAgentPollIntervalSeconds: Double = 2
 /// this limit means something other than ordinary slowness is holding the service.
 private let guestAgentUnloadTimeoutSeconds: Double = 10
 
+/// What launchd returns when asked to describe a service it does not have. Measured on
+/// macOS: describing an absent service reports `Could not find service` and exits 113.
+/// This is the one failure that means the service is gone rather than that something went
+/// wrong, so any other failure is reported instead of being read as success.
+private let guestServiceNotFoundStatus = 113
+
+/// What launchd returns when asked to unload a service it does not have. Measured on
+/// macOS: unloading an absent service reports `No such process` and exits 3. A first run
+/// against a fresh machine hits this every time, so it is expected rather than a failure.
+private let guestServiceNoSuchProcessStatus = 3
+
 // MARK: - GuestAgentService
 
 /// Namesake type so SwiftLint `file_name` matches `GuestAgentService.swift`.
@@ -58,10 +69,7 @@ func startGuestAgent(shell: GuestShell, layout: GuestInstallLayout) throws {
   // Unloading returns before the service has finished going away, and bootstrapping into
   // that gap fails with an input or output error that names neither the cause nor the
   // remedy. Waiting is what makes a second run of this command work.
-  try shell.runRemote(
-    "launchctl bootout '\(serviceTarget)' || true",
-    describing: "unloading any previously loaded agent service"
-  )
+  try unloadGuestAgent(shell: shell, serviceTarget: serviceTarget)
   try awaitGuestAgentUnloaded(shell: shell, serviceTarget: serviceTarget)
 
   // The guest has no dev tool of its own, so the load sequence runs as a script there.
@@ -87,6 +95,27 @@ func startGuestAgent(shell: GuestShell, layout: GuestInstallLayout) throws {
   printToolOutput("guest: agent running as \(serviceTarget)")
 }
 
+/// Unload whatever a previous run left loaded, tolerating only the absence of it.
+///
+/// A first run against a fresh machine has nothing to unload, which launchd reports as no
+/// such process. Every other failure means the unload did not happen, and continuing would
+/// load a second copy over the first, so it is reported here with what launchd said.
+private func unloadGuestAgent(shell: GuestShell, serviceTarget: String) throws {
+  guestAgentLogger.debug(
+    "guest agent unload requested target=\(serviceTarget, privacy: .public)")
+  let result = try shell.captureRemote("launchctl bootout '\(serviceTarget)'")
+  if result.status == 0 || result.status == guestServiceNoSuchProcessStatus {
+    return
+  }
+  throw ToolError.failure(
+    """
+    guest: unloading \(serviceTarget) failed with status \(result.status), so loading it \
+    again would run a second copy alongside the first; launchd said: \
+    \(guestOutputExcerpt(result.output))
+    """
+  )
+}
+
 /// Wait for the service to disappear from launchd after it was unloaded.
 ///
 /// Unloading returns as soon as launchd accepts the request, not once the service is gone,
@@ -100,8 +129,21 @@ private func awaitGuestAgentUnloaded(shell: GuestShell, serviceTarget: String) t
   var lastOutput = "launchd was never asked"
   while Date() < deadline {
     let result = try shell.captureRemote("launchctl print '\(serviceTarget)'")
-    if result.status != 0 {
+    // Only launchd's own "no such service" answer means the service is gone. Reading any
+    // failure that way would let a wrong target or a refused connection look like a clean
+    // teardown, and the load that follows would fail with the error this wait exists to
+    // prevent.
+    if result.status == guestServiceNotFoundStatus {
       return
+    }
+    if result.status != 0 {
+      throw ToolError.failure(
+        """
+        guest: asking launchd about \(serviceTarget) failed with status \(result.status), \
+        so whether it finished unloading is unknown; launchd said: \
+        \(guestOutputExcerpt(result.output))
+        """
+      )
     }
     lastOutput = result.output
     guestPollDelay(seconds: guestAgentPollIntervalSeconds)
