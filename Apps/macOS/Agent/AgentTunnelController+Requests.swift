@@ -82,24 +82,17 @@ extension AgentTunnelController {
   /// the app's polls animate the transition.
   private func handleSetRoutingEnabled(_ enabled: Bool) async -> AgentControlResponse {
     if enabled {
-      let hasConfig = configStore.activeID.flatMap { configStore.text(forID: $0) } != nil
-      // The request path always requires a resolvable config; the relay-hosted reconcile
-      // is the live switch path's job, so it passes relayHosted: false. Sharing the
-      // decision keeps the rejection code and message identical across both entry points.
-      let precondition = routingEnablePrecondition(
-        relayHosted: false,
-        hasResolvableActiveConfig: hasConfig
-      )
-      if let rejectionErrorCode = precondition.rejectionErrorCode {
+      // The same rule the snapshot publishes, so what a person sees on the switch and
+      // what happens when they flip it cannot disagree.
+      let readiness = await currentRoutingStartReadiness()
+      if let rejectionErrorCode = readiness.rejectionErrorCode {
         return failure(
           errorCode: rejectionErrorCode,
-          message: noActiveConfigSelectedMessage
+          message: readiness.rejectionMessage ?? noActiveConfigSelectedMessage
         )
       }
-      // Start the pairing listener before the peer check, matching startTunnel and
-      // startRelay. On a fresh agent this brings the listener up so the iPhone can dial
-      // in; without it the peer check fails forever and the listener never starts.
-      // Idempotent: a no-op when the listener is already running.
+      // Start the pairing listener, which is idempotent. On a fresh agent this brings
+      // the listener up so an iPhone can dial in; without it nothing ever connects.
       do {
         try await ensureControlListenerStarted()
       } catch {
@@ -112,10 +105,12 @@ extension AgentTunnelController {
         )
         return failure(from: error)
       }
-      if await controlListener?.hasSelectedPeer() != true {
+      // Re-read after starting the listener, because an iPhone can dial in during it.
+      let afterListener = await currentRoutingStartReadiness()
+      if let rejectionErrorCode = afterListener.rejectionErrorCode {
         return failure(
-          errorCode: .relaySelectionRequired,
-          message: "no selected peer connection"
+          errorCode: rejectionErrorCode,
+          message: afterListener.rejectionMessage ?? noSelectedPeerConnectionMessage
         )
       }
     }
