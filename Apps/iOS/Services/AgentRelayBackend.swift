@@ -244,42 +244,60 @@
       url.deletingPathExtension().lastPathComponent
     }
 
-    // MARK: - Sampling
+    // MARK: - Status
 
-    func sample() async -> RelayStatusSample? {
-      do {
-        var snapshot = try await client.status()
-        snapshot.discovery = await discoverySnapshot()
-        var sample = RelayStatusSample(snapshot: snapshot)
-        sample.isTunnelInstalled =
-          snapshot.activeConfigID != nil || !(snapshot.configLibrary ?? []).isEmpty
-        return sample
-      } catch {
-        logger.error(
-          """
-          agent relay status read failed \
-          details=\(String(describing: error), privacy: .public) recovery=keep-last-reading
-          """
-        )
-        return nil
+    /// Subscribes to the agent's pushes and yields one reading per snapshot.
+    ///
+    /// The stream is the subscription: it opens when the caller starts reading it and
+    /// finishes when the agent goes away, which is how the caller learns the agent is
+    /// unreachable without asking once a second. Ending the read shuts the client down,
+    /// so putting the app in the background stops the pushes at the source rather than
+    /// ignoring them here.
+    func statusUpdates() -> AsyncStream<RelayStatusSample>? {
+      let agentClient = self.client
+      return AsyncStream { continuation in
+        let subscribeTask = Task {
+          do {
+            let current = try await agentClient.subscribe(
+              onSnapshot: { snapshot in
+                continuation.yield(Self.sample(from: snapshot))
+              },
+              onDisconnect: {
+                continuation.finish()
+              }
+            )
+            continuation.yield(Self.sample(from: current))
+            logger.notice("agent relay backend subscribed to status pushes")
+          } catch {
+            logger.error(
+              """
+              agent relay subscribe failed \
+              details=\(String(describing: error), privacy: .public) recovery=end-stream
+              """
+            )
+            continuation.finish()
+          }
+        }
+        continuation.onTermination = { _ in
+          subscribeTask.cancel()
+          Task { await agentClient.shutdown() }
+        }
       }
     }
 
-    // The status snapshot the agent forwards from the extension carries no
-    // discovery, so the peers list is read from the agent's own browser. A
-    // discovery read failure yields an empty section rather than failing the poll.
-    private func discoverySnapshot() async -> TunnelDiscoverySnapshot {
-      do {
-        return try await client.listRelayServices()
-      } catch {
-        logger.error(
-          """
-          agent relay discovery read failed \
-          details=\(String(describing: error), privacy: .public) recovery=empty-discovery
-          """
-        )
-        return TunnelDiscoverySnapshot()
-      }
+    /// Maps one agent snapshot onto the shared reading.
+    ///
+    /// Static and off the main thread because the pushes arrive on the transport's own
+    /// queue and nothing here touches the backend's state. The agent's snapshot reports
+    /// the configuration library rather than a saved profile, so whether a tunnel is
+    /// installed is read from the library.
+    nonisolated private static func sample(
+      from snapshot: TunnelDaemonStatusSnapshot
+    ) -> RelayStatusSample {
+      var sample = RelayStatusSample(snapshot: snapshot)
+      sample.isTunnelInstalled =
+        snapshot.activeConfigID != nil || !(snapshot.configLibrary ?? []).isEmpty
+      return sample
     }
   }
 

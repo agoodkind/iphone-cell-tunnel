@@ -568,6 +568,7 @@ extension AgentTunnelController {
       peerLinks.withLock { $0 = nil }
       scheduleRouteWithdraw(generation: routeWithdrawGeneration)
     }
+    await broadcastStatus()
   }
 
   // Schedules a one-shot timer that withdraws routes only if the link is still

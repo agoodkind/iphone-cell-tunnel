@@ -9,6 +9,7 @@
 import CellTunnelCore
 import CellTunnelLog
 import Foundation
+import Synchronization
 @preconcurrency import XPC
 
 private let logger = CellTunnelLog.logger(category: .daemon)
@@ -23,10 +24,12 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 /// controller, and the reply carries an `AgentControlResponse` JSON.
 final class AgentSessionListener: @unchecked Sendable {
   private let controller: AgentTunnelController
+  private let subscribers: SubscriberRegistry
   private var listenerConnection: xpc_connection_t?
 
-  init(controller: AgentTunnelController) {
+  init(controller: AgentTunnelController, subscribers: SubscriberRegistry) {
     self.controller = controller
+    self.subscribers = subscribers
   }
 
   // MARK: - Lifecycle
@@ -77,14 +80,28 @@ final class AgentSessionListener: @unchecked Sendable {
       )
       return
     }
+    // The subscription is created with the peer and held by the peer's own event
+    // handler, so it lives exactly as long as the connection does. An error event is the
+    // only notice that a client is gone, so it is also the only chance to stop sending
+    // into a connection nobody is reading.
+    let subscription = PeerSubscription(peer: peer, registry: subscribers)
     xpc_connection_set_event_handler(peer) { [weak self] message in
-      self?.handleIncomingMessage(message, on: peer)
+      guard xpc_get_type(message) != XPC_TYPE_ERROR else {
+        subscription.end()
+        logger.notice("agent session listener peer connection ended")
+        return
+      }
+      self?.handleIncomingMessage(message, on: peer, subscription: subscription)
     }
     xpc_connection_resume(peer)
     logger.notice("agent session listener accepted inbound session")
   }
 
-  private func handleIncomingMessage(_ message: xpc_object_t, on peer: xpc_connection_t) {
+  private func handleIncomingMessage(
+    _ message: xpc_object_t,
+    on peer: xpc_connection_t,
+    subscription: PeerSubscription
+  ) {
     guard xpc_get_type(message) == XPC_TYPE_DICTIONARY else {
       logger.notice("agent session listener ignored non-dictionary message")
       return
@@ -119,6 +136,11 @@ final class AgentSessionListener: @unchecked Sendable {
       )
       replyChannel.sendFailure("request decode failed")
       return
+    }
+    // Registering before the controller call means a snapshot pushed while the reply is
+    // still being built still reaches the client that just subscribed.
+    if case .subscribe = request {
+      subscription.begin()
     }
     let handlingController = self.controller
     Task {
@@ -202,5 +224,67 @@ private final class ReplyChannel: @unchecked Sendable {
       )
       return nil
     }
+  }
+}
+
+// MARK: - PeerSubscription
+
+/// One client's place in the push registry, for the life of its connection.
+///
+/// The registry holds plain send closures so it stays free of the transport, so the
+/// connection handle is held here and only the send is published. Keeping the token here
+/// means the object that registered the client is the one that drops it when the
+/// connection reports it is gone.
+private final class PeerSubscription: @unchecked Sendable {
+  private let peer: xpc_connection_t
+  private let registry: SubscriberRegistry
+  private let token = Mutex<UUID?>(nil)
+
+  init(peer: xpc_connection_t, registry: SubscriberRegistry) {
+    self.peer = peer
+    self.registry = registry
+  }
+
+  /// Registers this client once. Asking twice on one connection leaves a single
+  /// subscriber, so a repeat cannot double every push it receives.
+  func begin() {
+    let registered = token.withLock { current -> Bool in
+      guard current == nil else {
+        return false
+      }
+      current = registry.add { [weak self] snapshot in
+        self?.sendPush(snapshot)
+      }
+      return true
+    }
+    guard registered else {
+      return
+    }
+    logger.notice("agent session listener registered subscriber")
+  }
+
+  func end() {
+    let removed = token.withLock { current -> UUID? in
+      let previous = current
+      current = nil
+      return previous
+    }
+    guard let removed else {
+      return
+    }
+    registry.remove(removed)
+    logger.notice("agent session listener removed subscriber")
+  }
+
+  /// A push answers no request, so it travels as a fresh dictionary on the connection.
+  /// Building a reply needs an inbound message to reply to, and there is none here.
+  private func sendPush(_ payload: Data) {
+    let message = xpc_dictionary_create_empty()
+    payload.withUnsafeBytes { rawBuffer in
+      xpc_dictionary_set_data(
+        message, agentControlPayloadKey, rawBuffer.baseAddress, rawBuffer.count
+      )
+    }
+    xpc_connection_send_message(peer, message)
   }
 }
