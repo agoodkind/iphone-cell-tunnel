@@ -10,7 +10,20 @@
 CONFIG ?= Debug
 CELL_TUNNEL_DEV := swift Tools/cell-tunnel-dev.swift
 
-SWIFT_MK_MODULES := swift-build.mk xcconfig.mk
+# Release artifacts for the shared release pipeline. A person downloads these, so both
+# halves ship: the agent bundle carries the packet tunnel extension inside it, and the
+# Catalyst app is what they open. Each travels as an archive because a signed bundle
+# copied as a directory tree arrives without its signature. RELEASE_TAG arrives from the
+# pipeline's release-meta step.
+SWIFT_MK_RELEASE_BUILD_CMD := mkdir -p dist \
+	&& $(CELL_TUNNEL_DEV) build mac Release \
+	&& $(CELL_TUNNEL_DEV) build mac-catalyst Release \
+	&& ditto -c -k --keepParent Products/Release/CellTunnelAgent.app \
+		dist/CellTunnelAgent-$$RELEASE_TAG.zip \
+	&& ditto -c -k --keepParent Products/Release-maccatalyst/CellTunnelPhone.app \
+		dist/CellTunnelPhone-$$RELEASE_TAG.zip
+
+SWIFT_MK_MODULES := swift-build.mk xcconfig.mk swift-release.mk
 
 # xcconfig.mk consumes these. Each plan renders every *.template under the
 # named templates dir into the named output dir before tuist generate runs,
