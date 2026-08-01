@@ -8,7 +8,7 @@
 
 import Foundation
 
-public let agentControlWireVersion = 2
+public let agentControlWireVersion = 3
 
 public protocol TunnelControlClientProtocol: Sendable {
   func check() async throws -> TunnelEnvironmentReport
@@ -78,6 +78,11 @@ public enum AgentControlRequest: Codable, Sendable {
   case status
   case stopRelayDiscovery
   case stopTunnel
+  /// Asks the agent to send a fresh snapshot on this connection whenever the state
+  /// changes. The reply carries the snapshot as it stands, so the client has a
+  /// baseline before the first push, and the subscription lasts for the life of the
+  /// connection.
+  case subscribe
   /// Validates WireGuard configuration text without changing tunnel state.
   case validateConfig(text: String)
 
@@ -115,6 +120,7 @@ public enum AgentControlRequest: Codable, Sendable {
     case status
     case stopRelayDiscovery
     case stopTunnel
+    case subscribe
     case validateConfig
   }
 
@@ -129,15 +135,37 @@ public enum AgentControlRequest: Codable, Sendable {
     try Self.encodeRequest(self, into: &container)
   }
 
+  /// The requests that carry nothing beyond their kind, or nil when this kind carries
+  /// fields that have to be read. Splitting them keeps each decode readable and keeps
+  /// either half from growing past what the gate allows.
+  private static func decodeValuelessRequest(kind: Kind) -> AgentControlRequest? {
+    switch kind {
+    case .check: return .check
+    case .listRelayServices: return .listRelayServices
+    case .reset: return .reset
+    case .startPairing: return .startPairing
+    case .startRelay: return .startRelay
+    case .startRelayDiscovery: return .startRelayDiscovery
+    case .status: return .status
+    case .stopRelayDiscovery: return .stopRelayDiscovery
+    case .stopTunnel: return .stopTunnel
+    case .subscribe: return .subscribe
+    default: return nil
+    }
+  }
+
   private static func decodeRequest(
     kind: Kind,
     from container: KeyedDecodingContainer<CodingKeys>
   ) throws -> AgentControlRequest {
+    if let valueless = decodeValuelessRequest(kind: kind) {
+      return valueless
+    }
+    // The valueless kinds were answered above, so this reads only the
+    // kinds that carry fields.
     switch kind {
     case .activateConfig:
       return .activateConfig(id: try container.decode(UUID.self, forKey: .configID))
-    case .check:
-      return .check
     case .deleteConfig:
       return .deleteConfig(id: try container.decode(UUID.self, forKey: .configID))
     case .getConfigText:
@@ -147,8 +175,6 @@ public enum AgentControlRequest: Codable, Sendable {
         name: try container.decode(String.self, forKey: .configName),
         text: try container.decode(String.self, forKey: .configText)
       )
-    case .listRelayServices:
-      return .listRelayServices
     case .reloadTunnel:
       return .reloadTunnel(
         try container.decode(TunnelStartSettings.self, forKey: .reloadSettings))
@@ -157,8 +183,6 @@ public enum AgentControlRequest: Codable, Sendable {
         id: try container.decode(UUID.self, forKey: .configID),
         name: try container.decode(String.self, forKey: .configName)
       )
-    case .reset:
-      return .reset
     case .saveConfigEdit:
       return .saveConfigEdit(
         id: try container.decode(UUID.self, forKey: .configID),
@@ -174,23 +198,19 @@ public enum AgentControlRequest: Codable, Sendable {
     case .setRoutingEnabled:
       return .setRoutingEnabled(
         enabled: try container.decode(Bool.self, forKey: .routingEnabled))
-    case .startPairing:
-      return .startPairing
-    case .startRelay:
-      return .startRelay
-    case .startRelayDiscovery:
-      return .startRelayDiscovery
     case .startTunnel:
       return .startTunnel(
         try container.decode(TunnelStartSettings.self, forKey: .startSettings))
-    case .status:
-      return .status
-    case .stopRelayDiscovery:
-      return .stopRelayDiscovery
-    case .stopTunnel:
-      return .stopTunnel
     case .validateConfig:
       return .validateConfig(text: try container.decode(String.self, forKey: .configText))
+    default:
+      // Every kind is either answered above or read here, so reaching this means a
+      // kind was added to the enum without a decode for it.
+      throw DecodingError.dataCorruptedError(
+        forKey: .kind,
+        in: container,
+        debugDescription: "no decode for request kind \(kind)"
+      )
     }
   }
 
@@ -247,6 +267,7 @@ public enum AgentControlRequest: Codable, Sendable {
     case .status: try encodeKind(.status, into: &container)
     case .stopRelayDiscovery: try encodeKind(.stopRelayDiscovery, into: &container)
     case .stopTunnel: try encodeKind(.stopTunnel, into: &container)
+    case .subscribe: try encodeKind(.subscribe, into: &container)
     case .validateConfig(let text):
       try container.encode(Kind.validateConfig, forKey: .kind)
       try container.encode(text, forKey: .configText)
@@ -258,6 +279,22 @@ public enum AgentControlRequest: Codable, Sendable {
     into container: inout KeyedEncodingContainer<CodingKeys>
   ) throws {
     try container.encode(kind, forKey: .kind)
+  }
+
+  /// Whether handling this request can change what a status snapshot reports, which is
+  /// what decides whether subscribers hear about it afterwards.
+  ///
+  /// The reads are listed and everything else counts as a change, so a case added later
+  /// is treated as a change until someone says otherwise. Telling subscribers about a
+  /// change nobody made is wasteful; staying quiet about a real one leaves every screen
+  /// showing something that is no longer true.
+  public var mutatesState: Bool {
+    switch self {
+    case .check, .getConfigText, .listRelayServices, .status, .subscribe:
+      return false
+    default:
+      return true
+    }
   }
 }
 
