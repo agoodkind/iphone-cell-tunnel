@@ -44,26 +44,39 @@ extension AgentTunnelController {
       // internal prefix. The log line above keeps the underlying error verbatim.
       return failure(errorCode: .internal, message: userFacingMessage(for: error))
     }
+    // Import leaves starting to the explicit start action, but a tunnel that is already
+    // running must still carry what the library now calls active.
+    if let followFailure = await followActiveConfigOnRunningTunnel() {
+      return followFailure
+    }
     return await handleStatus()
   }
 
-  /// Marks a stored config active without starting the tunnel.
+  /// Marks a stored config active without starting the tunnel. A tunnel already running
+  /// is swapped onto it, so the library and the tunnel never disagree about which
+  /// configuration is in force.
   func handleSetActiveConfig(id: UUID) async -> AgentControlResponse {
     guard configStore.text(forID: id) != nil else {
       return failure(errorCode: .internal, message: "no config with id \(id.uuidString)")
     }
     configStore.setActive(id: id)
+    if let followFailure = await followActiveConfigOnRunningTunnel() {
+      return followFailure
+    }
     return await handleStatus()
   }
 
-  /// Makes a stored config active without starting the tunnel. The relay session now
-  /// starts only through the routing-enable path, so activation just records the
-  /// selection and returns the refreshed status.
+  /// Makes a stored config active without starting the tunnel. The relay session starts
+  /// only through the routing-enable path, so activation records the selection, swaps a
+  /// tunnel that is already running onto it, and returns the refreshed status.
   func handleActivateConfig(id: UUID) async -> AgentControlResponse {
     guard configStore.text(forID: id) != nil else {
       return failure(errorCode: .internal, message: "no config with id \(id.uuidString)")
     }
     configStore.setActive(id: id)
+    if let followFailure = await followActiveConfigOnRunningTunnel() {
+      return followFailure
+    }
     return await handleStatus()
   }
 

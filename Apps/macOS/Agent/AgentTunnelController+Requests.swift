@@ -244,6 +244,12 @@ extension AgentTunnelController {
       )
       return failure(from: error)
     }
+    // A tunnel that is already running keeps carrying the configuration it was started
+    // with, so without this the named file would change only the library while the person
+    // reads results from whatever was running before.
+    if let followFailure = await followActiveConfigOnRunningTunnel() {
+      return followFailure
+    }
     // The config is now active, so start through the routing-enable path to keep the
     // relay-hosted and routing states consistent across every start entry point.
     return await handleSetRoutingEnabled(true)
