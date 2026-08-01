@@ -104,6 +104,10 @@ struct RelayStatusSample: Sendable {
   /// enabled: a read that failed says nothing about the profile, so the screen keeps
   /// what it last knew rather than flipping away from the re-enable state.
   var vpnProfileState: TunnelVPNProfileState?
+  /// Whether this Mac publishes the record an iPhone looks for, or nil from a producer
+  /// that predates the field. A reader tells that apart from a Mac that is genuinely
+  /// silent, which is the difference between waiting and never being found.
+  var advertising: TunnelAdvertisingState?
 
   /// Maps a daemon status snapshot to one sample. Every backend builds its sample
   /// here, so the snapshot-to-sample mapping lives in one place; a backend applies
@@ -154,6 +158,7 @@ struct RelayStatusSample: Sendable {
       downloadBytes = macCounters.relayBytesIn
     }
     vpnProfileState = snapshot.vpnProfileState
+    advertising = snapshot.advertising
   }
 }
 
@@ -226,6 +231,11 @@ final class RelayController {
 
   /// Whether a tunnel profile is saved, the gate to the install-tunnel setup tier.
   var isTunnelInstalled = false
+
+  /// Whether this Mac publishes the record an iPhone looks for. False means no iPhone
+  /// can find it however long a person waits, which is why it is shown rather than left
+  /// to look like an ordinary wait. True on the iPhone, which is not looked for.
+  var isAdvertising = true
 
   /// Whether the saved VPN profile is switched off, the gate to the re-enable setup
   /// tier. Routing cannot start until the user turns the profile back on, so the
@@ -470,6 +480,11 @@ final class RelayController {
     // work.
     if let vpnProfileState = sample.vpnProfileState {
       assign(\.isVPNProfileDisabled, vpnProfileState == .disabled)
+    }
+    // Only a reading that actually carried the field replaces what the screen knows, so
+    // an older producer cannot make a healthy Mac look unfindable.
+    if let advertising = sample.advertising {
+      assign(\.isAdvertising, advertising == .advertising)
     }
     assign(\.discoveredPeers, sample.discoveredPeers)
     assign(\.selectedPeerID, sample.selectedPeerID)

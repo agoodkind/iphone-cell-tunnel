@@ -36,6 +36,9 @@ import Foundation
     case noConfigImported
     case noPeerSelected
     case noPeersFound
+    /// This Mac is not publishing the record an iPhone looks for, so no iPhone can find
+    /// it however long a person waits.
+    case notDiscoverable
     case readyToRoute
     case routing
     case vpnProfileDisabled
@@ -54,6 +57,7 @@ import Foundation
     /// iPhone is the select state.
     init(
       errorMessage: String?,
+      isAdvertising: Bool,
       isAgentInstalled: Bool,
       isVPNProfileDisabled: Bool,
       isConfigImported: Bool,
@@ -75,7 +79,10 @@ import Foundation
       } else if isPeerConnected {
         self = isRouting ? .routing : .readyToRoute
       } else if !peersFound {
-        self = .noPeersFound
+        // Waiting and being unfindable look identical from the outside, and only one of
+        // them ends on its own. Saying which is the difference between a person waiting
+        // and a person acting.
+        self = isAdvertising ? .noPeersFound : .notDiscoverable
       } else {
         self = .noPeerSelected
       }
@@ -85,7 +92,7 @@ import Foundation
     /// states, the reduced dashboard for everything else.
     var uiTier: RelayUITier {
       switch self {
-      case .noAgent, .noConfigImported, .vpnProfileDisabled:
+      case .noAgent, .noConfigImported, .notDiscoverable, .vpnProfileDisabled:
         return .full
       case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
         .routing:
@@ -108,7 +115,9 @@ import Foundation
       case .noPeerSelected:
         return "No peer selected"
       case .noPeersFound:
-        return "Searching for peers"
+        return "Searching for iPhones"
+      case .notDiscoverable:
+        return "This Mac cannot be found"
       case .readyToRoute:
         return "Ready to route traffic"
       case .routing:
@@ -135,6 +144,8 @@ import Foundation
         return .importConfig
       case .noPeerSelected:
         return .selectPeer
+      case .notDiscoverable:
+        return .openLocalNetworkSettings
       case .vpnProfileDisabled:
         return .enableVPN
       case .noActiveConfig, .noPeersFound, .readyToRoute, .routing:

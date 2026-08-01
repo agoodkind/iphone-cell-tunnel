@@ -157,6 +157,13 @@ struct RelayScreenModel {
 
     /// Installs the background agent, or opens Login Items when the agent is registered
     /// but awaiting approval. The install-agent setup action.
+    /// Opens the privacy settings where local network access is granted, the one thing
+    /// the app can do about a Mac nothing can find.
+    func openLocalNetworkSettings() {
+      logger.notice("relay screen open local network settings requested")
+      controller.openLocalNetworkSettings()
+    }
+
     func installAgent() {
       logger.notice("relay screen install agent requested")
       if controller.isAgentApprovalPending {
@@ -554,6 +561,7 @@ extension RelayScreenModel {
     var status: MacRelayStatus {
       MacRelayStatus(
         errorMessage: controller.lastError,
+        isAdvertising: controller.isAdvertising,
         isAgentInstalled: controller.isAgentInstalled,
         isVPNProfileDisabled: controller.isVPNProfileDisabled,
         isConfigImported: controller.isTunnelInstalled,
