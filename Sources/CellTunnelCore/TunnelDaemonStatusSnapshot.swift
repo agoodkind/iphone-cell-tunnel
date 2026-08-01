@@ -263,6 +263,10 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
   /// Whether this Mac is publishing the record an iPhone browses for. `nil` from a
   /// producer that predates the field, which a reader tells apart from not advertising.
   public var advertising: TunnelAdvertisingState?
+  /// Whether routing may start, and why not when it may not, decided by the daemon that
+  /// enforces it so no client works it out again. `nil` from a producer that predates
+  /// the field.
+  public var routingStartReadiness: RoutingStartReadiness?
   /// The agent's whole config library as text-free summaries, so the Mac Configs
   /// card reads the same poll as the Relay tile and the two never diverge. `nil`
   /// from a producer that has no library (iPhone, simulator, preview).
@@ -310,6 +314,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     agentLinks: [AgentLinkStatus]? = nil,
     connectedPeers: [ConnectedPeer]? = nil,
     advertising: TunnelAdvertisingState? = nil,
+    routingStartReadiness: RoutingStartReadiness? = nil,
     configLibrary: [TunnelConfigSummary]? = nil,
     activeConfigID: UUID? = nil,
     configDrift: String? = nil,
@@ -344,6 +349,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     self.agentLinks = agentLinks
     self.connectedPeers = connectedPeers
     self.advertising = advertising
+    self.routingStartReadiness = routingStartReadiness
     self.configLibrary = configLibrary
     self.activeConfigID = activeConfigID
     self.configDrift = configDrift
