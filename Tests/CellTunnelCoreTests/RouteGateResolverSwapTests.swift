@@ -66,6 +66,51 @@ struct RouteGateResolverSwapTests {
     #expect(gate.setProgramDNS(servers: [firstResolver], searchDomains: []) == nil)
   }
 
+  /// The system did not adopt resolver changes while the gate edited and returned the
+  /// same object it had already been given, so handing over a separate object each time
+  /// is the fix. A test that only reads the returned resolvers passes either way, so this
+  /// asserts the identity that the behaviour actually depends on.
+  @Test("each apply hands over a settings object the system has not already been given")
+  func eachApplyHandsOverAFreshObject() {
+    let gate = RouteGate()
+    let supplied = tunnelSettings()
+
+    let firstApply = gate.record(supplied)
+    let secondApply = gate.setProgramDNS(servers: [firstResolver], searchDomains: [])
+
+    #expect(firstApply !== supplied)
+    #expect(secondApply !== supplied)
+    #expect(firstApply !== secondApply)
+  }
+
+  /// The settings the tunnel supplied stay as it supplied them, which is what makes them
+  /// a reliable record of the tunnel's own addresses rather than of the gate's edits.
+  @Test("the tunnel's own settings are left unedited")
+  func suppliedSettingsAreLeftUnedited() {
+    let gate = RouteGate()
+    let supplied = tunnelSettings()
+    _ = gate.record(supplied)
+    _ = gate.setInstalled(true)
+
+    _ = gate.setProgramDNS(servers: [firstResolver], searchDomains: [])
+
+    #expect(supplied.dnsSettings == nil)
+  }
+
+  /// The allowance for what encapsulation adds to every packet comes from the tunnel, and
+  /// rebuilding the settings must carry it rather than silently dropping it.
+  @Test("the encapsulation allowance survives a rebuild")
+  func encapsulationAllowanceSurvives() {
+    let gate = RouteGate()
+    let supplied = tunnelSettings()
+    supplied.tunnelOverheadBytes = 80
+    _ = gate.record(supplied)
+
+    let applied = gate.setInstalled(true)
+
+    #expect(applied?.tunnelOverheadBytes == 80)
+  }
+
   private func tunnelSettings() -> NEPacketTunnelNetworkSettings {
     let settings = NEPacketTunnelNetworkSettings(
       tunnelRemoteAddress: swapTunnelRemoteAddress)

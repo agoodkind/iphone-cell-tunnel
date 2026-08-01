@@ -124,6 +124,10 @@ final class RouteGate: @unchecked Sendable {
     let gated = NEPacketTunnelNetworkSettings(
       tunnelRemoteAddress: settings.tunnelRemoteAddress)
     gated.mtu = settings.mtu
+    // The adapter sets this when the configuration names no MTU, and it is the
+    // allowance for what encapsulation adds to every packet. Dropping it would leave
+    // the tunnel sizing packets as though nothing wrapped them.
+    gated.tunnelOverheadBytes = settings.tunnelOverheadBytes
     gated.ipv4Settings = rebuiltIPv4(from: settings.ipv4Settings)
     gated.ipv6Settings = rebuiltIPv6(from: settings.ipv6Settings)
     gated.dnsSettings = installed ? makeDNSSettingsLocked() : nil
