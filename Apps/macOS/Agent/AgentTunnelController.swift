@@ -86,6 +86,14 @@ actor AgentTunnelController {
   /// status snapshot's `configDrift`. The assertion never mutates the library.
   var configDriftMessage: String?
 
+  /// The clients listening for status pushes, shared with the session listener so the
+  /// side that knows the state and the side that knows the connections work from one
+  /// list.
+  nonisolated let subscribers: SubscriberRegistry
+  /// The repeating push that carries the byte counters while a relay is hosted, or nil
+  /// while nothing is listening.
+  var statusPushTimer: DispatchSourceTimer?
+
   /// The carrying link info, written from the bridge's egress callback off-actor and
   /// read into the served snapshot. Nonisolated because the `Mutex` is its own
   /// synchronization and the bridge callback runs off the actor.
@@ -132,11 +140,13 @@ actor AgentTunnelController {
   init(
     relayBridge: AgentRelayBridge,
     relayBrowser: RelayDeviceBrowser,
-    configStore: TunnelConfigStore = AgentConfigStore()
+    configStore: TunnelConfigStore = AgentConfigStore(),
+    subscribers: SubscriberRegistry = SubscriberRegistry()
   ) {
     self.relayBridge = relayBridge
     self.relayBrowser = relayBrowser
     self.configStore = configStore
+    self.subscribers = subscribers
   }
 
   /// The desired routing intent, not a guarantee that the relay session is active.

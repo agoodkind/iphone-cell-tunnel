@@ -18,7 +18,20 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 // MARK: - Request handling
 
 extension AgentTunnelController {
+  /// Answers one request and, when it changed something, tells every subscriber.
+  ///
+  /// The push runs after the reply is handed back rather than before it, so a client
+  /// waiting on the round trip does not also wait for the extra status read the
+  /// broadcast performs. The two can arrive in either order and carry the same state.
   func handle(request: AgentControlRequest) async -> AgentControlResponse {
+    let response = await respond(to: request)
+    if request.mutatesState {
+      Task { await self.broadcastStatus() }
+    }
+    return response
+  }
+
+  private func respond(to request: AgentControlRequest) async -> AgentControlResponse {
     switch request {
     case .activateConfig(let id):
       return await handleActivateConfig(id: id)
@@ -62,6 +75,9 @@ extension AgentTunnelController {
       return snapshotResponse()
     case .stopTunnel:
       return await handleSetRoutingEnabled(false)
+    case .subscribe:
+      startStatusPushTimer()
+      return await handleStatus()
     case .validateConfig(let text):
       return await handleValidateConfig(text: text)
     }

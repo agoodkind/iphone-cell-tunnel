@@ -29,10 +29,12 @@ private let logger = CellTunnelLog.logger(category: .daemon)
 /// therefore end sessions that nothing present could restore.
 final class AgentRuntime: @unchecked Sendable {
   private let controller: AgentTunnelController
+  private let subscribers: SubscriberRegistry
   private var sessionListener: AgentSessionListener?
 
-  init(controller: AgentTunnelController) {
+  init(controller: AgentTunnelController, subscribers: SubscriberRegistry) {
     self.controller = controller
+    self.subscribers = subscribers
   }
 
   // MARK: - Lifecycle
@@ -43,7 +45,7 @@ final class AgentRuntime: @unchecked Sendable {
     // command-line tool and the Mac app both dial it with the libxpc session
     // API. A Mac Catalyst app cannot open an NSXPCConnection to a mach service,
     // so this is the single transport.
-    let listener = AgentSessionListener(controller: controller)
+    let listener = AgentSessionListener(controller: controller, subscribers: subscribers)
     self.sessionListener = listener
     listener.start()
     logger.notice(
@@ -136,8 +138,13 @@ private func runAgent() -> Never {
 
   let relayBridge = AgentRelayBridge()
   let relayBrowser = RelayDeviceBrowser()
-  let controller = AgentTunnelController(relayBridge: relayBridge, relayBrowser: relayBrowser)
-  let agentRuntime = AgentRuntime(controller: controller)
+  let subscribers = SubscriberRegistry()
+  let controller = AgentTunnelController(
+    relayBridge: relayBridge,
+    relayBrowser: relayBrowser,
+    subscribers: subscribers
+  )
+  let agentRuntime = AgentRuntime(controller: controller, subscribers: subscribers)
 
   let interruptSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
   let terminateSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
