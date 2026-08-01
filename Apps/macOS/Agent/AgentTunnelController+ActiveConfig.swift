@@ -138,8 +138,10 @@ extension AgentTunnelController {
 
   /// Swaps the running tunnel onto this configuration and re-stamps the saved profile.
   ///
-  /// The swap happens in the extension, which changes routes and resolvers without
-  /// restarting the session, so the relay keeps carrying datagrams across the change.
+  /// The swap happens in the extension, which changes the captured routes and the peer
+  /// endpoint without restarting the session, so the relay keeps carrying datagrams across
+  /// the change. It does not change the resolvers the tunnel publishes; those follow the
+  /// session rather than the configuration, which is recorded as ICT-19.
   ///
   /// The saved profile is stamped afterwards because it is what a later launch reads. A
   /// profile left holding the previous id would make the launch assertion report drift on
