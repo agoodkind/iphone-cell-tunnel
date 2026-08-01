@@ -155,8 +155,6 @@ struct RelayScreenModel {
       controller.openVPNSettings()
     }
 
-    /// Installs the background agent, or opens Login Items when the agent is registered
-    /// but awaiting approval. The install-agent setup action.
     /// Opens the privacy settings where local network access is granted, the one thing
     /// the app can do about a Mac nothing can find.
     func openLocalNetworkSettings() {
@@ -164,6 +162,8 @@ struct RelayScreenModel {
       controller.openLocalNetworkSettings()
     }
 
+    /// Installs the background agent, or opens Login Items when the agent is registered
+    /// but awaiting approval. The install-agent setup action.
     func installAgent() {
       logger.notice("relay screen install agent requested")
       if controller.isAgentApprovalPending {
