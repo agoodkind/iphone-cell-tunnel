@@ -44,21 +44,19 @@ serving a local registry gets the same result without reproducing that logic.
 
 ## Copying the build in
 
-Copy three artifacts, not one. The agent app, the packet tunnel extension, and
-`celltunnelctl` are separate products. The extension travels inside the agent app, so
-copying that app carries it. `celltunnelctl` is its own binary, so copying the agent app
-alone leaves it stale.
+The machine needs two products copied in, the agent app and `celltunnelctl`. The packet
+tunnel extension is bundled inside the agent app and needs no copy of its own, though
+registering it is a separate step covered below.
 
-A stale `celltunnelctl` fails silently. It decodes and renders the status snapshot the
-agent sends, so a field the agent sets but the client does not know is absent from the
-output. That reads as a missing feature in the agent.
+A stale `celltunnelctl` fails silently rather than reporting a mismatch, because it is
+the component that renders the status snapshot the agent sends. A field the client does
+not know is simply absent from the output even though the agent set it, and that gap
+reads as a missing feature in the agent.
 
-Confirm each artifact on its own:
-
-- Compare `shasum -a 256` on the agent binary between the host and the machine.
-- Search the machine's `celltunnelctl` for a string only the new build carries.
-
-Matching agent binaries with a status line still missing points at the client.
+Confirm each product separately: compare `shasum -a 256` on the agent binary between the
+host and the machine, and search the machine's `celltunnelctl` for a string only the new
+build carries. When the agent binaries match and a status line is still missing, the
+client is the stale one.
 
 ## Three approvals a tunnel needs
 
