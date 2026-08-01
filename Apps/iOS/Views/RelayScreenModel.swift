@@ -173,6 +173,13 @@ struct RelayScreenModel {
       Task { await controller.installTunnel(configURL: configURL) }
     }
 
+    /// Whether macOS is waiting for the person to allow Cell Tunnel to run in the
+    /// background. The setup screen describes that situation rather than the first-run
+    /// one, because the remaining step is in System Settings rather than in this app.
+    var isAwaitingBackgroundApproval: Bool {
+      controller.isAgentApprovalPending
+    }
+
     /// The title for the setup screen's primary action, deferring to the agent
     /// approval state when the agent is registered but pending.
     var setupActionTitle: String {

@@ -28,7 +28,7 @@ enum RelayHeroAction: Equatable {
     case .importConfig:
       return "Import Configuration"
     case .installAgent:
-      return "Install Agent"
+      return "Set Up"
     case .retry:
       return "Retry"
     case .selectPeer:
