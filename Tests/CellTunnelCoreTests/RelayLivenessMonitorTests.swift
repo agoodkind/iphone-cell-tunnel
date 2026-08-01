@@ -96,7 +96,7 @@ struct RelayLivenessMonitorTests {
 
 /// Carries the settings the withdrawal produced out of the monitor's callback, which runs
 /// on the monitor's own queue rather than the test's.
-final class WithdrawnSettingsBox: @unchecked Sendable {
+private final class WithdrawnSettingsBox: @unchecked Sendable {
   private let lock = NSLock()
   private var stored: NEPacketTunnelNetworkSettings?
 
