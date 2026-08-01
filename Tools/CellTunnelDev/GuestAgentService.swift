@@ -64,6 +64,10 @@ func startGuestAgent(shell: GuestShell, layout: GuestInstallLayout) throws {
   )
   try shell.copyIn([localPlist], to: plistPath)
 
+  // Register the extension before the agent runs. Nothing else registers the copy this
+  // run installed, so without this the agent starts and the tunnel cannot.
+  try registerGuestTunnelProvider(shell: shell, layout: layout)
+
   let serviceTarget = "gui/\(userIdentifier)/\(label)"
   // Unload whatever a previous run left behind, then wait for it to actually be gone.
   // Unloading returns before the service has finished going away, and bootstrapping into
