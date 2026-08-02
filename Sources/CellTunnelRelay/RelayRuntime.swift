@@ -423,7 +423,8 @@ public final class RelayRuntime: @unchecked Sendable {
   private func applyDiscoveredServices(_ services: [TunnelRelayService]) {
     let target: String? = statusState.withLock { state in
       state.discoveredServices = services
-      let resolved = Self.dialTarget(selected: state.selectedServiceID, services: services)
+      let resolved = relayDialTarget(
+        selectedServiceID: state.selectedServiceID, services: services)
       state.selectedServiceID = resolved ?? state.selectedServiceID
       return resolved
     }
@@ -432,21 +433,6 @@ public final class RelayRuntime: @unchecked Sendable {
     }
     let client = control
     Task { @MainActor in client.selectService(id: target) }
-  }
-
-  // Resolves which discovered service to dial: the standing selection when it is
-  // still present, otherwise the lone discovered peer, otherwise none.
-  private static func dialTarget(
-    selected: String?,
-    services: [TunnelRelayService]
-  ) -> String? {
-    if let selected, services.contains(where: { $0.id == selected }) {
-      return selected
-    }
-    if services.count == 1 {
-      return services.first?.id
-    }
-    return nil
   }
 
   // Resolves the WireGuard endpoint hostname to its A and AAAA records off the

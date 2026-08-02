@@ -258,9 +258,6 @@ final class RelayController {
   /// The iPhones currently dialed into the Mac agent, the roster the Mac selector
   /// lists. Empty on the iPhone, which hosts no roster.
   var connectedPeers: [ConnectedPeer] = []
-  // Guards the iPhone auto-dial so the first discovered Mac is selected once rather
-  // than re-requested every poll while the selection lands.
-  private var autoSelectInFlight = false
   /// The relay tunnel protocol name shown on the status `Protocol` row, read from
   /// the snapshot's producer rather than a hardcoded literal.
   var relayProtocol: String?
@@ -517,7 +514,6 @@ final class RelayController {
     assign(\.selectedPeerID, sample.selectedPeerID)
     assign(\.discoveryPhase, sample.discoveryPhase)
     assign(\.connectedPeers, sample.connectedPeers)
-    maybeAutoSelectPeer()
     assign(\.relayProtocol, sample.relayProtocol)
     assign(\.localLinkInterfaceName, sample.localLinkInterfaceName)
     assign(\.localLinkClass, sample.localLinkClass)
@@ -673,21 +669,4 @@ extension RelayController {
     await backend.selectEgressPeer(id: id)
   }
 
-  // Auto-dials the first discovered peer when the backend opts in (the iPhone) and
-  // none is selected, so the iPhone connects to its Mac with no picker. The guard
-  // clears once the request returns, and the next snapshot's selected id stops it
-  // from firing again.
-  func maybeAutoSelectPeer() {
-    guard backend.autoSelectsDiscoveredPeer, !autoSelectInFlight, selectedPeerID == nil,
-      let first = discoveredPeers.first
-    else {
-      return
-    }
-    autoSelectInFlight = true
-    logger.notice("relay controller auto-dialing discovered peer")
-    Task { @MainActor [weak self] in
-      await self?.backend.selectPeer(id: first.id)
-      self?.autoSelectInFlight = false
-    }
-  }
 }

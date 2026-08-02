@@ -259,9 +259,6 @@
 
     // The iPhone is a dumb dialer with no manual picker, so it auto-dials the first
     // discovered Mac when none is selected.
-    var autoSelectsDiscoveredPeer: Bool {
-      true
-    }
 
     // Forwards the peer selection to the extension's relay runtime over a provider
     // message, which dials the chosen Mac control service.

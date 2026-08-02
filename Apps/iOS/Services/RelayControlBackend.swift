@@ -38,9 +38,6 @@ protocol RelayControlBackend {
   /// Selects which dialed-in iPhone the Mac routes egress through.
   func selectEgressPeer(id: String) async
 
-  /// Whether this backend auto-dials the first discovered peer.
-  var autoSelectsDiscoveredPeer: Bool { get }
-
   /// Whether available peers come from the dialed-in roster.
   var usesEgressRoster: Bool { get }
 }
@@ -54,10 +51,6 @@ extension RelayControlBackend {
 
   func statusUpdates() -> AsyncStream<RelayStatusSample>? {
     nil
-  }
-
-  var autoSelectsDiscoveredPeer: Bool {
-    false
   }
 
   var usesEgressRoster: Bool {
