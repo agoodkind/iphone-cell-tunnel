@@ -66,9 +66,6 @@
 
     // The simulator iPhone is a dumb dialer with no manual picker, so it auto-dials
     // the first discovered Mac when none is selected.
-    var autoSelectsDiscoveredPeer: Bool {
-      true
-    }
 
     // Records the chosen Mac control service and dials it through the in-process
     // runtime's control link.

@@ -376,6 +376,7 @@ extension AgentTunnelController {
     // Whether an iPhone can find this Mac at all. A listener that lost its port is
     // invisible in every other field, so no peer ever appears and nothing says why.
     merged.advertising = TunnelAdvertisingState(isAdvertising: controlListener != nil)
+    merged.routingStartReadiness = publishedRoutingStartReadiness()
     merged.configLibrary = configStore.summaries()
     merged.activeConfigID = configStore.activeID
     merged.configDrift = configDriftMessage
