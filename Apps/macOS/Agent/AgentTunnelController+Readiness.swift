@@ -33,6 +33,19 @@ extension AgentTunnelController {
       hasActiveConfig: hasResolvableActiveConfig, hasSelectedPeer: hasPeer)
   }
 
+  /// Where this daemon is between the two settled routing states.
+  ///
+  /// Said here rather than left for a client to work out, because a client can only work
+  /// it out by counting readings, and it stops counting whenever it stops reading. An app
+  /// put in the background mid-connect came back to a spinner frozen for the whole time
+  /// it was away.
+  func publishedRoutingPhase(routeState: TunnelRouteState) -> TunnelRoutingPhase {
+    TunnelRoutingPhase.resolve(
+      isRoutingEnabled: routingEnabled,
+      areRoutesInstalled: routeState == .installed
+    )
+  }
+
   /// Whether a configuration is chosen and its text can still be read.
   private var hasResolvableActiveConfig: Bool {
     configStore.activeID.flatMap { configStore.text(forID: $0) } != nil

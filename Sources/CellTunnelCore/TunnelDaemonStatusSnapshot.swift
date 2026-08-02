@@ -287,6 +287,10 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
   /// reads them, accumulated across session restarts by the producer itself. `nil` from a
   /// producer that predates the field.
   public var lifetimeBytes: LifetimeByteTotals?
+  /// Where the producer is between the two settled routing states, so a client shows a
+  /// spinner without keeping a countdown of its own. `nil` from a producer that predates
+  /// the field.
+  public var routingPhase: TunnelRoutingPhase?
 
   public init(
     running: Bool = false,
@@ -320,6 +324,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     advertising: TunnelAdvertisingState? = nil,
     routingStartReadiness: RoutingStartReadiness? = nil,
     lifetimeBytes: LifetimeByteTotals? = nil,
+    routingPhase: TunnelRoutingPhase? = nil,
     configLibrary: [TunnelConfigSummary]? = nil,
     activeConfigID: UUID? = nil,
     configDrift: String? = nil,
@@ -356,6 +361,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     self.advertising = advertising
     self.routingStartReadiness = routingStartReadiness
     self.lifetimeBytes = lifetimeBytes
+    self.routingPhase = routingPhase
     self.configLibrary = configLibrary
     self.activeConfigID = activeConfigID
     self.configDrift = configDrift
