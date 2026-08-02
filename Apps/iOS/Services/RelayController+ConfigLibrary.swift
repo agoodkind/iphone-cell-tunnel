@@ -27,6 +27,13 @@
       installState.openVPNSettings()
     }
 
+    /// Opens the settings pane where local network access is granted, which is what a
+    /// Mac needs before an iPhone can find it.
+    func openLocalNetworkSettings() {
+      configLibraryLogger.notice("relay controller open local network settings requested")
+      installState.openLocalNetworkSettings()
+    }
+
     /// Opens Login Items so the user can approve a registered-but-pending agent.
     func openLoginItems() {
       configLibraryLogger.notice("relay controller open login items requested")
