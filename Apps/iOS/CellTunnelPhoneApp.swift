@@ -43,7 +43,6 @@ struct CellTunnelPhoneApp: App {
     _relayController = State(
       initialValue: RelayController(
         backend: Self.makeBackend(),
-        throughput: ThroughputCalculator(),
         lifetimeStore: LifetimeDataStore(),
         deviceProbe: DeviceEgressProbe()
       )
