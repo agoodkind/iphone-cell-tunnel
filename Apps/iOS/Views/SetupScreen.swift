@@ -167,6 +167,8 @@
         isImportingConfig = true
       case .installAgent:
         model.installAgent()
+      case .openLocalNetworkSettings:
+        model.openLocalNetworkSettings()
       case .retry, .selectPeer, .none:
         break
       }
@@ -198,6 +200,8 @@
           ? "Approve Cell Tunnel in Login Items" : "Finish setting up"
       case .noConfigImported:
         return "Import a tunnel configuration"
+      case .notDiscoverable:
+        return "This Mac cannot be found"
       case .vpnProfileDisabled:
         return "Turn the VPN back on"
       case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
@@ -215,6 +219,9 @@
             + "traffic whenever your iPhone is nearby."
       case .noConfigImported:
         return "Choose a WireGuard configuration file to set up the tunnel."
+      case .notDiscoverable:
+        return "Your iPhone finds this Mac over the local network, and Cell Tunnel is "
+          + "not allowed to use it yet."
       case .vpnProfileDisabled:
         return "Cell Tunnel is switched off in System Settings, so it cannot "
           + "route traffic until you turn it back on."
@@ -232,6 +239,11 @@
     /// varies.
     private var setupSteps: [String] {
       switch model.status {
+      case .notDiscoverable:
+        return [
+          "Click Local Network in the sidebar.",
+          "Turn on Cell Tunnel.",
+        ]
       case .vpnProfileDisabled:
         return [
           "Click VPN in the sidebar.",

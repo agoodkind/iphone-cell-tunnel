@@ -22,6 +22,13 @@
   private let vpnSettingsURLString =
     "x-apple.systempreferences:com.apple.NetworkExtensionSettingsUI.NESettingsUIExtension"
 
+  /// The System Settings pane that lists which apps may reach devices on the local
+  /// network, which is the permission a Mac needs before an iPhone can find it. As with
+  /// the pane above, no identifier for it is documented, so it can stop resolving on a
+  /// future system.
+  private let localNetworkSettingsURLString =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_LocalNetwork"
+
   // MARK: - InstallationState
 
   /// Tracks whether the background agent is installed, so the status screen can show
@@ -64,24 +71,49 @@
       SMAppService.openSystemSettingsLoginItems()
     }
 
+    /// Opens the settings pane where local network access is granted. A Mac without it
+    /// publishes nothing an iPhone can find, and the system gives an app no way to grant
+    /// it, so taking a person there is the whole of what this can do.
+    func openLocalNetworkSettings() {
+      logger.notice("install state opening local network settings")
+      open(settingsURLString: localNetworkSettingsURLString, describing: "local network")
+    }
+
     /// Opens Network settings, where a saved VPN profile is switched on and off. The
     /// system offers no way for an app to switch a profile on for the user, so taking
     /// them there is the whole of what the app can do.
     func openVPNSettings() {
-      guard let url = URL(string: vpnSettingsURLString) else {
-        logger.error("vpn settings url malformed recovery=user-opens-settings-manually")
+      logger.notice("install state opening vpn settings")
+      open(settingsURLString: vpnSettingsURLString, describing: "vpn")
+    }
+
+    /// Opens one System Settings pane.
+    ///
+    /// The completion reports false only when nothing on the system handles the scheme
+    /// at all. System Settings claims it, so a pane identifier that no longer resolves
+    /// still reports success and simply lands a person on another pane. The steps on
+    /// screen are what carry them the rest of the way, which is why they never assume
+    /// which pane opened.
+    private func open(settingsURLString: String, describing pane: String) {
+      guard let url = URL(string: settingsURLString) else {
+        logger.error(
+          """
+          settings url malformed pane=\(pane, privacy: .public) \
+          recovery=user-opens-settings-manually
+          """
+        )
         return
       }
-      // The completion reports false only when nothing on the system handles the URL
-      // scheme at all. System Settings claims this scheme, so a stale pane identifier
-      // still reports success and simply lands the user on another pane. The screen's
-      // steps are what carry them the rest of the way, which is why they do not
-      // assume which pane opened.
       UIApplication.shared.open(url) { opened in
         guard !opened else {
           return
         }
-        logger.error("vpn settings open refused recovery=user-opens-settings-manually")
+        logger.error(
+          """
+          settings open refused pane=\(pane, privacy: .public) \
+          recovery=user-opens-settings-manually
+          """
+        )
       }
     }
   }

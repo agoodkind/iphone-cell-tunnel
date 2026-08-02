@@ -17,6 +17,7 @@ enum RelayHeroAction: Equatable {
   case enableVPN
   case importConfig
   case installAgent
+  case openLocalNetworkSettings
   case retry
   case selectPeer
 
@@ -29,6 +30,8 @@ enum RelayHeroAction: Equatable {
       return "Import Configuration"
     case .installAgent:
       return "Set Up"
+    case .openLocalNetworkSettings:
+      return "Open Privacy Settings"
     case .retry:
       return "Retry"
     case .selectPeer:
@@ -45,6 +48,8 @@ enum RelayHeroAction: Equatable {
       return "arrow.down.doc"
     case .installAgent:
       return "gearshape.2"
+    case .openLocalNetworkSettings:
+      return "wifi.exclamationmark"
     case .retry:
       return "arrow.clockwise"
     case .selectPeer:
