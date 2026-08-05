@@ -51,6 +51,9 @@ final class AgentRuntime: @unchecked Sendable {
     logger.notice(
       "agent listener resumed machService=\(agentMachServiceName, privacy: .public)"
     )
+    // The byte totals have to keep advancing whether or not anyone is looking, so this
+    // starts with the daemon rather than with a client.
+    Task { await controller.startLifetimeAccrual() }
   }
 
   /// Tears the relay down before the process goes away.

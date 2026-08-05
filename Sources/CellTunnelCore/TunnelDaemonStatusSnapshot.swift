@@ -283,6 +283,10 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
   /// rather than a routing switch that cannot take effect. `nil` from a producer
   /// that predates the field or holds no profile.
   public var vpnProfileState: TunnelVPNProfileState?
+  /// The bytes this producer has moved over its whole life, in the directions a person
+  /// reads them, accumulated across session restarts by the producer itself. `nil` from a
+  /// producer that predates the field.
+  public var lifetimeBytes: LifetimeByteTotals?
 
   public init(
     running: Bool = false,
@@ -315,6 +319,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     connectedPeers: [ConnectedPeer]? = nil,
     advertising: TunnelAdvertisingState? = nil,
     routingStartReadiness: RoutingStartReadiness? = nil,
+    lifetimeBytes: LifetimeByteTotals? = nil,
     configLibrary: [TunnelConfigSummary]? = nil,
     activeConfigID: UUID? = nil,
     configDrift: String? = nil,
@@ -350,6 +355,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     self.connectedPeers = connectedPeers
     self.advertising = advertising
     self.routingStartReadiness = routingStartReadiness
+    self.lifetimeBytes = lifetimeBytes
     self.configLibrary = configLibrary
     self.activeConfigID = activeConfigID
     self.configDrift = configDrift
