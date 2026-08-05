@@ -388,6 +388,7 @@ extension AgentTunnelController {
     if merged.lastError == nil, profileState != .disabled {
       merged.lastError = lastStartError
     }
+    merged.lifetimeBytes = recordLifetimeBytes(from: merged.macCounters)
     return merged
   }
 

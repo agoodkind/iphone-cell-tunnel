@@ -26,6 +26,33 @@ private let controlListenerRestartBaseDelayMs = 500
 /// about constantly while still recovering within a time a person would wait.
 private let controlListenerRestartMaxDelayMs = 8_000
 
+/// Where the folded byte totals are kept between runs. These are the keys the app wrote,
+/// so a Mac that carried traffic before this change keeps its history.
+///
+/// An earlier pair of keys is deliberately not read: one platform seeded it with the two
+/// directions swapped, so inheriting it would report what was uploaded as what was
+/// downloaded.
+let lifetimeUploadBaseKey = "lifetimeRelayBytesUploadBase"
+let lifetimeDownloadBaseKey = "lifetimeRelayBytesDownloadBase"
+
+/// How often the totals fold with no client connected. Slow, because it exists only so
+/// traffic carried while nobody is looking still reaches the total.
+let lifetimeAccrualIntervalSeconds = 10
+
+/// The totals as the last run left them, or empty ones on a Mac that has carried nothing.
+///
+/// Only the folded bases are stored. The live session reading is re-read from the relay's
+/// own counters, so a stored copy of it could never disagree with them.
+func storedLifetimeByteTotals() -> LifetimeByteTotals {
+  guard let defaults = UserDefaults(suiteName: cellTunnelAppGroupIdentifier) else {
+    return LifetimeByteTotals()
+  }
+  return LifetimeByteTotals(
+    uploadBase: UInt64(defaults.string(forKey: lifetimeUploadBaseKey) ?? "") ?? 0,
+    downloadBase: UInt64(defaults.string(forKey: lifetimeDownloadBaseKey) ?? "") ?? 0
+  )
+}
+
 // MARK: - AgentTunnelController
 
 actor AgentTunnelController {
@@ -93,6 +120,16 @@ actor AgentTunnelController {
   /// The repeating push that carries the byte counters while a relay is hosted, or nil
   /// while nothing is listening.
   var statusPushTimer: DispatchSourceTimer?
+
+  /// The bytes moved over this Mac's whole life.
+  ///
+  /// The daemon owns this because it is the only party that sees every reading. An app
+  /// that held it counted only what moved while it was open, so traffic carried with the
+  /// window closed never reached the total. Behind a lock because the accrual timer and a
+  /// client's status call both reach it.
+  nonisolated let lifetimeBytes = Mutex(storedLifetimeByteTotals())
+  /// The slow fold that keeps the totals advancing with no client connected.
+  var lifetimeAccrualTimer: DispatchSourceTimer?
 
   /// The carrying link info, written from the bridge's egress callback off-actor and
   /// read into the served snapshot. Nonisolated because the `Mutex` is its own
