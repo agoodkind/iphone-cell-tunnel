@@ -97,7 +97,6 @@ struct EnableTunnelScreen: View {
     .environment(
       RelayController(
         backend: PreviewRelayBackend(),
-        throughput: ThroughputCalculator(),
         lifetimeStore: LifetimeDataStore()
       )
     )

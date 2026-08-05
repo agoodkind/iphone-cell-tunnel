@@ -59,7 +59,6 @@
       #if targetEnvironment(macCatalyst)
         return RelayController(
           backend: backend,
-          throughput: ThroughputCalculator(),
           lifetimeStore: LifetimeDataStore(suiteName: defaultsSuiteName),
           installState: InstallationState(),
           deviceProbe: nil
@@ -67,7 +66,6 @@
       #else
         return RelayController(
           backend: backend,
-          throughput: ThroughputCalculator(),
           lifetimeStore: LifetimeDataStore(suiteName: defaultsSuiteName),
           deviceProbe: nil
         )

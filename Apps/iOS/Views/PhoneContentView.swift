@@ -44,7 +44,6 @@ struct PhoneContentView: View {
     .environment(
       RelayController(
         backend: PreviewRelayBackend(),
-        throughput: ThroughputCalculator(),
         lifetimeStore: LifetimeDataStore()
       )
     )

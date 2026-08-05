@@ -184,7 +184,10 @@ final class RelayController {
   /// The one task reading status, whichever way the backend supplies it: reading a
   /// stream the source sends, or asking a source that has to be asked.
   private var statusTask: Task<Void, Never>?
-  private var throughput: ThroughputCalculator
+  /// Turns successive byte totals into the speed shown on screen. Kept across pauses in
+  /// reading, so coming back to the app reports the traffic that moved while it was away
+  /// rather than starting from nothing.
+  private var throughput = ThroughputMeter()
   private var lifetimeStore: LifetimeDataStore
   // The latest device egress and public address from the backend snapshot and from
   // the app's own probe, kept apart so one recompute picks the right source: the
@@ -292,14 +295,12 @@ final class RelayController {
 
     init(
       backend: some RelayControlBackend & ConfigLibraryBackend,
-      throughput: ThroughputCalculator,
       lifetimeStore: LifetimeDataStore,
       installState: InstallationState = InstallationState(),
       deviceProbe: DeviceEgressProbe? = nil
     ) {
       self.backend = backend
       configLibraryBackend = backend
-      self.throughput = throughput
       self.lifetimeStore = lifetimeStore
       self.installState = installState
       self.deviceProbe = deviceProbe
@@ -307,13 +308,11 @@ final class RelayController {
   #else
     init(
       backend: some RelayControlBackend & PhoneTunnelProvisioningBackend,
-      throughput: ThroughputCalculator,
       lifetimeStore: LifetimeDataStore,
       deviceProbe: DeviceEgressProbe? = nil
     ) {
       self.backend = backend
       phoneProvisioningBackend = backend
-      self.throughput = throughput
       self.lifetimeStore = lifetimeStore
       self.deviceProbe = deviceProbe
     }
@@ -426,7 +425,10 @@ final class RelayController {
 
   private func startStatusUpdates() {
     statusTask?.cancel()
-    throughput.reset()
+    // The speed meter is deliberately not cleared here. Clearing it made the first
+    // reading after every return to the app zero, because the reading it would have
+    // measured against had been thrown away. Keeping it means that reading covers the
+    // time the app was away.
     logger.notice("relay controller status updates starting")
     statusTask = Task { @MainActor [weak self] in
       while !Task.isCancelled {
@@ -534,10 +536,17 @@ final class RelayController {
       assign(\.activeConfigID, pinnedActiveConfigID ?? sample.activeConfigID)
     #endif
     recomputeDeviceValues()
-    let rate = throughput.update(
-      uploadBytes: sample.uploadBytes, downloadBytes: sample.downloadBytes)
-    assign(\.uploadMbps, rate.upload)
-    assign(\.downloadMbps, rate.download)
+    // Measured against the time since the last reading rather than against a count of
+    // readings, so the speed is right whatever the spacing and a gap reports what moved
+    // during it. A steady clock is used because the reading is about elapsed time, and
+    // the wall clock can move for reasons that have nothing to do with traffic.
+    let rate = throughput.record(
+      uploadBytes: sample.uploadBytes,
+      downloadBytes: sample.downloadBytes,
+      at: ProcessInfo.processInfo.systemUptime
+    )
+    assign(\.uploadMbps, rate.uploadMegabitsPerSecond)
+    assign(\.downloadMbps, rate.downloadMegabitsPerSecond)
     logger.debug("relay controller sample applied running=\(self.isRunning, privacy: .public)")
   }
 
