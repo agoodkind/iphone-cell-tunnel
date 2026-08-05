@@ -213,16 +213,20 @@ import Foundation
 
     // MARK: - Config library
 
-    /// Validates, stores, and activates a config from its text. The tunnel starts
-    /// through the routing-enable path, not here. The text carries a `PrivateKey`,
+    /// Validates and stores a config from its text, activating it when asked. The tunnel
+    /// starts through the routing-enable path, not here. The text carries a `PrivateKey`,
     /// so only its length is logged.
     public func importConfig(
-      name: String, text: String
+      name: String, text: String, activate: Bool
     ) async throws -> TunnelDaemonStatusSnapshot {
       logger.notice(
-        "agent client invoked rpc=import-config bytes=\(text.count, privacy: .public)")
+        """
+        agent client invoked rpc=import-config bytes=\(text.count, privacy: .public) \
+        activate=\(activate, privacy: .public)
+        """
+      )
       let response = try await send(
-        request: .importConfig(name: name, text: text),
+        request: .importConfig(name: name, text: text, activate: activate),
         operationName: "importConfig"
       )
       return try requireStatus(from: response, operationName: "importConfig")
@@ -301,8 +305,14 @@ import Foundation
     }
   }
 
+  // MARK: - Session transport
+
+  /// The session-owning half of the client. The stateless payload coding and
+  /// response-reading helpers live in their own file so neither grows past what the
+  /// lint gate allows.
   extension AgentClient {
-    private func send(
+    /// Sends one request and returns the reply.
+    func send(
       request: AgentControlRequest,
       operationName: String
     ) throws -> AgentControlResponse {
@@ -314,43 +324,6 @@ import Foundation
         "\(operationName) agent rpc completed responseVersion=\(response.version, privacy: .public)"
       )
       return response
-    }
-
-    private func encode(request: AgentControlRequest, operationName: String) throws -> Data {
-      do {
-        return try JSONEncoder().encode(AgentControlEnvelope(request: request))
-      } catch {
-        logger.error(
-          """
-          \(operationName) agent request encode failed \
-          details=\(String(describing: error), privacy: .public) \
-          recovery=throw-transport-failure
-          """
-        )
-        throw TunnelDaemonError.transportFailure(
-          "encode \(operationName) request failed: \(error.localizedDescription)"
-        )
-      }
-    }
-
-    private func decode(
-      responseData: Data,
-      operationName: String
-    ) throws -> AgentControlResponse {
-      do {
-        return try JSONDecoder().decode(AgentControlResponse.self, from: responseData)
-      } catch {
-        logger.error(
-          """
-          \(operationName) agent response decode failed \
-          details=\(String(describing: error), privacy: .public) \
-          recovery=throw-transport-failure
-          """
-        )
-        throw TunnelDaemonError.transportFailure(
-          "decode \(operationName) response failed: \(error.localizedDescription)"
-        )
-      }
     }
 
     // Sends the request and blocks for the reply. A failed send drops the
@@ -428,44 +401,6 @@ import Foundation
       }
     }
 
-    // Writes the JSON payload as a data value on the underlying xpc dictionary,
-    // matching the agent listener's data key.
-    private func makeMessage(payload: Data) -> XPCDictionary {
-      let raw = xpc_dictionary_create_empty()
-      payload.withUnsafeBytes { rawBuffer in
-        xpc_dictionary_set_data(
-          raw, agentControlPayloadKey, rawBuffer.baseAddress, rawBuffer.count
-        )
-      }
-      return XPCDictionary(raw)
-    }
-
-    /// The payload carried on one message, shared by the reply path and the pushes.
-    nonisolated private static func payloadData(from message: XPCDictionary) -> Data? {
-      message.withUnsafeUnderlyingDictionary { raw -> Data? in
-        var length = 0
-        guard
-          let pointer = xpc_dictionary_get_data(raw, agentControlPayloadKey, &length),
-          length > 0
-        else {
-          return nil
-        }
-        return Data(bytes: pointer, count: length)
-      }
-    }
-
-    private func replyData(
-      from reply: XPCDictionary,
-      operationName: String
-    ) throws -> Data {
-      guard let data = Self.payloadData(from: reply) else {
-        throw TunnelDaemonError.transportFailure(
-          "agent returned no payload for \(operationName)"
-        )
-      }
-      return data
-    }
-
     private func tearDownSession(reason: String) {
       guard let active = session else {
         return
@@ -478,68 +413,5 @@ import Foundation
       logger.notice("agent xpc session torn down reason=\(reason, privacy: .public)")
     }
 
-    private func validate(responseVersion: Int, operationName: String) throws {
-      if responseVersion > agentControlWireVersion {
-        logger.error(
-          """
-          \(operationName) agent response rejected \
-          receivedVersion=\(responseVersion, privacy: .public) \
-          supportedVersion=\(agentControlWireVersion, privacy: .public)
-          """
-        )
-        throw TunnelDaemonError.transportFailure(
-          "unsupported agent response version \(responseVersion)"
-        )
-      }
-    }
-
-    private func requireStatus(
-      from response: AgentControlResponse,
-      operationName: String
-    ) throws -> TunnelDaemonStatusSnapshot {
-      if let failure = response.failure {
-        throw mapFailure(failure)
-      }
-      guard let status = response.status else {
-        throw TunnelDaemonError.transportFailure("missing \(operationName) status payload")
-      }
-      return status
-    }
-
-    private func requireDiscovery(
-      from response: AgentControlResponse,
-      operationName: String
-    ) throws -> TunnelDiscoverySnapshot {
-      if let failure = response.failure {
-        throw mapFailure(failure)
-      }
-      guard let discovery = response.discovery else {
-        throw TunnelDaemonError.transportFailure(
-          "missing \(operationName) discovery payload"
-        )
-      }
-      return discovery
-    }
-
-    private func requireConfigText(
-      from response: AgentControlResponse,
-      operationName: String
-    ) throws -> String {
-      if let failure = response.failure {
-        throw mapFailure(failure)
-      }
-      guard let configText = response.configText else {
-        throw TunnelDaemonError.transportFailure(
-          "missing \(operationName) config text payload"
-        )
-      }
-      return configText
-    }
-
-    private func mapFailure(_ failure: AgentControlFailure) -> TunnelDaemonError {
-      TunnelDaemonError.controlFailure(
-        TunnelControlFailure(errorCode: failure.errorCode, message: failure.message)
-      )
-    }
   }
 #endif

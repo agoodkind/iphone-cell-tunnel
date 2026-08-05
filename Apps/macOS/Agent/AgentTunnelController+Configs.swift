@@ -19,10 +19,19 @@ private let importedConfigFallbackName = "Imported config"
 // MARK: - Config library handling
 
 extension AgentTunnelController {
-  /// Validates, stores, and activates a config from its text, then returns the
-  /// refreshed status carrying the updated library. Import resolves external text
-  /// to a library id but leaves relay start to the explicit start action.
-  func handleImportConfig(name: String, text: String) async -> AgentControlResponse {
+  /// Validates and stores a config from its text, activating it when asked, then returns
+  /// the refreshed status carrying the updated library.
+  ///
+  /// Adding a config and choosing which config is in force are separate things a person
+  /// does, and one request settles both. Activating unconditionally meant a client that
+  /// only wanted to add one had to send a second request to undo the activation, and
+  /// anything that interrupted it between the two left the wrong config in force.
+  ///
+  /// Import resolves external text to a library entry and leaves relay start to the
+  /// explicit start action.
+  func handleImportConfig(
+    name: String, text: String, activate: Bool
+  ) async -> AgentControlResponse {
     do {
       _ = try WireGuardConfigParser.parse(text)
     } catch {
@@ -33,7 +42,9 @@ extension AgentTunnelController {
     let previousActiveID = configStore.activeID
     do {
       saved = try configStore.addDeduplicated(name: name, text: text)
-      configStore.setActive(id: saved.id)
+      if activate {
+        configStore.setActive(id: saved.id)
+      }
     } catch {
       logger.error(
         """

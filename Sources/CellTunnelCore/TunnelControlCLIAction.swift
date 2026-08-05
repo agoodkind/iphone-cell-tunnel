@@ -19,6 +19,8 @@ private let renameArgumentCount = 2
 private let helpFlag = "--help"
 private let helpShortFlag = "-h"
 private let helpWord = "help"
+/// Asks import to add a configuration without changing which one is in force.
+private let noActivateFlag = "--no-activate"
 
 /// Whether the person asked what the tool does rather than asking it to do something.
 ///
@@ -61,6 +63,8 @@ public let tunnelControlUsageText = """
     configs rename <id> <name>   Rename a stored config.
     configs delete <id>          Delete a stored config (stops the tunnel if active).
     configs import <path>        Import and mark a config active; does not start the tunnel.
+                                 Optional: --no-activate to add it without
+                                 changing which config is in force.
     help, --help, -h             Print this help text.
   """
 
@@ -237,7 +241,7 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
 public enum ConfigsCommand: Equatable, Sendable {
   case activate(reference: String)
   case delete(id: UUID)
-  case importFile(path: String)
+  case importFile(path: String, activate: Bool)
   case list
   case rename(id: UUID, name: String)
 
@@ -271,10 +275,15 @@ public enum ConfigsCommand: Equatable, Sendable {
       }
       return .delete(id: id)
     case "import":
-      guard let path = rest.first, rest.count == singleArgumentCount else {
+      // Importing activates by default, because that is what a person importing their
+      // only configuration means. Adding one to the library without changing which is in
+      // force is the deliberate case, so it is the one that is asked for.
+      let activate = !rest.contains(noActivateFlag)
+      let paths = rest.filter { $0 != noActivateFlag }
+      guard let path = paths.first, paths.count == singleArgumentCount else {
         throw TunnelDaemonError.usage("configs import requires <path>")
       }
-      return .importFile(path: path)
+      return .importFile(path: path, activate: activate)
     default:
       throw TunnelDaemonError.usage("unknown configs subcommand: \(subcommand)")
     }
@@ -361,9 +370,10 @@ public struct TunnelControlCLIExecutor: Sendable {
       let snapshot = try await client.deleteConfig(id: id)
       return renderConfigListing(
         configs: snapshot.configLibrary ?? [], activeID: snapshot.activeConfigID)
-    case .importFile(let path):
+    case let .importFile(path, activate):
       let file = try await configImportFileLoader.load(path: path)
-      let snapshot = try await client.importConfig(name: file.name, text: file.text)
+      let snapshot = try await client.importConfig(
+        name: file.name, text: file.text, activate: activate)
       return renderConfigListing(
         configs: snapshot.configLibrary ?? [], activeID: snapshot.activeConfigID)
     }

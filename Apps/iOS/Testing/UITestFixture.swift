@@ -139,7 +139,7 @@
         await Task.yield()
       }
 
-      func importConfig(name _: String, text _: String) async {
+      func importConfig(name _: String, text _: String, activate _: Bool) async {
         await Task.yield()
       }
 
