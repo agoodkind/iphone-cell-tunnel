@@ -146,14 +146,17 @@
         throw error
       }
 
-      try await importConfig(name: name, text: text)
+      // Importing a file is a person choosing a configuration to use, so it becomes the
+      // active one. Adding one to the library without changing which is in force is the
+      // new-configuration flow, which asks for that explicitly.
+      try await importConfig(name: name, text: text, activate: true)
     }
 
-    /// Creates a config from raw text via the agent, which validates, stores, and
-    /// activates it. The new-config flow and the file import share this path.
-    func importConfig(name: String, text: String) async throws {
+    /// Adds a config from raw text through the agent, which validates and stores it, and
+    /// activates it when asked. The new-config flow and the file import share this path.
+    func importConfig(name: String, text: String, activate: Bool) async throws {
       do {
-        _ = try await client.importConfig(name: name, text: text)
+        _ = try await client.importConfig(name: name, text: text, activate: activate)
         logger.notice("agent relay backend config create forwarded")
       } catch {
         logger.error(

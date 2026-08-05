@@ -41,8 +41,8 @@ extension AgentTunnelController {
       return await handleDeleteConfig(id: id)
     case .getConfigText(let id):
       return handleGetConfigText(id: id)
-    case let .importConfig(name, text):
-      return await handleImportConfig(name: name, text: text)
+    case let .importConfig(name, text, activate):
+      return await handleImportConfig(name: name, text: text, activate: activate)
     case .listRelayServices:
       return snapshotResponse()
     case .reloadTunnel(let settings):

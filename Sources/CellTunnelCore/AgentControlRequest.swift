@@ -18,9 +18,16 @@ public protocol TunnelControlClientProtocol: Sendable {
   func deleteConfig(id: UUID) async throws -> TunnelDaemonStatusSnapshot
   /// Returns the secret text of a stored config, fetched only for editing.
   func getConfigText(id: UUID) async throws -> String
-  /// Validates, stores, and activates a config, then returns the refreshed status
-  /// carrying the updated library. Relay start is left to the explicit start action.
-  func importConfig(name: String, text: String) async throws -> TunnelDaemonStatusSnapshot
+  /// Validates and stores a config, then returns the refreshed status carrying the
+  /// updated library. Relay start is left to the explicit start action.
+  ///
+  /// `activate` decides whether the stored config also becomes the active one. Adding a
+  /// config to the library and choosing which config is in force are separate things a
+  /// person does, so one request settles both rather than leaving a client to undo an
+  /// activation it did not want.
+  func importConfig(
+    name: String, text: String, activate: Bool
+  ) async throws -> TunnelDaemonStatusSnapshot
   func listRelayServices() async throws -> TunnelDiscoverySnapshot
   func reloadTunnel(settings: TunnelStartSettings) async throws -> TunnelDaemonStatusSnapshot
   /// Renames a stored config.
@@ -55,9 +62,9 @@ public enum AgentControlRequest: Codable, Sendable {
   case deleteConfig(id: UUID)
   /// Returns the secret text of a stored config, fetched only for editing.
   case getConfigText(id: UUID)
-  /// Validates, stores, and activates a config from its text; relay start is left to
-  /// the explicit start action.
-  case importConfig(name: String, text: String)
+  /// Validates and stores a config from its text, activating it when asked; relay start
+  /// is left to the explicit start action.
+  case importConfig(name: String, text: String, activate: Bool)
   case listRelayServices
   case reloadTunnel(TunnelStartSettings)
   /// Renames a stored config.
@@ -87,6 +94,7 @@ public enum AgentControlRequest: Codable, Sendable {
   case validateConfig(text: String)
 
   private enum CodingKeys: String, CodingKey {
+    case configActivate
     case configID
     case configName
     case configText
@@ -171,9 +179,13 @@ public enum AgentControlRequest: Codable, Sendable {
     case .getConfigText:
       return .getConfigText(id: try container.decode(UUID.self, forKey: .configID))
     case .importConfig:
+      // A request from a client that predates the flag carries none, and every such
+      // client sent this only when it did mean to activate, so its absence reads as
+      // activate rather than as the new behaviour.
       return .importConfig(
         name: try container.decode(String.self, forKey: .configName),
-        text: try container.decode(String.self, forKey: .configText)
+        text: try container.decode(String.self, forKey: .configText),
+        activate: try container.decodeIfPresent(Bool.self, forKey: .configActivate) ?? true
       )
     case .reloadTunnel:
       return .reloadTunnel(
@@ -229,10 +241,11 @@ public enum AgentControlRequest: Codable, Sendable {
     case .getConfigText(let id):
       try container.encode(Kind.getConfigText, forKey: .kind)
       try container.encode(id, forKey: .configID)
-    case let .importConfig(name, text):
+    case let .importConfig(name, text, activate):
       try container.encode(Kind.importConfig, forKey: .kind)
       try container.encode(name, forKey: .configName)
       try container.encode(text, forKey: .configText)
+      try container.encode(activate, forKey: .configActivate)
     case .listRelayServices: try encodeKind(.listRelayServices, into: &container)
     case .reloadTunnel(let settings):
       try container.encode(Kind.reloadTunnel, forKey: .kind)

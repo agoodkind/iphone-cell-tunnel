@@ -55,7 +55,7 @@ final class PreviewRelayBackend: RelayControlBackend {
       try Task.checkCancellation()
     }
 
-    func importConfig(name _: String, text _: String) async throws {
+    func importConfig(name _: String, text _: String, activate _: Bool) async throws {
       await Task.yield()
       try Task.checkCancellation()
     }
