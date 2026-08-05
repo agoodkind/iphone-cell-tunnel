@@ -37,7 +37,8 @@ struct ConfigLibraryCapabilityBoundaryTests {
     #expect(configBackend.contains("func installTunnel(configURL: URL) async"))
     #expect(configBackend.contains("func loadConfigText(id: UUID) async -> String?"))
     #expect(configBackend.contains("func importConfig(url: URL, name: String) async"))
-    #expect(configBackend.contains("func importConfig(name: String, text: String) async"))
+    #expect(
+      configBackend.contains("func importConfig(name: String, text: String, activate: Bool)"))
     #expect(configBackend.contains("func activateConfig(id: UUID) async"))
     #expect(configBackend.contains("func saveConfigEdit(id: UUID, text: String) async"))
     #expect(configBackend.contains("func deleteConfig(id: UUID) async"))
@@ -105,7 +106,9 @@ struct ConfigLibraryCapabilityBoundaryTests {
 
     #expect(configBackend.contains("func importConfig(url: URL, name: String) async throws"))
     #expect(agentBackend.contains("func importConfig(url: URL, name: String) async throws"))
-    #expect(agentBackend.contains("func importConfig(name: String, text: String) async throws"))
+    #expect(
+      agentBackend.contains(
+        "func importConfig(name: String, text: String, activate: Bool) async throws"))
     #expect(controllerActions.contains("func importConfig(url: URL, name: String) async throws"))
     #expect(
       configLibraryView.contains("try await controller.importConfig(url: url, name: name)")

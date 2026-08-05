@@ -83,21 +83,18 @@
       Task { await configLibraryBackend.renameConfig(id: id, name: name) }
     }
 
-    /// Creates a stored configuration from raw text without leaving it active, for the
-    /// new-config flow. The agent activates a config on import, so the previously active
-    /// config is restored afterward to keep New from stealing the current selection.
+    /// Adds a stored configuration from raw text without changing which one is in force,
+    /// for the new-configuration flow.
+    ///
+    /// This asks for exactly that in one request. It used to add the configuration, let
+    /// it become active, and send a second request undoing that, which left the wrong
+    /// configuration in force if anything interrupted the two.
     func createConfig(name: String, text: String) {
       configLibraryLogger.notice("relay controller create config requested")
-      let previousActiveID = activeConfigID
-      // Pin the prior active id only when there is one to preserve, so the poll holds
-      // the checkmark in place until the restore lands; with no prior active config the
-      // newly imported one stays active and no restore runs.
-      if previousActiveID != nil {
-        pinnedActiveConfigID = previousActiveID
-      }
       Task {
         do {
-          try await configLibraryBackend.importConfig(name: name, text: text)
+          try await configLibraryBackend.importConfig(
+            name: name, text: text, activate: false)
         } catch {
           configLibraryLogger.error(
             """
@@ -106,10 +103,6 @@
             """
           )
         }
-        if let previousActiveID {
-          await configLibraryBackend.activateConfig(id: previousActiveID)
-        }
-        pinnedActiveConfigID = nil
       }
     }
   }

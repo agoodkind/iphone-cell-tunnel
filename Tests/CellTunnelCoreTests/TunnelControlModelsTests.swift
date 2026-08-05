@@ -272,7 +272,7 @@ struct TunnelControlModelsTests {
       }
     }
 
-    _ = try await runCLI(.configs(.importFile(path: url.path)), on: client)
+    _ = try await runCLI(.configs(.importFile(path: url.path, activate: true)), on: client)
     let importedName = url.deletingPathExtension().lastPathComponent
     client.events.removeAll()
 
@@ -480,13 +480,17 @@ private final class FakeTunnelControlClient: TunnelControlClientProtocol, @unche
     return libraryStatus()
   }
 
-  func importConfig(name: String, text: String) async -> TunnelDaemonStatusSnapshot {
+  func importConfig(
+    name: String, text: String, activate: Bool
+  ) async -> TunnelDaemonStatusSnapshot {
     await Task.yield()
     events.append("importConfig")
     _ = text
     let summary = TunnelConfigSummary(id: UUID(), name: name, createdAt: fixedConfigDate)
     configs.append(summary)
-    activeConfigID = summary.id
+    if activate {
+      activeConfigID = summary.id
+    }
     return libraryStatus()
   }
 
