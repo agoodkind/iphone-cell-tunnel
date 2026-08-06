@@ -334,6 +334,9 @@ extension AgentTunnelController {
   }
 
   func handleStopTunnel() async -> AgentControlResponse {
+    // The last counter reading folds into the lifetime totals before the session
+    // discards it. Every teardown funnels through here, so no stop path loses the tail.
+    await foldLifetimeBeforeTeardown()
     do {
       let loadedManager = try await loadOrCreateManager()
       stopSession(on: loadedManager)

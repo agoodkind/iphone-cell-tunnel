@@ -84,16 +84,10 @@ extension AgentTunnelController {
     if let controllerError = error as? AgentTunnelControllerError {
       return failure(errorCode: controllerError.errorCode, message: controllerError.message)
     }
-    // A refused VPN profile save arrives as a system error whose text names the failure
-    // and stops there. Saving is where macOS asks for permission, so the person reading
-    // this is the one who just answered that prompt and needs to know how to answer it
-    // again. Anything the shared rule does not recognise keeps the system's own text.
-    let systemError = error as NSError
-    if let saveFailure = vpnProfileSaveFailure(
-      domain: systemError.domain, code: systemError.code)
-    {
-      return failure(errorCode: .internal, message: saveFailure.message)
-    }
+    // A refused profile save arrives here already carrying its what-happened-and-what-to-do
+    // message, attached where the save actually ran. Classifying by error code here
+    // instead would also catch the same code from a failed preferences read, and tell a
+    // person to answer a permission prompt that never appeared.
     return failure(errorCode: .internal, message: error.localizedDescription)
   }
 

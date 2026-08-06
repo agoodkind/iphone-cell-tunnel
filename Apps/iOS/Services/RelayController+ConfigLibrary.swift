@@ -89,12 +89,24 @@
     /// This asks for exactly that in one request. It used to add the configuration, let
     /// it become active, and send a second request undoing that, which left the wrong
     /// configuration in force if anything interrupted the two.
+    ///
+    /// An agent that predates the choice ignores it and activates the import anyway. The
+    /// reply carries which configuration ended up active, so that one case is detected
+    /// and the previous selection put back; against a current agent no second request is
+    /// sent.
     func createConfig(name: String, text: String) {
       configLibraryLogger.notice("relay controller create config requested")
+      let previousActiveID = activeConfigID
       Task {
         do {
-          try await configLibraryBackend.importConfig(
+          let activeAfter = try await configLibraryBackend.importConfig(
             name: name, text: text, activate: false)
+          if let previousActiveID, let activeAfter, activeAfter != previousActiveID {
+            configLibraryLogger.notice(
+              "relay controller create config restoring selection after older agent activated"
+            )
+            await configLibraryBackend.activateConfig(id: previousActiveID)
+          }
         } catch {
           configLibraryLogger.error(
             """

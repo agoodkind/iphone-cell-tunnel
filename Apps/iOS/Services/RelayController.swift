@@ -84,6 +84,10 @@ final class RelayController {
   // Status polls left before an unconfirmed routing request reverts to the real
   // state; a positive value means a request is pending, counted down each poll.
   private var routeIntentPollsRemaining = 0
+  /// Where the producer says it is between the two settled routing states, or nil from a
+  /// producer that does not say. When it says, the switch follows it and this app counts
+  /// nothing, which is what stops a spinner freezing while the app is in the background.
+  private var routingPhase: TunnelRoutingPhase?
 
   #if targetEnvironment(macCatalyst)
     /// The active config id held across a new-config create and restore so the poll
@@ -371,6 +375,7 @@ final class RelayController {
     assign(\.relayStateDescription, sample.relayStateDescription)
     assign(\.routeState, sample.routeState)
     assign(\.routingIntentEnabled, sample.routingIntentEnabled)
+    routingPhase = sample.routingPhase
     reconcileRouteIntent()
     assign(\.peerState, sample.peerState)
     assign(\.isTunnelInstalled, sample.isTunnelInstalled)
@@ -497,13 +502,25 @@ extension RelayController {
     await backend.setRouting(enabled: enabled)
   }
 
-  // Clears the optimistic pending request once the agent's routing intent confirms the
-  // request, or after the poll budget elapses, so the switch follows the confirmed
-  // value and a request the agent never applies snaps back rather than spinning
-  // forever.
+  // Clears the request the person made once it has settled, so the switch follows what
+  // actually happened rather than what was asked for.
+  //
+  // A phase settles the request only when it is the settled state the person asked for:
+  // routing for a turn-on, idle for a turn-off. A reading produced before the request
+  // reached the agent still carries the old settled state, and treating that as the
+  // answer would snap the switch back the instant it was flipped. The opposite settled
+  // state therefore falls through to the countdown, which stays as the backstop for a
+  // request the agent never applies.
   private func reconcileRouteIntent() {
     guard isRouteRequestPending else {
       return
+    }
+    if let routingPhase {
+      let confirmed = requestedRouting ? routingPhase == .routing : routingPhase == .idle
+      if confirmed {
+        routeIntentPollsRemaining = 0
+        return
+      }
     }
     if routingIntentEnabled == requestedRouting {
       routeIntentPollsRemaining = 0

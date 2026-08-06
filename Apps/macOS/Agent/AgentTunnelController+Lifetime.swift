@@ -34,6 +34,18 @@ extension AgentTunnelController {
     return totals
   }
 
+  /// Folds the final reading before a teardown discards the session's counters.
+  ///
+  /// The counters vanish with the tunnel, so without this fold whatever moved since the
+  /// previous one, up to one accrual interval, would never reach the total. Nothing runs
+  /// when no relay is hosted, because there is no session whose counters could be lost.
+  func foldLifetimeBeforeTeardown() async {
+    guard relayHosted else {
+      return
+    }
+    _ = await handleStatus()
+  }
+
   /// Writes the folded bases so a restart resumes rather than starts over.
   private func persistLifetimeBases(_ totals: LifetimeByteTotals) {
     guard let defaults = UserDefaults(suiteName: cellTunnelAppGroupIdentifier) else {

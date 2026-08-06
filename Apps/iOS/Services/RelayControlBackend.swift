@@ -32,9 +32,6 @@ protocol RelayControlBackend {
   /// Sets the routing choice through the platform control path.
   func setRouting(enabled: Bool) async
 
-  /// Selects the discovered peer to connect to.
-  func selectPeer(id: String) async
-
   /// Selects which dialed-in iPhone the Mac routes egress through.
   func selectEgressPeer(id: String) async
 

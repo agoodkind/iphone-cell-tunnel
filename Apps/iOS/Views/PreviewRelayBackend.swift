@@ -29,10 +29,6 @@ final class PreviewRelayBackend: RelayControlBackend {
     await Task.yield()
   }
 
-  func selectPeer(id _: String) async {
-    await Task.yield()
-  }
-
   func selectEgressPeer(id _: String) async {
     await Task.yield()
   }
@@ -55,9 +51,10 @@ final class PreviewRelayBackend: RelayControlBackend {
       try Task.checkCancellation()
     }
 
-    func importConfig(name _: String, text _: String, activate _: Bool) async throws {
+    func importConfig(name _: String, text _: String, activate _: Bool) async throws -> UUID? {
       await Task.yield()
       try Task.checkCancellation()
+      return nil
     }
 
     func activateConfig(id _: UUID) async {

@@ -99,6 +99,9 @@ struct RelayStatusSample: Sendable {
   /// The totals the producer accumulated itself, or nil from one that keeps none. A
   /// producer that runs continuously sees every reading, and this app does not.
   var lifetimeBytes: LifetimeByteTotals?
+  /// Where the producer says it is between the two settled routing states, or nil from a
+  /// producer that does not say.
+  var routingPhase: TunnelRoutingPhase?
 
   /// Maps a daemon status snapshot to one sample. Every backend builds its sample
   /// here, so the snapshot-to-sample mapping lives in one place; a backend applies
@@ -151,5 +154,6 @@ struct RelayStatusSample: Sendable {
     vpnProfileState = snapshot.vpnProfileState
     advertising = snapshot.advertising
     lifetimeBytes = snapshot.lifetimeBytes
+    routingPhase = snapshot.routingPhase
   }
 }

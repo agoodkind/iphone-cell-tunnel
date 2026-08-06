@@ -117,9 +117,32 @@ extension AgentTunnelController {
     manager.isEnabled = true
   }
 
+  /// Saves the profile, and turns a refused save into its person-facing message.
+  ///
+  /// Saving is the moment macOS asks a person to allow the VPN configuration, so the
+  /// classification lives here: only a caller that actually saved can honestly tell
+  /// someone how to answer that prompt again. A failure the rule does not recognise is
+  /// rethrown with the system's own text.
   func save(manager: NETunnelProviderManager) async throws {
-    try await resumeVoidContinuation { completion in
-      manager.saveToPreferences(completionHandler: completion)
+    do {
+      try await resumeVoidContinuation { completion in
+        manager.saveToPreferences(completionHandler: completion)
+      }
+    } catch {
+      let systemError = error as NSError
+      guard
+        let saveFailure = vpnProfileSaveFailure(
+          domain: systemError.domain, code: systemError.code)
+      else {
+        throw error
+      }
+      logger.error(
+        """
+        agent profile save refused code=\(systemError.code, privacy: .public) \
+        recovery=return-retry-message
+        """
+      )
+      throw VPNProfileSaveRefusedError(failure: saveFailure)
     }
   }
 
