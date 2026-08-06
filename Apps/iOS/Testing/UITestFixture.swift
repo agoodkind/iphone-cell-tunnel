@@ -60,14 +60,12 @@
         return RelayController(
           backend: backend,
           lifetimeStore: LifetimeDataStore(suiteName: defaultsSuiteName),
-          installState: InstallationState(),
-          deviceProbe: nil
+          installState: InstallationState()
         )
       #else
         return RelayController(
           backend: backend,
-          lifetimeStore: LifetimeDataStore(suiteName: defaultsSuiteName),
-          deviceProbe: nil
+          lifetimeStore: LifetimeDataStore(suiteName: defaultsSuiteName)
         )
       #endif
     }

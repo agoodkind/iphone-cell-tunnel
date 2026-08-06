@@ -265,6 +265,8 @@ public final class RelayRuntime: @unchecked Sendable {
       snapshot: snapshot,
       peersFound: !state.discoveredServices.isEmpty
     )
+    snapshot.deviceInterfaceAddresses = InterfaceAddressLookup.allAddresses(
+      forInterface: snapshot.cellularPath?.interfaceName ?? "")
     return snapshot
   }
 

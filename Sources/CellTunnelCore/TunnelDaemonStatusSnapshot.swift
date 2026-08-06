@@ -294,6 +294,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
   /// Which situation the producer says the machine is in, so every client renders one
   /// decision rather than re-deriving it. `nil` from a producer that predates the field.
   public var situation: RelaySituation?
+  /// Every address on the producer's egress interface, read by the producer rather than
+  /// by each client. `nil` from a producer that predates the field.
+  public var deviceInterfaceAddresses: InterfaceAddressList?
 
   public init(
     running: Bool = false,
@@ -332,7 +335,8 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     activeConfigID: UUID? = nil,
     configDrift: String? = nil,
     vpnProfileState: TunnelVPNProfileState? = nil,
-    situation: RelaySituation? = nil
+    situation: RelaySituation? = nil,
+    deviceInterfaceAddresses: InterfaceAddressList? = nil
   ) {
     self.running = running
     self.routeState = routeState
@@ -371,6 +375,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     self.configDrift = configDrift
     self.vpnProfileState = vpnProfileState
     self.situation = situation
+    self.deviceInterfaceAddresses = deviceInterfaceAddresses
   }
 
   public var renderedOutput: String {
@@ -398,6 +403,11 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     }
     if let situation {
       lines.append("situation=\(situation.rawValue)")
+    }
+    if let deviceInterfaceAddresses {
+      let joined = (deviceInterfaceAddresses.ipv6 + deviceInterfaceAddresses.ipv4)
+        .joined(separator: ",")
+      lines.append("device_interface_addresses=\(joined)")
     }
     if let advertising {
       lines.append("advertising=\(advertising.rawValue)")
