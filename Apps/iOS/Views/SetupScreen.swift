@@ -204,8 +204,8 @@
         return "This Mac cannot be found"
       case .vpnProfileDisabled:
         return "Turn the VPN back on"
-      case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
-        .routing:
+      case .connecting, .failed, .noActiveConfig, .noPeerSelected, .noPeersFound,
+        .notProvisioned, .readyToRoute, .routing:
         return model.status.label
       }
     }
@@ -225,8 +225,8 @@
       case .vpnProfileDisabled:
         return "Cell Tunnel is switched off in System Settings, so it cannot "
           + "route traffic until you turn it back on."
-      case .error, .noActiveConfig, .noPeerSelected, .noPeersFound, .readyToRoute,
-        .routing:
+      case .connecting, .failed, .noActiveConfig, .noPeerSelected, .noPeersFound,
+        .notProvisioned, .readyToRoute, .routing:
         return ""
       }
     }
@@ -249,8 +249,8 @@
           "Click VPN in the sidebar.",
           "Turn on Cell Tunnel.",
         ]
-      case .error, .noActiveConfig, .noAgent, .noConfigImported, .noPeerSelected,
-        .noPeersFound, .readyToRoute, .routing:
+      case .connecting, .failed, .noActiveConfig, .noAgent, .noConfigImported,
+        .noPeerSelected, .noPeersFound, .notProvisioned, .readyToRoute, .routing:
         return []
       }
     }

@@ -371,7 +371,6 @@ extension AgentTunnelController {
     merged.peerAvailableLinks = peerLinks.withLock { $0 }
     merged.cellularPath = CellularPathSnapshot(egress: egressPath.withLock { $0 })
     merged.routingIntentEnabled = TunnelRoutingIntent(enabled: routingEnabled)
-    merged.routingPhase = publishedRoutingPhase(routeState: merged.routeState)
     merged.agentLinks = agentLinks.withLock { $0 }
     merged.connectedPeers = connectedPeers.withLock { $0 }
     // Whether an iPhone can find this Mac at all. A listener that lost its port is
@@ -390,6 +389,8 @@ extension AgentTunnelController {
       merged.lastError = lastStartError
     }
     merged.lifetimeBytes = recordLifetimeBytes(from: merged.macCounters)
+    // Computed last, because they read the fields this method just filled in.
+    finishPublishedVerdicts(&merged)
     return merged
   }
 

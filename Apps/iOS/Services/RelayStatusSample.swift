@@ -102,6 +102,9 @@ struct RelayStatusSample: Sendable {
   /// Where the producer says it is between the two settled routing states, or nil from a
   /// producer that does not say.
   var routingPhase: TunnelRoutingPhase?
+  /// Which situation the producer says the machine is in, or nil from a producer that
+  /// publishes none, which leaves the screen to derive it from the fields above.
+  var situation: RelaySituation?
 
   /// Maps a daemon status snapshot to one sample. Every backend builds its sample
   /// here, so the snapshot-to-sample mapping lives in one place; a backend applies
@@ -155,5 +158,6 @@ struct RelayStatusSample: Sendable {
     advertising = snapshot.advertising
     lifetimeBytes = snapshot.lifetimeBytes
     routingPhase = snapshot.routingPhase
+    situation = snapshot.situation
   }
 }
