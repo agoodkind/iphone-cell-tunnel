@@ -55,9 +55,10 @@ final class PreviewRelayBackend: RelayControlBackend {
       try Task.checkCancellation()
     }
 
-    func importConfig(name _: String, text _: String, activate _: Bool) async throws {
+    func importConfig(name _: String, text _: String, activate _: Bool) async throws -> UUID? {
       await Task.yield()
       try Task.checkCancellation()
+      return nil
     }
 
     func activateConfig(id _: UUID) async {

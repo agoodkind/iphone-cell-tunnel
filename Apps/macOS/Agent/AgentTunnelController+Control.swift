@@ -467,12 +467,6 @@ extension AgentTunnelController {
   /// relay bridge through the existing stop path. Shared by the routing switch, the
   /// stop request, and active-config deletion so every teardown clears the same state.
   func disableRouting() async {
-    // The session's counters vanish with the tunnel, so the last reading folds into the
-    // lifetime totals first. Without this, whatever moved since the previous fold, up to
-    // one accrual interval, would never reach the total.
-    if relayHosted {
-      _ = await handleStatus()
-    }
     routingGeneration += 1
     routingEnabled = false
     // Any start this supersedes is no longer settling, and clearing here means a start

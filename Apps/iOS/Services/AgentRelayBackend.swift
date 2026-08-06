@@ -149,15 +149,20 @@
       // Importing a file is a person choosing a configuration to use, so it becomes the
       // active one. Adding one to the library without changing which is in force is the
       // new-configuration flow, which asks for that explicitly.
-      try await importConfig(name: name, text: text, activate: true)
+      _ = try await importConfig(name: name, text: text, activate: true)
     }
 
     /// Adds a config from raw text through the agent, which validates and stores it, and
     /// activates it when asked. The new-config flow and the file import share this path.
-    func importConfig(name: String, text: String, activate: Bool) async throws {
+    ///
+    /// Returns the active config id the agent reported after the import, so a caller
+    /// that asked for no activation can see whether an older agent, which predates the
+    /// choice and always activates, changed the selection anyway.
+    func importConfig(name: String, text: String, activate: Bool) async throws -> UUID? {
       do {
-        _ = try await client.importConfig(name: name, text: text, activate: activate)
+        let snapshot = try await client.importConfig(name: name, text: text, activate: activate)
         logger.notice("agent relay backend config create forwarded")
+        return snapshot.activeConfigID
       } catch {
         logger.error(
           """

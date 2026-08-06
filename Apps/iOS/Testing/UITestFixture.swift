@@ -139,8 +139,9 @@
         await Task.yield()
       }
 
-      func importConfig(name _: String, text _: String, activate _: Bool) async {
+      func importConfig(name _: String, text _: String, activate _: Bool) async -> UUID? {
         await Task.yield()
+        return nil
       }
 
       func activateConfig(id _: UUID) async {

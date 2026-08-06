@@ -25,12 +25,15 @@
     /// Imports a selected configuration file into the agent library.
     func importConfig(url: URL, name: String) async throws
 
-    /// Adds a configuration from raw editor text, making it the active one when asked.
+    /// Adds a configuration from raw editor text, making it the active one when asked,
+    /// and returns the active configuration id the producer reported afterwards.
     ///
     /// Adding a configuration and choosing which one is in force are separate things a
     /// person does, so both are settled by this one call rather than by a second one
-    /// undoing the first.
-    func importConfig(name: String, text: String, activate: Bool) async throws
+    /// undoing the first. The returned id lets a caller that asked for no activation
+    /// detect a producer that activated anyway and put the selection back.
+    @discardableResult
+    func importConfig(name: String, text: String, activate: Bool) async throws -> UUID?
 
     /// Marks one stored configuration active.
     func activateConfig(id: UUID) async
