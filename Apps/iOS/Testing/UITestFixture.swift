@@ -113,10 +113,6 @@
       await Task.yield()
     }
 
-    func selectPeer(id _: String) async {
-      await Task.yield()
-    }
-
     func selectEgressPeer(id _: String) async {
       await Task.yield()
     }

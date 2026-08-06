@@ -64,16 +64,8 @@
 
     // MARK: - Peer selection
 
-    // The simulator iPhone is a dumb dialer with no manual picker, so it auto-dials
-    // the first discovered Mac when none is selected.
-
-    // Records the chosen Mac control service and dials it through the in-process
-    // runtime's control link.
-    func selectPeer(id: String) async {
-      await Task.yield()
-      logger.notice("simulator relay backend select peer id=\(id, privacy: .public)")
-      runtime.selectPeer(id: id)
-    }
+    // The simulator iPhone has no manual picker: the in-process runtime auto-dials the
+    // lone discovered Mac itself, so the backend forwards no selection.
 
     func selectEgressPeer(id _: String) async {
       await Task.yield()

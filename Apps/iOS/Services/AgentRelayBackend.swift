@@ -62,24 +62,6 @@
       }
     }
 
-    // MARK: - Peer selection
-
-    // Forwards the peer selection to the agent, which records it and uses it the
-    // next time it builds the tunnel.
-    func selectPeer(id: String) async {
-      do {
-        _ = try await client.selectRelayService(serviceID: id)
-        logger.notice("agent relay backend peer selection sent id=\(id, privacy: .public)")
-      } catch {
-        logger.error(
-          """
-          agent relay backend peer selection failed \
-          details=\(String(describing: error), privacy: .public) recovery=keep-state
-          """
-        )
-      }
-    }
-
     // The Mac's available peers are the dialed-in roster, so the status word reflects
     // connected iPhones rather than Bonjour discovery.
     var usesEgressRoster: Bool {

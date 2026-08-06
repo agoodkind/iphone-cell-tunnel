@@ -257,35 +257,8 @@
 
     // MARK: - Peer selection
 
-    // The iPhone is a dumb dialer with no manual picker, so it auto-dials the first
-    // discovered Mac when none is selected.
-
-    // Forwards the peer selection to the extension's relay runtime over a provider
-    // message, which dials the chosen Mac control service.
-    func selectPeer(id: String) async {
-      if isSimulator {
-        await simulatorProbe.selectPeer(id: id)
-        return
-      }
-      guard let session else {
-        logger.notice("phone relay backend peer selection ignored: no session")
-        return
-      }
-      do {
-        let payload = try JSONEncoder().encode(
-          ProviderControlEnvelope(request: .selectPeer(id: id)))
-        _ = try await sendProviderMessage(payload, on: session)
-        logger.notice(
-          "phone relay backend peer selection sent id=\(id, privacy: .public)")
-      } catch {
-        logger.error(
-          """
-          phone relay backend peer selection failed \
-          details=\(String(describing: error), privacy: .public) recovery=keep-state
-          """
-        )
-      }
-    }
+    // The iPhone has no manual picker: the extension's relay runtime auto-dials the
+    // lone discovered Mac itself, so the app forwards no selection.
 
     func selectEgressPeer(id _: String) async {
       await Task.yield()
