@@ -112,6 +112,9 @@ actor AgentTunnelController {
   /// config id disagrees with the library, or `nil` when they agree. Read into every
   /// status snapshot's `configDrift`. The assertion never mutates the library.
   var configDriftMessage: String?
+  /// The last profile state a read actually returned, so the published situation holds
+  /// steady across a read that failed and said nothing.
+  var lastKnownProfileState: TunnelVPNProfileState?
 
   /// The clients listening for status pushes, shared with the session listener so the
   /// side that knows the state and the side that knows the connections work from one

@@ -291,6 +291,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
   /// spinner without keeping a countdown of its own. `nil` from a producer that predates
   /// the field.
   public var routingPhase: TunnelRoutingPhase?
+  /// Which situation the producer says the machine is in, so every client renders one
+  /// decision rather than re-deriving it. `nil` from a producer that predates the field.
+  public var situation: RelaySituation?
 
   public init(
     running: Bool = false,
@@ -328,7 +331,8 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     configLibrary: [TunnelConfigSummary]? = nil,
     activeConfigID: UUID? = nil,
     configDrift: String? = nil,
-    vpnProfileState: TunnelVPNProfileState? = nil
+    vpnProfileState: TunnelVPNProfileState? = nil,
+    situation: RelaySituation? = nil
   ) {
     self.running = running
     self.routeState = routeState
@@ -366,6 +370,7 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     self.activeConfigID = activeConfigID
     self.configDrift = configDrift
     self.vpnProfileState = vpnProfileState
+    self.situation = situation
   }
 
   public var renderedOutput: String {
@@ -390,6 +395,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     }
     if let routingPhase {
       lines.append("routing_phase=\(routingPhase.rawValue)")
+    }
+    if let situation {
+      lines.append("situation=\(situation.rawValue)")
     }
     if let advertising {
       lines.append("advertising=\(advertising.rawValue)")

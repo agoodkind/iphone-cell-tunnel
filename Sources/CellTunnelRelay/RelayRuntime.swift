@@ -231,7 +231,7 @@ public final class RelayRuntime: @unchecked Sendable {
   public func statusSnapshot() -> TunnelDaemonStatusSnapshot {
     let state = statusState.withLock { $0 }
     let publicAddresses = publicExchange?.resolved ?? PublicAddressExchange.Resolved()
-    return TunnelDaemonStatusSnapshot(
+    var snapshot = TunnelDaemonStatusSnapshot(
       running: state.running,
       routeState: state.routeInstalled ? .installed : .notInstalled,
       peerState: state.running ? .relaySelected : .notSelected,
@@ -260,6 +260,12 @@ public final class RelayRuntime: @unchecked Sendable {
       relayProtocol: relayProtocolName,
       routingIntentEnabled: state.routingIntent
     )
+    // Computed last, because it reads the fields just assembled.
+    snapshot.situation = phoneRelaySituation(
+      snapshot: snapshot,
+      peersFound: !state.discoveredServices.isEmpty
+    )
+    return snapshot
   }
 
   // Builds the discovery section the same way the agent does: the discovered Mac

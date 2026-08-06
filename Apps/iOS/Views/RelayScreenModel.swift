@@ -197,9 +197,14 @@ struct RelayScreenModel {
     }
   #endif
 
-  /// The runtime error message when the status is an error, shown as a row.
+  /// The runtime error message when the situation is a failure, shown as a row. The
+  /// message travels as the snapshot's error text rather than inside the situation, so
+  /// the situation stays one word on the wire.
   var errorMessage: String? {
-    status.errorMessage
+    guard status == .failed else {
+      return nil
+    }
+    return controller.lastError
   }
 
   // MARK: - Peers
@@ -225,9 +230,9 @@ struct RelayScreenModel {
     }
     #if targetEnvironment(macCatalyst)
       if connectedPeers.isEmpty {
-        return MacRelayStatus.noPeersFound.label
+        return RelaySituation.noPeersFound.label
       }
-      return MacRelayStatus.noPeerSelected.label
+      return RelaySituation.noPeerSelected.label
     #else
       return nil
     #endif
@@ -547,44 +552,58 @@ struct RelayScreenModel {
 
 // MARK: - Status
 
-/// Each platform derives its own status, because the two reach different states from
-/// different facts. The extension keeps that derivation beside the model without
-/// widening the model's own body.
+/// The situation the screen renders. The producer decides it and publishes it on the
+/// snapshot; the model prefers that verdict and overlays only the facts no producer can
+/// know about itself. A producer that publishes none, an older one or one that has not
+/// answered yet, gets the same decision computed here from what the controller holds,
+/// through the same shared rule, so the two paths cannot disagree.
 extension RelayScreenModel {
+  var status: RelaySituation {
+    // A failure the controller holds wins even over a published verdict, because the
+    // controller can carry an error from a path the producer never saw.
+    if let message = controller.lastError, !message.isEmpty {
+      return .failed
+    }
+    #if targetEnvironment(macCatalyst)
+      // An absent agent produces no snapshot at all, so only this side can name it.
+      if !controller.isAgentInstalled {
+        return .noAgent
+      }
+      return controller.publishedSituation ?? fallbackSituation
+    #else
+      return controller.publishedSituation ?? fallbackSituation
+    #endif
+  }
+
   #if targetEnvironment(macCatalyst)
 
-    /// The Mac's status, built from the controller's published signals through named,
-    /// single-purpose inputs. The relay can carry traffic only with the peer, so the
-    /// peer is the gate and the local interface flag is not an input. The screens read
-    /// `statusLabel` and `status.showsSpeed` rather than the cases themselves wherever
-    /// the display does not depend on which case it is.
-    var status: MacRelayStatus {
-      MacRelayStatus(
-        errorMessage: controller.lastError,
-        isAdvertising: controller.isAdvertising,
-        isAgentInstalled: controller.isAgentInstalled,
-        isVPNProfileDisabled: controller.isVPNProfileDisabled,
-        isConfigImported: controller.isTunnelInstalled,
-        isActiveConfigPresent: controller.hasActiveConfig,
-        peersFound: peersAvailable,
-        isPeerConnected: controller.connectedPeerName != nil,
-        isRouting: controller.routeState == .installed
+    /// The Mac's situation derived from the controller's own fields, for a producer
+    /// that published none.
+    private var fallbackSituation: RelaySituation {
+      let snapshot = TunnelDaemonStatusSnapshot(
+        routeState: controller.routeState,
+        connectedPeerName: controller.connectedPeerName,
+        advertising: TunnelAdvertisingState(isAdvertising: controller.isAdvertising),
+        activeConfigID: controller.activeConfigID,
+        vpnProfileState: controller.isVPNProfileDisabled ? .disabled : .enabled
+      )
+      return macRelaySituation(
+        snapshot: snapshot,
+        hasImportedConfig: controller.isTunnelInstalled,
+        peersFound: peersAvailable
       )
     }
 
   #else
 
-    /// The iPhone's status, built the same way from the signals the iPhone has. It
-    /// carries no agent or configuration-library input, because the iPhone holds
-    /// neither.
-    var status: PhoneRelayStatus {
-      PhoneRelayStatus(
-        errorMessage: controller.lastError,
-        isTunnelProvisioned: controller.isTunnelInstalled,
-        peersFound: peersAvailable,
-        isPeerConnected: controller.connectedPeerName != nil,
-        isRouting: controller.routeState == .installed
+    /// The iPhone's situation derived the same way from the facts the iPhone has.
+    private var fallbackSituation: RelaySituation {
+      let snapshot = TunnelDaemonStatusSnapshot(
+        routeState: controller.routeState,
+        peerState: controller.isTunnelInstalled ? .relaySelected : .notSelected,
+        connectedPeerName: controller.connectedPeerName
       )
+      return phoneRelaySituation(snapshot: snapshot, peersFound: peersAvailable)
     }
 
   #endif

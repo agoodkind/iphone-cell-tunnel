@@ -108,6 +108,10 @@ final class RelayController {
   /// to look like an ordinary wait. True on the iPhone, which is not looked for.
   var isAdvertising = true
 
+  /// Which situation the producer says the machine is in, or nil from a producer that
+  /// publishes none, which leaves the screen to derive it through the same shared rule.
+  var publishedSituation: RelaySituation?
+
   /// Whether the saved VPN profile is switched off, the gate to the re-enable setup
   /// tier. Routing cannot start until the user turns the profile back on, so the
   /// screen offers that rather than the routing switch.
@@ -353,24 +357,7 @@ final class RelayController {
     assign(\.connectedPeerName, sample.connectedPeerName)
     assign(\.backendCellularPath, sample.cellularPath)
     assign(\.counters, sample.counters)
-    // A producer that accumulates its own totals is preferred, because it sees every
-    // reading and this app does not: it is closed most of the time, so anything it
-    // accumulated itself would be missing whatever moved while nobody was looking. A
-    // producer that publishes none is still accumulated here, which is the only reading
-    // available for it.
-    if let published = sample.lifetimeBytes {
-      assign(\.lifetimeTransferredBytes, published.upload)
-      assign(\.lifetimeReceivedBytes, published.download)
-      assign(\.lifetimeTotalBytes, published.total)
-    } else {
-      let lifetime = lifetimeStore.totals(
-        sessionTransferred: sample.uploadBytes,
-        sessionReceived: sample.downloadBytes
-      )
-      assign(\.lifetimeTransferredBytes, lifetime.transferred)
-      assign(\.lifetimeReceivedBytes, lifetime.received)
-      assign(\.lifetimeTotalBytes, lifetime.total)
-    }
+    applyLifetime(sample)
     assign(\.lastError, sample.lastError)
     assign(\.relayStateDescription, sample.relayStateDescription)
     assign(\.routeState, sample.routeState)
@@ -390,6 +377,7 @@ final class RelayController {
     if let advertising = sample.advertising {
       assign(\.isAdvertising, advertising == .advertising)
     }
+    assign(\.publishedSituation, sample.situation)
     assign(\.discoveredPeers, sample.discoveredPeers)
     assign(\.selectedPeerID, sample.selectedPeerID)
     assign(\.discoveryPhase, sample.discoveryPhase)
@@ -426,6 +414,27 @@ final class RelayController {
     assign(\.uploadMbps, rate.uploadMegabitsPerSecond)
     assign(\.downloadMbps, rate.downloadMegabitsPerSecond)
     logger.debug("relay controller sample applied running=\(self.isRunning, privacy: .public)")
+  }
+
+  // A producer that accumulates its own totals is preferred, because it sees every
+  // reading and this app does not: it is closed most of the time, so anything it
+  // accumulated itself would be missing whatever moved while nobody was looking. A
+  // producer that publishes none is still accumulated here, which is the only reading
+  // available for it.
+  private func applyLifetime(_ sample: RelayStatusSample) {
+    if let published = sample.lifetimeBytes {
+      assign(\.lifetimeTransferredBytes, published.upload)
+      assign(\.lifetimeReceivedBytes, published.download)
+      assign(\.lifetimeTotalBytes, published.total)
+    } else {
+      let lifetime = lifetimeStore.totals(
+        sessionTransferred: sample.uploadBytes,
+        sessionReceived: sample.downloadBytes
+      )
+      assign(\.lifetimeTransferredBytes, lifetime.transferred)
+      assign(\.lifetimeReceivedBytes, lifetime.received)
+      assign(\.lifetimeTotalBytes, lifetime.total)
+    }
   }
 
   // Assigns only when the value changes, so each @Observable property notifies the

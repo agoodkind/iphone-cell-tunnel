@@ -46,6 +46,28 @@ extension AgentTunnelController {
     )
   }
 
+  /// Stamps the finished snapshot with the phase and the situation, the two verdicts a
+  /// client renders without re-deriving anything. They run last because both read fields
+  /// the snapshot assembly just filled in.
+  ///
+  /// A profile read that failed says nothing about the profile, so the situation is
+  /// decided against the last state a read actually returned. Publishing the failed
+  /// read's nil in `vpnProfileState` is unchanged; only the verdict holds steady, so one
+  /// failed read cannot swap the re-enable screen for a switch that would not work.
+  func finishPublishedVerdicts(_ merged: inout TunnelDaemonStatusSnapshot) {
+    merged.routingPhase = publishedRoutingPhase(routeState: merged.routeState)
+    if let read = merged.vpnProfileState {
+      lastKnownProfileState = read
+    }
+    var judged = merged
+    judged.vpnProfileState = merged.vpnProfileState ?? lastKnownProfileState
+    merged.situation = macRelaySituation(
+      snapshot: judged,
+      hasImportedConfig: !(merged.configLibrary ?? []).isEmpty,
+      peersFound: !(merged.connectedPeers ?? []).isEmpty
+    )
+  }
+
   /// Whether a configuration is chosen and its text can still be read.
   private var hasResolvableActiveConfig: Bool {
     configStore.activeID.flatMap { configStore.text(forID: $0) } != nil
