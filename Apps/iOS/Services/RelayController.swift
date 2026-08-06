@@ -505,20 +505,22 @@ extension RelayController {
   // Clears the request the person made once it has settled, so the switch follows what
   // actually happened rather than what was asked for.
   //
-  // A producer that reports its phase settles this outright: a phase of routing or idle
-  // means the request is done, whatever this app was doing at the time. A producer that
-  // reports none leaves this app counting readings, which is the older behaviour and the
-  // reason a request made just before the app went away came back still spinning.
+  // A phase settles the request only when it is the settled state the person asked for:
+  // routing for a turn-on, idle for a turn-off. A reading produced before the request
+  // reached the agent still carries the old settled state, and treating that as the
+  // answer would snap the switch back the instant it was flipped. The opposite settled
+  // state therefore falls through to the countdown, which stays as the backstop for a
+  // request the agent never applies.
   private func reconcileRouteIntent() {
     guard isRouteRequestPending else {
       return
     }
     if let routingPhase {
-      let settled = routingPhase == .routing || routingPhase == .idle
-      if settled {
+      let confirmed = requestedRouting ? routingPhase == .routing : routingPhase == .idle
+      if confirmed {
         routeIntentPollsRemaining = 0
+        return
       }
-      return
     }
     if routingIntentEnabled == requestedRouting {
       routeIntentPollsRemaining = 0

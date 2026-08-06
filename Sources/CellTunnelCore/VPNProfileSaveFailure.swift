@@ -91,3 +91,23 @@ public func vpnProfileSaveFailure(domain: String, code: Int) -> VPNProfileSaveFa
     return nil
   }
 }
+
+// MARK: - VPNProfileSaveRefusedError
+
+/// A refused profile save, thrown by the one place that saves, already carrying the
+/// person-facing message.
+///
+/// The classification happens at the save site rather than where errors are rendered,
+/// because the same system code also comes back from a failed preferences read, and a
+/// person who only asked for status was never shown a permission prompt to answer again.
+public struct VPNProfileSaveRefusedError: Error, LocalizedError, Sendable {
+  public let failure: VPNProfileSaveFailure
+
+  public init(failure: VPNProfileSaveFailure) {
+    self.failure = failure
+  }
+
+  public var errorDescription: String? {
+    failure.message
+  }
+}

@@ -388,6 +388,9 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
         )
       }
     }
+    if let routingPhase {
+      lines.append("routing_phase=\(routingPhase.rawValue)")
+    }
     if let advertising {
       lines.append("advertising=\(advertising.rawValue)")
     }
@@ -417,6 +420,10 @@ public struct TunnelDaemonStatusSnapshot: Codable, Equatable, Sendable {
     }
     if let phoneCounters {
       lines.append(contentsOf: renderedCounterLines(phoneCounters, prefix: "phone"))
+    }
+    if let lifetimeBytes {
+      lines.append("lifetime_bytes_up=\(lifetimeBytes.upload)")
+      lines.append("lifetime_bytes_down=\(lifetimeBytes.download)")
     }
     if let vpnProfileState {
       lines.append("vpn_profile=\(vpnProfileState.rawValue)")
