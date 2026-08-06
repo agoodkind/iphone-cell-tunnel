@@ -11,7 +11,8 @@ import Foundation
 // MARK: - InterfaceAddressList
 
 /// Every numeric address on an interface, grouped by family, in interface order.
-public struct InterfaceAddressList: Sendable, Equatable {
+/// Codable so a producer's own reading travels on the status snapshot.
+public struct InterfaceAddressList: Codable, Sendable, Equatable {
   public let ipv4: [String]
   public let ipv6: [String]
 

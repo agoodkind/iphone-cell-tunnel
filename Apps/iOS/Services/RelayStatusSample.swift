@@ -58,6 +58,9 @@ struct RelayStatusSample: Sendable {
   /// This device's and the peer's public addresses, shown under `Device / Public`
   /// and `Peer / Public`.
   var devicePublicAddresses: AddressPair
+  /// Every address on the producer's egress interface. The app used to read these
+  /// itself, once per poll, rather than take the producer's own reading.
+  var deviceInterfaceAddresses: InterfaceAddressList
   var peerPublicAddresses: AddressPair
   /// The carrying link's local and peer addresses, shown under `Connection`.
   var localLinkAddresses: AddressPair
@@ -132,6 +135,7 @@ struct RelayStatusSample: Sendable {
     localLinkInterfaceName = snapshot.localLinkInterfaceName
     localLinkClass = snapshot.localLinkClass
     devicePublicAddresses = snapshot.devicePublicAddresses ?? .empty
+    deviceInterfaceAddresses = snapshot.deviceInterfaceAddresses ?? .empty
     peerPublicAddresses = snapshot.peerPublicAddresses ?? .empty
     localLinkAddresses = snapshot.localLinkAddresses ?? .empty
     peerLinkAddresses = snapshot.peerLinkAddresses ?? .empty

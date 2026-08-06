@@ -42,7 +42,6 @@ final class RelayController {
     private let phoneProvisioningBackend: any PhoneTunnelProvisioningBackend
   #endif
 
-  private let deviceProbe: DeviceEgressProbe?
   /// The one task reading status, whichever way the backend supplies it: reading a
   /// stream the source sends, or asking a source that has to be asked.
   private var statusTask: Task<Void, Never>?
@@ -51,14 +50,6 @@ final class RelayController {
   /// rather than starting from nothing.
   private var throughput = ThroughputMeter()
   private var lifetimeStore: LifetimeDataStore
-  // The latest device egress and public address from the backend snapshot and from
-  // the app's own probe, kept apart so one recompute picks the right source: the
-  // backend's values while the relay carries the device's traffic, the probe's
-  // otherwise.
-  private var backendCellularPath = CellularPathSnapshot()
-  private var backendDevicePublicAddresses = AddressPair.empty
-  private var probeCellularPath = CellularPathSnapshot()
-  private var probeDevicePublicAddresses = AddressPair.empty
 
   var isRunning = false
   var connectedPeerName: String?
@@ -145,9 +136,9 @@ final class RelayController {
   /// `Available Interfaces` row.
   var peerAvailableLinks: [RelayLinkSummary] = []
   var devicePublicAddresses = AddressPair.empty
-  /// Every address on the egress interface, recomputed off the render path once per
-  /// poll so the `Interface` rows read a cached value rather than calling
-  /// `getifaddrs` on every SwiftUI body evaluation.
+  /// Every address on the egress interface, read by the producer and carried on the
+  /// snapshot, so this app and the producer cannot report different addresses for the
+  /// same machine.
   var interfaceAddresses = InterfaceAddressList.empty
   var peerPublicAddresses = AddressPair.empty
   var relayHost: String?
@@ -166,35 +157,29 @@ final class RelayController {
     init(
       backend: some RelayControlBackend & ConfigLibraryBackend,
       lifetimeStore: LifetimeDataStore,
-      installState: InstallationState = InstallationState(),
-      deviceProbe: DeviceEgressProbe? = nil
+      installState: InstallationState = InstallationState()
     ) {
       self.backend = backend
       configLibraryBackend = backend
       self.lifetimeStore = lifetimeStore
       self.installState = installState
-      self.deviceProbe = deviceProbe
     }
   #else
     init(
       backend: some RelayControlBackend & PhoneTunnelProvisioningBackend,
-      lifetimeStore: LifetimeDataStore,
-      deviceProbe: DeviceEgressProbe? = nil
+      lifetimeStore: LifetimeDataStore
     ) {
       self.backend = backend
       phoneProvisioningBackend = backend
       self.lifetimeStore = lifetimeStore
-      self.deviceProbe = deviceProbe
     }
   #endif
 
   // MARK: - Lifecycle
 
-  /// Brings the platform session up, starts the app's own egress probe, then starts
-  /// the status poll.
+  /// Brings the platform session up, then starts reading status.
   func start() async {
     logger.notice("relay controller start requested")
-    startDeviceProbe()
     await backend.start()
     startStatusUpdates()
   }
@@ -233,48 +218,6 @@ final class RelayController {
         await start()
       }
     #endif
-  }
-
-  // Wires the app's egress probe to the device-value recompute and starts it for
-  // the app lifetime, so the `Device` rows show the app's own egress before the
-  // relay runs and whenever the relay does not carry the device's traffic.
-  private func startDeviceProbe() {
-    guard let deviceProbe else {
-      logger.notice("relay controller device probe absent; skipping start")
-      return
-    }
-    deviceProbe.onUpdate = { [weak self] path, publicAddresses in
-      Task { @MainActor [weak self] in
-        self?.applyProbe(cellularPath: path, publicAddresses: publicAddresses)
-      }
-    }
-    deviceProbe.start()
-    logger.notice("relay controller device probe started")
-  }
-
-  private func applyProbe(cellularPath: CellularPathSnapshot, publicAddresses: AddressPair) {
-    probeCellularPath = cellularPath
-    probeDevicePublicAddresses = publicAddresses
-    recomputeDeviceValues()
-  }
-
-  // Picks the device egress and public address source: the backend snapshot while
-  // the relay runs and carries a value, otherwise the app's own probe. The
-  // `Interface` rows follow from the chosen `cellularPath`.
-  private func recomputeDeviceValues() {
-    if isRunning, backendCellularPath.interfaceName != nil {
-      assign(\.cellularPath, backendCellularPath)
-    } else {
-      assign(\.cellularPath, probeCellularPath)
-    }
-    if isRunning, !backendDevicePublicAddresses.isEmpty {
-      assign(\.devicePublicAddresses, backendDevicePublicAddresses)
-    } else {
-      assign(\.devicePublicAddresses, probeDevicePublicAddresses)
-    }
-    let all = InterfaceAddressLookup.allAddresses(
-      forInterface: cellularPath.interfaceName ?? "")
-    assign(\.interfaceAddresses, all)
   }
 
   /// Stops reading status without touching the session, for backgrounding. Where the
@@ -355,7 +298,7 @@ final class RelayController {
   private func apply(_ sample: RelayStatusSample) {
     assign(\.isRunning, sample.isRunning)
     assign(\.connectedPeerName, sample.connectedPeerName)
-    assign(\.backendCellularPath, sample.cellularPath)
+    assign(\.cellularPath, sample.cellularPath)
     assign(\.counters, sample.counters)
     applyLifetime(sample)
     assign(\.lastError, sample.lastError)
@@ -389,7 +332,7 @@ final class RelayController {
     assign(\.peerLinkAddresses, sample.peerLinkAddresses)
     assign(\.localAvailableLinks, sample.localAvailableLinks)
     assign(\.peerAvailableLinks, sample.peerAvailableLinks)
-    assign(\.backendDevicePublicAddresses, sample.devicePublicAddresses)
+    assign(\.devicePublicAddresses, sample.devicePublicAddresses)
     assign(\.peerPublicAddresses, sample.peerPublicAddresses)
     assign(\.relayHost, sample.relayHost)
     assign(\.relayServerIPv4Address, sample.relayServerIPv4Address)
@@ -401,7 +344,7 @@ final class RelayController {
       // new config; it is nil otherwise, so the snapshot's id wins.
       assign(\.activeConfigID, pinnedActiveConfigID ?? sample.activeConfigID)
     #endif
-    recomputeDeviceValues()
+    assign(\.interfaceAddresses, sample.deviceInterfaceAddresses)
     // Measured against the time since the last reading rather than against a count of
     // readings, so the speed is right whatever the spacing and a gap reports what moved
     // during it. A steady clock is used because the reading is about elapsed time, and

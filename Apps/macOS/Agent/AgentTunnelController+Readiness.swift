@@ -56,6 +56,10 @@ extension AgentTunnelController {
   /// failed read cannot swap the re-enable screen for a switch that would not work.
   func finishPublishedVerdicts(_ merged: inout TunnelDaemonStatusSnapshot) {
     merged.routingPhase = publishedRoutingPhase(routeState: merged.routeState)
+    // Read here rather than by each client, so the interface rows show the same
+    // addresses the agent measured its own egress from.
+    merged.deviceInterfaceAddresses = InterfaceAddressLookup.allAddresses(
+      forInterface: merged.cellularPath?.interfaceName ?? "")
     if let read = merged.vpnProfileState {
       lastKnownProfileState = read
     }
