@@ -210,8 +210,56 @@ extension AgentTunnelController {
       id=\(configID.uuidString, privacy: .public) reason=resolvers-follow-the-session
       """
     )
+    switch await cycleSession(on: manager) {
+    case .failed(let response):
+      return response
+    case .superseded:
+      // Another request tore the tunnel down while this one was cycling, so this
+      // configuration is not in force and saying it is would be false. The request that
+      // superseded it is the one that decides what happens next.
+      return nil
+    case .applied:
+      logger.notice(
+        """
+        agent running tunnel now carries the active config \
+        id=\(configID.uuidString, privacy: .public)
+        """
+      )
+      return nil
+    }
+  }
+
+  /// Stops the session, waits for it to go down, starts it again, and waits for it to
+  /// come back, refusing to claim success for any step that did not happen.
+  ///
+  /// The whole sequence suspends for as long as a stop and a start take, which is long
+  /// enough for the routing switch to be turned off underneath it. That off request
+  /// tears everything down, so starting a session afterwards would raise a tunnel nobody
+  /// asked for. The routing generation is what tells a superseded restart to stop, and a
+  /// superseded restart is not a failure: it is someone else's request winning.
+  private func cycleSession(
+    on manager: NETunnelProviderManager
+  ) async -> SessionCycleOutcome {
+    let generation = routingGeneration
     stopSession(on: manager)
-    await waitForSessionDisconnected(on: manager)
+    guard await waitForSessionDisconnected(on: manager) else {
+      logger.error(
+        """
+        agent active config follow gave up waiting for the session to go down \
+        recovery=return-failure
+        """
+      )
+      return .failed(
+        failure(
+          errorCode: .internal,
+          message: "the tunnel did not stop, so the configuration was not applied"
+        )
+      )
+    }
+    guard routingGeneration == generation else {
+      logger.notice("agent active config restart superseded recovery=leave-tunnel-stopped")
+      return .superseded
+    }
     do {
       try startSession(on: manager)
     } catch {
@@ -221,17 +269,48 @@ extension AgentTunnelController {
         details=\(String(describing: error), privacy: .public) recovery=return-failure
         """
       )
-      return failure(from: error)
+      return .failed(failure(from: error))
     }
-    await waitForSessionConnected(on: manager)
+    let connected = await waitForSessionConnected(on: manager)
+    // Checked before the connect result, because a stop arriving during the wait is why
+    // the session is not connected, and reporting a failure for what someone asked for
+    // would be wrong.
+    guard routingGeneration == generation else {
+      logger.notice("agent active config restart superseded recovery=leave-tunnel-stopped")
+      return .superseded
+    }
+    guard connected else {
+      logger.error(
+        """
+        agent active config follow restarted the session but it never connected \
+        recovery=return-failure
+        """
+      )
+      return .failed(
+        failure(
+          errorCode: .internal,
+          message: "the tunnel did not come back up, so the configuration is not in force"
+        )
+      )
+    }
     // The restart replaced the extension process, and the new one starts with its routes
     // withdrawn. The phone link never dropped, so nothing else re-asserts them and the
     // tunnel would sit connecting with a live peer and no traffic. Measured: two minutes
     // after a swap, routes stayed not-installed with the peer present.
     await signalRouteState(phoneLinkUp)
-    logger.notice(
-      "agent running tunnel now carries the active config id=\(configID.uuidString, privacy: .public)"
-    )
-    return nil
+    return .applied
   }
+}
+
+// MARK: - SessionCycleOutcome
+
+/// What a stop-and-start of the tunnel session ended up doing.
+///
+/// Superseded is kept apart from applied because both leave nothing for the caller to
+/// report, and collapsing them would have the caller announce that a configuration is in
+/// force on a tunnel another request just stopped.
+private enum SessionCycleOutcome {
+  case applied
+  case failed(AgentControlResponse)
+  case superseded
 }

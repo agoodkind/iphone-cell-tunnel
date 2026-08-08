@@ -53,7 +53,13 @@ extension AgentTunnelController {
   // provider has discovered the relay and connected. Wait for the connection to
   // reach connected, or give up after the timeout so a genuine discovery failure
   // still returns. Bounded so the CLI cannot hang.
-  func waitForSessionConnected(on manager: NETunnelProviderManager) async {
+  /// Waits for the session to report connected, and reports whether it did.
+  ///
+  /// A start path that only wants to stop blocking discards the answer; a restart reads
+  /// it, because a restart that never reconnected must not be reported as having applied
+  /// the configuration.
+  @discardableResult
+  func waitForSessionConnected(on manager: NETunnelProviderManager) async -> Bool {
     await waitForSession(
       on: manager,
       describing: "connected",
@@ -63,12 +69,14 @@ extension AgentTunnelController {
     }
   }
 
-  /// Waits for the session to finish going down, so a restart does not ask it to start
-  /// while it is still disconnecting, which the system ignores.
+  /// Waits for the session to finish going down, and reports whether it did.
+  ///
+  /// A restart must not ask a session to start while it is still disconnecting, because
+  /// the system ignores that start and the caller is left believing it happened.
   ///
   /// An invalid connection counts as down: the profile went away, so nothing is left to
   /// wait for.
-  func waitForSessionDisconnected(on manager: NETunnelProviderManager) async {
+  func waitForSessionDisconnected(on manager: NETunnelProviderManager) async -> Bool {
     await waitForSession(
       on: manager,
       describing: "disconnected",
@@ -78,20 +86,25 @@ extension AgentTunnelController {
     }
   }
 
+  /// Whether the session reached the status the caller waited for, false when the wait
+  /// hit its bound instead.
   private func waitForSession(
     on manager: NETunnelProviderManager,
     describing target: String,
     timeoutSeconds: Int,
     until isReached: @escaping @Sendable (NEVPNStatus) -> Bool
-  ) async {
+  ) async -> Bool {
     let connection = manager.connection
     if isReached(connection.status) {
-      return
+      return true
     }
     await SessionStatusWaiter(describing: target, isReached: isReached).wait(
       on: connection,
       timeoutSeconds: timeoutSeconds
     )
+    // The waiter resolves on either the status or the deadline, so the status is read
+    // again rather than trusting which one fired.
+    return isReached(connection.status)
   }
 
   func statusDescription(_ status: NEVPNStatus) -> String {
