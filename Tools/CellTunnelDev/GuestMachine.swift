@@ -62,24 +62,16 @@ func prepareGuestMachine(address: String, user: String) throws -> GuestMachine {
   }
   printToolOutput("guest: key login works for \(shell.destination)")
 
-  if try !guestHasSimulatorTooling(shell: shell) {
-    missing.append(
-      GuestRequirement(
-        name: "the iOS simulator command line tool (`xcrun simctl`)",
-        remedy:
-          "install Xcode on that Mac and select it with `sudo xcode-select -s <Xcode path>`; "
-          + "a Mac without it can run the agent but has nowhere to run the phone half"
-      )
-    )
-  }
-
+  missing.append(contentsOf: try guestMissingSimulatorRequirements(shell: shell))
   if try !guestBootsWithoutEntitlementEnforcement(shell: shell) {
     missing.append(
       GuestRequirement(
-        name: "the boot argument \(guestBootArgument)",
+        name: "the boot argument \(guestBootArgument) in effect",
         remedy:
           "run `sudo nvram boot-args=\"\(guestBootArgument)\"` on that Mac and reboot it; "
-          + "without it a development-signed agent is killed at launch with "
+          + "the reboot is the part that matters, because this reads the arguments the "
+          + "kernel actually booted with rather than what is stored for next time. "
+          + "Without it a development-signed agent is killed at launch with "
           + "OS_REASON_CODESIGNING, and setting it needs System Integrity Protection off, "
           + "so do this only on a machine you are willing to weaken"
       )
@@ -105,19 +97,65 @@ func prepareGuestMachine(address: String, user: String) throws -> GuestMachine {
   return GuestMachine(address: address, shell: shell)
 }
 
-/// Whether the machine can boot an iPhone simulator, which is where the phone half runs.
+/// What the machine is missing before it can run the phone half, in the order a person
+/// would fix them: the tool first, then something for it to boot.
+private func guestMissingSimulatorRequirements(
+  shell: GuestShell
+) throws -> [GuestRequirement] {
+  guard try guestHasSimulatorTooling(shell: shell) else {
+    guestMachineLogger.notice("guest readiness found no simctl recovery=report-missing")
+    return [
+      GuestRequirement(
+        name: "the iOS simulator command line tool (`xcrun simctl`)",
+        remedy:
+          "install Xcode on that Mac and select it with `sudo xcode-select -s <Xcode path>`; "
+          + "a Mac without it can run the agent but has nowhere to run the phone half"
+      )
+    ]
+  }
+  guard try guestHasSimulatorRuntime(shell: shell) else {
+    guestMachineLogger.notice(
+      "guest readiness found simctl but no iOS runtime recovery=report-missing")
+    return [
+      GuestRequirement(
+        name: "an installed iOS simulator runtime",
+        remedy:
+          "install one on that Mac with `xcodebuild -downloadPlatform iOS`; the tool is "
+          + "present but there is no iOS to boot, which otherwise fails only after "
+          + "everything has been built and copied"
+      )
+    ]
+  }
+  guestMachineLogger.debug("guest readiness found simctl and an iOS runtime")
+  return []
+}
+
+/// Whether the machine has the simulator command line tool at all.
 private func guestHasSimulatorTooling(shell: GuestShell) throws -> Bool {
   try shell.captureRemote("xcrun simctl help").status == 0
 }
 
-/// Whether the machine boots with entitlement enforcement off.
+/// Whether the machine has an iOS the simulator can boot.
+///
+/// Asked separately from the tool, because Xcode installs without a runtime and the tool
+/// then works perfectly while having no iOS to run the phone half on.
+private func guestHasSimulatorRuntime(shell: GuestShell) throws -> Bool {
+  let result = try shell.captureRemote("xcrun simctl list runtimes iOS")
+  guard result.status == 0 else {
+    return false
+  }
+  return result.output.contains("iOS")
+}
+
+/// Whether the machine is running with entitlement enforcement off right now.
 ///
 /// A Mac that is not a registered device kills a development-signed agent at launch
-/// without this. `nvram` exits nonzero when the variable was never set, which is the
-/// normal state of a machine nobody has changed rather than a failure to read it, so a
-/// nonzero status reads as absent rather than as an error.
+/// without this. The kernel's own boot arguments are what decide that, so they are what
+/// is read: the stored `nvram` value is what the machine will boot with next time, and a
+/// machine where it was set but never rebooted would pass a check of that value and then
+/// kill the agent anyway.
 private func guestBootsWithoutEntitlementEnforcement(shell: GuestShell) throws -> Bool {
-  let result = try shell.captureRemote("nvram boot-args")
+  let result = try shell.captureRemote("sysctl -n kern.bootargs")
   guard result.status == 0 else {
     return false
   }

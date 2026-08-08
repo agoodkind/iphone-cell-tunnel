@@ -205,6 +205,13 @@ private func guestOptionValue(
   guard !value.isEmpty else {
     throw ToolError.usage("mac: \(optionName) must not be empty. \(guestCommandUsage)")
   }
+  // An option name is never a value. Taking one would dial the machine as a user called
+  // `--pair-timeout` and report an ssh failure, which hides the argument that was left
+  // out behind a message about the machine.
+  guard !value.hasPrefix("-") else {
+    throw ToolError.usage(
+      "mac: \(optionName) needs a value, and \(value) is another option. \(guestCommandUsage)")
+  }
   return value
 }
 

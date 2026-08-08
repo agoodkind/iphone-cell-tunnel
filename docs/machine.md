@@ -18,10 +18,16 @@ builds anything, and names whichever are missing rather than failing partway:
 - The boot argument `amfi_get_out_of_my_way=1`, without which a development-signed agent
   is killed at launch, because that Mac is not a registered device.
 
-The command changes nothing on that Mac. Setting the boot argument weakens the machine
-and needs System Integrity Protection off, which is a decision to make deliberately and
-only on a machine you are willing to weaken. The rest of this page describes one way to
-get such a machine: a disposable tart virtual machine.
+The command never sets these up for you, and a Mac that fails the check is left exactly
+as it was. Setting the boot argument weakens the machine and needs System Integrity
+Protection off, which is a decision to make deliberately and only on a machine you are
+willing to weaken.
+
+A Mac that passes does receive things: the three signed products, a launch agent that
+runs the agent, a registered tunnel extension, and a booted simulator with the phone app
+installed. Point the command at a machine you are willing to have changed that way. The
+rest of this page describes one way to get such a machine: a disposable tart virtual
+machine.
 
 ## What a virtual machine needs
 
