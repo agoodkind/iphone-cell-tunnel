@@ -98,8 +98,8 @@ extension AgentTunnelController {
     return await handleStatus()
   }
 
-  /// Saves edited config text and reloads the tunnel in place when that config is
-  /// active. The reload keeps the same id, so the profile's stamp stays valid.
+  /// Saves edited config text and puts a running tunnel onto it when that config is the
+  /// one in force. The id does not change, so the profile's stamp stays valid.
   func handleSaveConfigEdit(id: UUID, text: String) async -> AgentControlResponse {
     do {
       _ = try WireGuardConfigParser.parse(text)
@@ -116,15 +116,10 @@ extension AgentTunnelController {
     guard configStore.activeID == id else {
       return await handleStatus()
     }
-    do {
-      let path = try writeTempConfig(text)
-      defer { removeTempConfig(at: path) }
-      return await handleReloadTunnel(
-        settings: TunnelStartSettings(wireGuardConfigPath: path))
-    } catch {
-      logger.error("agent save edit reload failed recovery=return-failure")
-      return failure(from: error)
+    if let reapplyFailure = await reapplyEditedConfigToRunningTunnel(text: text, configID: id) {
+      return reapplyFailure
     }
+    return await handleStatus()
   }
 
   /// Renames a stored config without touching tunnel state.
@@ -235,23 +230,4 @@ extension AgentTunnelController {
     return base.isEmpty ? importedConfigFallbackName : base
   }
 
-  /// Writes config text to a unique temp file and returns its path, used by the
-  /// in-place reload. The text also lives in the saved VPN profile, so the temp file
-  /// is no new exposure and is removed once the reload has read it.
-  func writeTempConfig(_ text: String) throws -> String {
-    let directory = FileManager.default.temporaryDirectory
-    let url = directory.appendingPathComponent("celltunnel-active-\(UUID().uuidString).conf")
-    try Data(text.utf8).write(to: url, options: .atomic)
-    logger.notice("agent wrote temp config for reload recovery=remove-after-read")
-    return url.path
-  }
-
-  /// Best-effort removal of a temp config file.
-  func removeTempConfig(at path: String) {
-    do {
-      try FileManager.default.removeItem(atPath: path)
-    } catch {
-      logger.error("agent temp config remove failed recovery=leave-temp-file")
-    }
-  }
 }

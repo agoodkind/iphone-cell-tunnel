@@ -13,6 +13,9 @@ import Foundation
 
 private let logger = CellTunnelLog.logger(category: .daemon)
 private let sessionConnectTimeoutSeconds = 30
+/// How long to wait for a session to finish going down before starting it again. A stop
+/// completes in about a second, so this is a bound rather than an expected wait.
+private let sessionDisconnectTimeoutSeconds = 15
 
 extension AgentTunnelController {
   func loadAllManagers() async throws -> [NETunnelProviderManager] {
@@ -50,15 +53,58 @@ extension AgentTunnelController {
   // provider has discovered the relay and connected. Wait for the connection to
   // reach connected, or give up after the timeout so a genuine discovery failure
   // still returns. Bounded so the CLI cannot hang.
-  func waitForSessionConnected(on manager: NETunnelProviderManager) async {
-    let connection = manager.connection
-    if connection.status == .connected {
-      return
-    }
-    await SessionConnectWaiter().wait(
-      on: connection,
+  /// Waits for the session to report connected, and reports whether it did.
+  ///
+  /// A start path that only wants to stop blocking discards the answer; a restart reads
+  /// it, because a restart that never reconnected must not be reported as having applied
+  /// the configuration.
+  @discardableResult
+  func waitForSessionConnected(on manager: NETunnelProviderManager) async -> Bool {
+    await waitForSession(
+      on: manager,
+      describing: "connected",
       timeoutSeconds: sessionConnectTimeoutSeconds
+    ) { status in
+      status == .connected
+    }
+  }
+
+  /// Waits for the session to finish going down, and reports whether it did.
+  ///
+  /// A restart must not ask a session to start while it is still disconnecting, because
+  /// the system ignores that start and the caller is left believing it happened.
+  ///
+  /// An invalid connection counts as down: the profile went away, so nothing is left to
+  /// wait for.
+  func waitForSessionDisconnected(on manager: NETunnelProviderManager) async -> Bool {
+    await waitForSession(
+      on: manager,
+      describing: "disconnected",
+      timeoutSeconds: sessionDisconnectTimeoutSeconds
+    ) { status in
+      status == .disconnected || status == .invalid
+    }
+  }
+
+  /// Whether the session reached the status the caller waited for, false when the wait
+  /// hit its bound instead.
+  private func waitForSession(
+    on manager: NETunnelProviderManager,
+    describing target: String,
+    timeoutSeconds: Int,
+    until isReached: @escaping @Sendable (NEVPNStatus) -> Bool
+  ) async -> Bool {
+    let connection = manager.connection
+    if isReached(connection.status) {
+      return true
+    }
+    await SessionStatusWaiter(describing: target, isReached: isReached).wait(
+      on: connection,
+      timeoutSeconds: timeoutSeconds
     )
+    // The waiter resolves on either the status or the deadline, so the status is read
+    // again rather than trusting which one fired.
+    return isReached(connection.status)
   }
 
   func statusDescription(_ status: NEVPNStatus) -> String {
@@ -99,20 +145,28 @@ extension AgentTunnelController {
   }
 }
 
-// Resolves once the VPN connection reports connected, or after a bounded timeout,
-// using the status notification and a scheduled deadline rather than polling. The
-// lock makes the single continuation resume exactly once across the observer and
-// the timeout.
-// MARK: - SessionConnectWaiter
+// Resolves once the VPN connection reaches the status the caller is waiting for, or
+// after a bounded timeout, using the status notification and a scheduled deadline
+// rather than polling. The lock makes the single continuation resume exactly once
+// across the observer and the timeout.
+// MARK: - SessionStatusWaiter
 
-private final class SessionConnectWaiter: @unchecked Sendable {
+private final class SessionStatusWaiter: @unchecked Sendable {
   private let lock = NSLock()
   private var continuation: CheckedContinuation<Void, Never>?
   private var observer: NSObjectProtocol?
   private var timeoutItem: DispatchWorkItem?
+  private let target: String
+  private let isReached: @Sendable (NEVPNStatus) -> Bool
+
+  init(describing target: String, isReached: @escaping @Sendable (NEVPNStatus) -> Bool) {
+    self.target = target
+    self.isReached = isReached
+  }
 
   func wait(on connection: NEVPNConnection, timeoutSeconds: Int) async {
-    logger.notice("agent waiting for tunnel session to reach connected")
+    logger.notice(
+      "agent waiting for tunnel session to reach \(self.target, privacy: .public)")
     await withCheckedContinuation { pending in
       lock.lock()
       continuation = pending
@@ -123,9 +177,10 @@ private final class SessionConnectWaiter: @unchecked Sendable {
         object: connection,
         queue: nil
       ) { [weak self] _ in
-        if connection.status == .connected {
-          self?.finish(reason: "connected")
+        guard let self, isReached(connection.status) else {
+          return
         }
+        finish(reason: target)
       }
       let item = DispatchWorkItem { [weak self] in
         self?.finish(reason: "timeout")
@@ -135,8 +190,8 @@ private final class SessionConnectWaiter: @unchecked Sendable {
         deadline: .now() + .seconds(timeoutSeconds),
         execute: item
       )
-      if connection.status == .connected {
-        finish(reason: "connected")
+      if isReached(connection.status) {
+        finish(reason: target)
       }
     }
   }

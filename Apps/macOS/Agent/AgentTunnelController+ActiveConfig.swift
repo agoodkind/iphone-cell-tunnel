@@ -72,7 +72,7 @@ extension AgentTunnelController {
       guard runningTunnelNeedsActiveConfig(on: manager, activeID: activeID) else {
         return nil
       }
-      if let followFailure = await reloadRunningTunnel(
+      if let followFailure = await restartRunningTunnel(
         text: text, configID: activeID, on: manager)
       {
         return followFailure
@@ -92,6 +92,37 @@ extension AgentTunnelController {
       errorCode: .internal,
       message: "the active configuration kept changing; the tunnel may not carry it yet"
     )
+  }
+
+  /// Makes a running tunnel carry edited text for the configuration it is already on.
+  ///
+  /// Editing the active entry keeps its id, so the follow path sees the tunnel and the
+  /// library agreeing and correctly does nothing. The text still changed, and the name
+  /// servers it names are applied only when a session starts, so the same restart the
+  /// swap uses is what makes an edited resolver line take effect.
+  ///
+  /// Nothing runs when the tunnel is stopped, and nothing runs when the edited entry is
+  /// not the one in force.
+  func reapplyEditedConfigToRunningTunnel(
+    text: String,
+    configID: UUID
+  ) async -> AgentControlResponse? {
+    let manager: NETunnelProviderManager
+    do {
+      manager = try await loadOrCreateManager()
+    } catch {
+      logger.error(
+        """
+        agent edited config reapply could not load the manager \
+        details=\(String(describing: error), privacy: .public) recovery=return-failure
+        """
+      )
+      return failure(from: error)
+    }
+    guard isSessionActive(on: manager) else {
+      return nil
+    }
+    return await restartRunningTunnel(text: text, configID: configID, on: manager)
   }
 
   /// Makes the entry that was active before this request active again, after the tunnel
@@ -136,73 +167,150 @@ extension AgentTunnelController {
     return drift != .ok
   }
 
-  /// Swaps the running tunnel onto this configuration and re-stamps the saved profile.
+  /// Swaps the running tunnel onto this configuration by restarting its session.
   ///
-  /// The swap happens in the extension, which changes the captured routes and the peer
-  /// endpoint without restarting the session, so the relay keeps carrying datagrams across
-  /// the change. It does not change the resolvers the tunnel publishes; those follow the
-  /// session rather than the configuration, which is recorded as ICT-19.
+  /// The session restarts rather than reloading in place because the name servers a
+  /// tunnel publishes are applied when a session starts and at no other time. Changing
+  /// the configuration underneath a live session moved the routes and the server endpoint
+  /// but left name resolution answering from the configuration the session began with,
+  /// in both directions: a configuration naming servers never published them, and one
+  /// naming none never withdrew the ones already published. Re-applying the settings a
+  /// second time was tried and does not make them take, so the session is what changes.
   ///
-  /// The saved profile is stamped afterwards because it is what a later launch reads. A
-  /// profile left holding the previous id would make the launch assertion report drift on
-  /// a tunnel that is in fact carrying the right configuration.
-  private func reloadRunningTunnel(
+  /// Traffic stops for the length of the restart. Nothing has to announce that
+  /// separately: the routes go down with the session, so the published routing phase
+  /// reads connecting until they land again, which is what every client already renders
+  /// while a tunnel is coming up.
+  ///
+  /// The profile is stamped before the restart, because the extension reads its
+  /// configuration from the saved profile when a session starts. Stamping afterwards, as
+  /// the in-place reload did, would start the new session on the previous configuration.
+  private func restartRunningTunnel(
     text: String,
     configID: UUID,
     on manager: NETunnelProviderManager
   ) async -> AgentControlResponse? {
-    let path: String
+    applyConfiguration(to: manager, wireGuardConfig: text, configID: configID)
     do {
-      path = try writeTempConfig(text)
+      try await save(manager: manager)
+      try await load(manager: manager)
     } catch {
       logger.error(
         """
-        agent active config follow could not stage the config \
+        agent active config follow could not stamp the profile \
         details=\(String(describing: error), privacy: .public) recovery=return-failure
         """
       )
       return failure(from: error)
     }
-    defer { removeTempConfig(at: path) }
-    let response = await handleReloadTunnel(
-      settings: TunnelStartSettings(wireGuardConfigPath: path)
+
+    logger.notice(
+      """
+      agent restarting the tunnel session to apply the active config \
+      id=\(configID.uuidString, privacy: .public) reason=resolvers-follow-the-session
+      """
     )
-    if let reloadFailure = response.failure {
-      logger.error(
+    switch await cycleSession(on: manager) {
+    case .failed(let response):
+      return response
+    case .superseded:
+      // Another request tore the tunnel down while this one was cycling, so this
+      // configuration is not in force and saying it is would be false. The request that
+      // superseded it is the one that decides what happens next.
+      return nil
+    case .applied:
+      logger.notice(
         """
-        agent active config follow reload failed \
-        details=\(String(describing: reloadFailure), privacy: .public) recovery=return-failure
+        agent running tunnel now carries the active config \
+        id=\(configID.uuidString, privacy: .public)
         """
       )
-      return response
+      return nil
     }
-    await stampProfile(text: text, configID: configID, on: manager)
-    logger.notice(
-      "agent running tunnel now carries the active config id=\(configID.uuidString, privacy: .public)"
-    )
-    return nil
   }
 
-  /// Records this configuration on the saved profile so a later launch reads it.
+  /// Stops the session, waits for it to go down, starts it again, and waits for it to
+  /// come back, refusing to claim success for any step that did not happen.
   ///
-  /// A failure here leaves the running tunnel correct and only the saved profile stale,
-  /// which the launch assertion reports rather than acts on, so it is logged instead of
-  /// failing the request that a person just watched succeed.
-  private func stampProfile(
-    text: String,
-    configID: UUID,
+  /// The whole sequence suspends for as long as a stop and a start take, which is long
+  /// enough for the routing switch to be turned off underneath it. That off request
+  /// tears everything down, so starting a session afterwards would raise a tunnel nobody
+  /// asked for. The routing generation is what tells a superseded restart to stop, and a
+  /// superseded restart is not a failure: it is someone else's request winning.
+  private func cycleSession(
     on manager: NETunnelProviderManager
-  ) async {
-    applyConfiguration(to: manager, wireGuardConfig: text, configID: configID)
+  ) async -> SessionCycleOutcome {
+    let generation = routingGeneration
+    stopSession(on: manager)
+    guard await waitForSessionDisconnected(on: manager) else {
+      logger.error(
+        """
+        agent active config follow gave up waiting for the session to go down \
+        recovery=return-failure
+        """
+      )
+      return .failed(
+        failure(
+          errorCode: .internal,
+          message: "the tunnel did not stop, so the configuration was not applied"
+        )
+      )
+    }
+    guard routingGeneration == generation else {
+      logger.notice("agent active config restart superseded recovery=leave-tunnel-stopped")
+      return .superseded
+    }
     do {
-      try await save(manager: manager)
+      try startSession(on: manager)
     } catch {
       logger.error(
         """
-        agent active config stamp failed \
-        details=\(String(describing: error), privacy: .public) recovery=leave-profile-stale
+        agent active config follow could not restart the session \
+        details=\(String(describing: error), privacy: .public) recovery=return-failure
         """
       )
+      return .failed(failure(from: error))
     }
+    let connected = await waitForSessionConnected(on: manager)
+    // Checked before the connect result, because a stop arriving during the wait is why
+    // the session is not connected, and reporting a failure for what someone asked for
+    // would be wrong.
+    guard routingGeneration == generation else {
+      logger.notice("agent active config restart superseded recovery=leave-tunnel-stopped")
+      return .superseded
+    }
+    guard connected else {
+      logger.error(
+        """
+        agent active config follow restarted the session but it never connected \
+        recovery=return-failure
+        """
+      )
+      return .failed(
+        failure(
+          errorCode: .internal,
+          message: "the tunnel did not come back up, so the configuration is not in force"
+        )
+      )
+    }
+    // The restart replaced the extension process, and the new one starts with its routes
+    // withdrawn. The phone link never dropped, so nothing else re-asserts them and the
+    // tunnel would sit connecting with a live peer and no traffic. Measured: two minutes
+    // after a swap, routes stayed not-installed with the peer present.
+    await signalRouteState(phoneLinkUp)
+    return .applied
   }
+}
+
+// MARK: - SessionCycleOutcome
+
+/// What a stop-and-start of the tunnel session ended up doing.
+///
+/// Superseded is kept apart from applied because both leave nothing for the caller to
+/// report, and collapsing them would have the caller announce that a configuration is in
+/// force on a tunnel another request just stopped.
+private enum SessionCycleOutcome {
+  case applied
+  case failed(AgentControlResponse)
+  case superseded
 }
