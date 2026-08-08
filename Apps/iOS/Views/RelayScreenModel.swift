@@ -569,11 +569,41 @@ extension RelayScreenModel {
       if !controller.isAgentInstalled {
         return .noAgent
       }
-      return controller.publishedSituation ?? fallbackSituation
+      guard let published = controller.publishedSituation else {
+        return fallbackSituation
+      }
+      return overlayingDisabledProfile(published)
     #else
       return controller.publishedSituation ?? fallbackSituation
     #endif
   }
+
+  #if targetEnvironment(macCatalyst)
+
+    /// Keeps the re-enable screen when the producer's own profile read said nothing.
+    ///
+    /// A profile read that fails reports no state, and a producer that has just restarted
+    /// has no earlier read to fall back on, so it publishes a situation decided without
+    /// knowing the profile is switched off. This side still holds the last state a read
+    /// actually returned, so it restores the verdict the producer would have reached.
+    ///
+    /// A situation that a switched-off profile does not block is left alone: a machine
+    /// carrying traffic evidently has its profile on, and an empty library is asked about
+    /// first by the same rule the producer follows.
+    private func overlayingDisabledProfile(_ published: RelaySituation) -> RelaySituation {
+      guard controller.isVPNProfileDisabled else {
+        return published
+      }
+      switch published {
+      case .connecting, .failed, .noAgent, .noConfigImported, .routing:
+        return published
+      case .noActiveConfig, .noPeerSelected, .noPeersFound, .notDiscoverable,
+        .notProvisioned, .readyToRoute, .vpnProfileDisabled:
+        return .vpnProfileDisabled
+      }
+    }
+
+  #endif
 
   #if targetEnvironment(macCatalyst)
 
