@@ -17,6 +17,14 @@ jobs:
   release:
     uses: agoodkind/swift-makefile/.github/workflows/_release.yml@main
     with:
+      # Without this the shared pipeline treats a merge as manual, resolves the release
+      # as not enabled, and skips every job, which is why this repo has run the workflow
+      # and published nothing.
+      #
+      # Pre-release rather than stable while this app has never shipped: every merge
+      # publishes something a person can download, marked as not the recommended build,
+      # and a run that proves itself is promoted to stable deliberately.
+      release-on-merge: prerelease
       signing-identity-name: "Developer ID Application: Alex Goodkind (H3BMXM4W7H)"
       apple-team-id: H3BMXM4W7H
       notarize-pattern: "*.zip"
