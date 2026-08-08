@@ -49,14 +49,16 @@ private let helpText = """
     logs        Stream Mac and iPhone celltunnel logs together. See `logs --help`.
     ui-test     Run the Debug UI tests without using a physical device.
                  Target: iphone-simulator|mac-catalyst.
-    guest       Run the whole virtual-machine validation in one command: build
-                every target signed, verify each signature, clone or reuse the
-                named guest, transfer the products, run the agent under launchd,
-                launch the phone app in a guest simulator, wait for the two to
+    mac         Run the whole live validation in one command against a second
+                Mac: confirm it is ready, build every target signed, verify each
+                signature, transfer the products, run the agent under launchd,
+                launch the phone app in a simulator there, wait for the two to
                 pair, and confirm the loaded tunnel provider is this build.
-                Usage: guest <guest-name> [Debug|Release]
-                [--base-image <image>] [--pair-timeout <s>]
-                [--browse-timeout <s>].
+                Readiness is checked before anything is built, and a Mac that
+                is not ready is left untouched. A ready one receives the
+                products, a launch agent, and a registered extension.
+                Usage: mac <host> [Debug|Release] [--user <name>]
+                [--pair-timeout <s>] [--browse-timeout <s>].
     relay-browse
                 Foreground Bonjour browse for the iPhone relay service.
                 Optional positional duration in seconds (default 8).
@@ -284,7 +286,7 @@ func runDeviceCommand(_ command: String) throws -> Bool {
 // MARK: - Guest command
 
 func runGuestCommand(_ command: String) throws -> Bool {
-  guard command == "guest" else {
+  guard command == "mac" else {
     return false
   }
   let arguments = Array(CommandLine.arguments.dropFirst(programAndCommandArgumentCount))

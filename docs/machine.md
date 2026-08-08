@@ -1,10 +1,35 @@
-# Running the app in a disposable machine
+# Running the app on a second Mac
 
-A tart virtual machine runs the Mac agent and an iPhone simulator together, so a pairing
-and routing test exercises both sides without a physical phone. Products build on the
-host and copy in; nothing compiles inside the machine.
+Live validation runs against a second Mac, which hosts the agent and an iPhone simulator
+together so a pairing and routing test exercises both sides without a physical phone.
+Products build on your own machine and copy over; nothing compiles on the far side.
 
-## What the machine needs
+`make` has no target for this. Run it directly:
+
+```sh
+swift Tools/cell-tunnel-dev.swift mac <host>
+```
+
+Any Mac you can reach will do. The command checks the three things it needs before it
+builds anything, and names whichever are missing rather than failing partway:
+
+- A key login, so the run never types a password. Authorize the key it names.
+- `xcrun simctl`, so the simulator that plays the phone can boot.
+- The boot argument `amfi_get_out_of_my_way=1`, without which a development-signed agent
+  is killed at launch, because that Mac is not a registered device.
+
+The command never sets these up for you, and a Mac that fails the check is left exactly
+as it was. Setting the boot argument weakens the machine and needs System Integrity
+Protection off, which is a decision to make deliberately and only on a machine you are
+willing to weaken.
+
+A Mac that passes does receive things: the three signed products, a launch agent that
+runs the agent, a registered tunnel extension, and a booted simulator with the phone app
+installed. Point the command at a machine you are willing to have changed that way. The
+rest of this page describes one way to get such a machine: a disposable tart virtual
+machine.
+
+## What a virtual machine needs
 
 Use an image that carries Xcode. The base macOS image has no `xcrun simctl`, so the
 simulator that plays the phone cannot boot and the run stops there.
@@ -147,3 +172,5 @@ storage off the boot volume, which lacks room for a macOS guest.
 
 Start it as a long-lived background process. A `tart run` started from a shell command
 stops when that shell exits, taking the window with it.
+
+Read its address with `tart ip <name>` and hand that to the `mac` command.

@@ -19,8 +19,6 @@ private let guestKeyType = "ed25519"
 private let guestKeyComment = "cell-tunnel-guest"
 private let guestKeyRelativePath = "~/.ssh/ict_guest"
 private let guestSSHDirectoryPermissions = 0o700
-private let guestPasswordEnvironmentKey = "CELL_TUNNEL_GUEST_PASSWORD"
-private let sshpassPasswordEnvironmentKey = "SSHPASS"
 
 /// A ControlMaster socket shared by every guest command in this run. ssh expands
 /// `%r` and `%h`, so one path serves any guest without colliding between machines.
@@ -88,34 +86,6 @@ struct GuestShell {
     return result.output.trimmingCharacters(in: .whitespacesAndNewlines)
   }
 
-  /// Run a command under `sudo` on the guest. The password travels on the command's
-  /// standard input rather than in an argument or a file, so it never reaches the
-  /// guest's process list or its disk.
-  func capturePrivileged(_ remoteCommand: String, password: String) throws -> CommandResult {
-    try captureWritingStandardInput(
-      executable: "ssh",
-      arguments: connectionOptions + [destination, "sudo -S -p '' \(remoteCommand)"],
-      standardInput: Data((password + "\n").utf8)
-    )
-  }
-
-  func runPrivileged(
-    _ remoteCommand: String,
-    describing description: String,
-    password: String
-  ) throws {
-    let result = try capturePrivileged(remoteCommand, password: password)
-    guard result.status == 0 else {
-      throw ToolError.failure(
-        """
-        guest: \(description) failed under sudo on \(destination) with status \
-        \(result.status); output: \(guestOutputExcerpt(result.output)); set \
-        \(guestPasswordEnvironmentKey) when the guest account password is not the default
-        """
-      )
-    }
-  }
-
   func copyIn(_ localPaths: [URL], to remoteDestination: String) throws {
     guard !localPaths.isEmpty else {
       throw ToolError.failure("guest: copy requested with no local paths")
@@ -175,11 +145,6 @@ struct GuestShell {
     }
   }
 
-  func closeControlConnection() {
-    let status = runBestEffort("ssh", connectionOptions + ["-O", "exit", destination])
-    guestShellLogger.debug(
-      "guest control connection closed status=\(status, privacy: .public)")
-  }
 }
 
 // MARK: - Connection material
@@ -211,115 +176,7 @@ private func createGuestKeyPairIfNeeded(identityFile: URL) throws {
   printToolOutput("guest: generated \(identityFile.path)")
 }
 
-/// Install the public key on the guest with the one password login this run is
-/// allowed. The caller must have proven that key login does not already work, so a
-/// reachable guest never spends an authentication attempt here.
-func installGuestPublicKey(shell: GuestShell) throws {
-  let publicKeyFile = URL(fileURLWithPath: shell.identityFile.path + ".pub")
-  let publicKey = try String(contentsOf: publicKeyFile, encoding: .utf8)
-    .trimmingCharacters(in: .whitespacesAndNewlines)
-  guard !publicKey.contains("'") else {
-    throw ToolError.failure(
-      "guest: \(publicKeyFile.path) contains a single quote and cannot be sent safely")
-  }
-  let sshpassLookup = try capture("which", ["sshpass"], echoOutput: false)
-  guard sshpassLookup.status == 0 else {
-    throw ToolError.failure(
-      """
-      guest: sshpass is needed once to install \(publicKeyFile.path) on \
-      \(shell.destination); install it with `brew install sshpass`
-      """
-    )
-  }
-  let remoteCommand = """
-    mkdir -p ~/.ssh && chmod 700 ~/.ssh && \
-    printf '%s\\n' '\(publicKey)' >> ~/.ssh/authorized_keys && \
-    chmod 600 ~/.ssh/authorized_keys
-    """
-  // sshpass reads SSHPASS from the environment rather than an argument, so the
-  // password never appears in this host's process list.
-  let result = try capture(
-    "sshpass",
-    [
-      "-e",
-      "ssh",
-      "-o", "PreferredAuthentications=password",
-      "-o", "PubkeyAuthentication=no",
-      "-o", "StrictHostKeyChecking=no",
-      "-o", "UserKnownHostsFile=/dev/null",
-      "-o", "LogLevel=ERROR",
-      "-o", "ConnectTimeout=\(guestConnectTimeoutSeconds)",
-      shell.destination,
-      remoteCommand,
-    ],
-    environment: [sshpassPasswordEnvironmentKey: try guestPassword()],
-    echoOutput: false
-  )
-  guard result.status == 0 else {
-    throw ToolError.failure(
-      """
-      guest: installing the ssh key on \(shell.destination) failed with status \
-      \(result.status); output: \(guestOutputExcerpt(result.output)); a `Too many \
-      authentication failures` message here means earlier password logins used up the \
-      guest's attempts, so restart the guest before retrying
-      """
-    )
-  }
-  printToolOutput("guest: installed \(publicKeyFile.lastPathComponent) on \(shell.destination)")
-}
-
-/// The guest account password, read from the environment.
-///
-/// Not defaulted, because a default in source is a credential in the repository
-/// even when the machine it opens is disposable, and a wrong default fails as an
-/// authentication error that reads like a broken key rather than a missing
-/// setting.
-func guestPassword() throws -> String {
-  let configured = ProcessInfo.processInfo.environment[guestPasswordEnvironmentKey]?
-    .trimmingCharacters(in: .whitespacesAndNewlines)
-  guard let configured, !configured.isEmpty else {
-    throw ToolError.usage(
-      """
-      \(guestPasswordEnvironmentKey) is not set. Export the guest account \
-      password so the first login can install an ssh key.
-      """)
-  }
-  return configured
-}
-
 // MARK: - Process support
-
-/// Run a command with data on its standard input and return its status and merged
-/// output. The input is written before the output is drained, which is safe only for
-/// input small enough to fit the pipe buffer, and every caller here sends one line.
-func captureWritingStandardInput(
-  executable: String,
-  arguments: [String],
-  standardInput: Data
-) throws -> CommandResult {
-  guestShellLogger.debug(
-    "captureWritingStandardInput executable=\(executable, privacy: .public)")
-  let process = Process()
-  process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-  process.arguments = [executable] + arguments
-  process.currentDirectoryURL = repoRoot
-  process.environment = mergedEnvironment([:])
-
-  let inputPipe = Pipe()
-  let outputPipe = Pipe()
-  process.standardInput = inputPipe
-  process.standardOutput = outputPipe
-  process.standardError = outputPipe
-
-  try process.run()
-  try inputPipe.fileHandleForWriting.write(contentsOf: standardInput)
-  try inputPipe.fileHandleForWriting.close()
-  let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-  process.waitUntilExit()
-
-  let output = String(data: data, encoding: .utf8) ?? ""
-  return CommandResult(status: process.terminationStatus, output: output)
-}
 
 /// Block briefly without `sleep`, resuming off a dispatch queue, matching the
 /// no-sleep delay pattern the relay polling uses.

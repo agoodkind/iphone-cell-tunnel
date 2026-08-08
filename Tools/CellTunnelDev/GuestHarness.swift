@@ -12,7 +12,7 @@ import Foundation
 // MARK: - Constants
 
 private let guestHarnessLogger = CellTunnelLog.logger(category: .build)
-private let guestBaseImageOptionName = "--base-image"
+private let guestUserOptionName = "--user"
 private let guestPairTimeoutOptionName = "--pair-timeout"
 private let guestBrowseTimeoutOptionName = "--browse-timeout"
 private let guestPairTimeoutDefaultSeconds: Double = 180
@@ -20,8 +20,12 @@ private let guestBrowseTimeoutDefaultSeconds = 12
 private let guestOptionStride = 2
 
 let guestCommandUsage = """
-  usage: guest <guest-name> [Debug|Release] [\(guestBaseImageOptionName) <image>] \
+  usage: mac <host> [Debug|Release] [\(guestUserOptionName) <name>] \
   [\(guestPairTimeoutOptionName) <seconds>] [\(guestBrowseTimeoutOptionName) <seconds>]
+
+  <host> is the address or hostname of a second Mac to test on, reachable over ssh with \
+  the key this tool uses. Any Mac will do. docs/machine.md describes one way to get a \
+  throwaway one.
   """
 
 // MARK: - GuestHarness
@@ -32,27 +36,33 @@ enum GuestHarness {}
 // MARK: - GuestHarnessOptions
 
 struct GuestHarnessOptions {
-  let name: String
+  let host: String
+  let user: String
   let configuration: String
-  let baseImage: String
   let pairTimeoutSeconds: Double
   let browseTimeoutSeconds: Int
 }
 
 // MARK: - Command
 
-/// Run the whole guest validation in one command: build every target signed, verify
-/// each signature, clone or reuse the guest, transfer the products, run the agent
-/// under launchd, launch the phone app in a guest simulator, wait for the two to pair,
-/// and report what the guest is actually running.
+/// Run the whole live validation in one command against a second Mac: confirm that Mac
+/// is ready, build every target signed, verify each signature, transfer the products,
+/// run the agent under launchd, launch the phone app in a simulator there, wait for the
+/// two to pair, and report what that Mac is actually running.
+///
+/// Readiness is checked first because every requirement is knowable in seconds, and
+/// failing after the builds and the transfer wastes the expensive part on something the
+/// run could have refused immediately.
 func runGuestHarness(_ arguments: [String]) throws {
   let options = try parseGuestHarnessOptions(arguments)
   guestHarnessLogger.notice(
     """
-    guest harness starting name=\(options.name, privacy: .public) \
+    guest harness starting host=\(options.host, privacy: .public) \
     configuration=\(options.configuration, privacy: .public)
     """
   )
+
+  let machine = try prepareGuestMachine(address: options.host, user: options.user)
 
   let team = try applyGuestSigningEnvironment()
   printToolOutput(
@@ -68,7 +78,6 @@ func runGuestHarness(_ arguments: [String]) throws {
   let providerExecutable = try guestProviderExecutable(configuration: options.configuration)
   let providerDigest = try guestFileDigest(at: providerExecutable)
 
-  let machine = try prepareGuestMachine(name: options.name, baseImage: options.baseImage)
   let layout = try transferGuestProducts(
     products: products, shell: machine.shell, configuration: options.configuration)
   try startGuestAgent(shell: machine.shell, layout: layout)
@@ -94,7 +103,7 @@ func runGuestHarness(_ arguments: [String]) throws {
 // MARK: - Result
 
 /// Print what the run established, and refuse to call it a result when the extension
-/// the guest is running did not come from this build.
+/// the machine is running did not come from this build.
 private func reportGuestResult(
   machine: GuestMachine,
   layout: GuestInstallLayout,
@@ -104,7 +113,7 @@ private func reportGuestResult(
 ) throws {
   printToolOutput(
     """
-    guest \(machine.name) at \(machine.shell.address)
+    mac \(machine.shell.destination)
       root       \(layout.root)
       agent      \(layout.agentAppPath)
       catalyst   \(layout.catalystAppPath)
@@ -125,7 +134,7 @@ private func reportGuestResult(
     throw ToolError.failure(
       """
       guest: paired, but the run cannot report a result: \(reason). Remove the saved VPN \
-      profile with `celltunnelctl reset` on the guest, then run this command again so the \
+      profile with `celltunnelctl reset` on that Mac, then run this command again so the \
       system loads the provider this run installed.
       """
     )
@@ -143,12 +152,12 @@ private func reportGuestResult(
 // MARK: - Argument parsing
 
 func parseGuestHarnessOptions(_ arguments: [String]) throws -> GuestHarnessOptions {
-  guard let name = arguments.first, !name.hasPrefix("-") else {
+  guard let host = arguments.first, !host.hasPrefix("-") else {
     throw ToolError.usage(guestCommandUsage)
   }
 
   var configuration = "Debug"
-  var baseImage = guestDefaultBaseImage
+  var user = guestDefaultUser
   var pairTimeoutSeconds = guestPairTimeoutDefaultSeconds
   var browseTimeoutSeconds = guestBrowseTimeoutDefaultSeconds
 
@@ -159,8 +168,8 @@ func parseGuestHarnessOptions(_ arguments: [String]) throws -> GuestHarnessOptio
     case "Debug", "Release":
       configuration = argument
       index = arguments.index(after: index)
-    case guestBaseImageOptionName:
-      baseImage = try guestOptionValue(arguments, after: index, optionName: argument)
+    case guestUserOptionName:
+      user = try guestOptionValue(arguments, after: index, optionName: argument)
       index = arguments.index(index, offsetBy: guestOptionStride)
     case guestPairTimeoutOptionName:
       pairTimeoutSeconds = try guestTimeoutValue(arguments, after: index, optionName: argument)
@@ -170,14 +179,14 @@ func parseGuestHarnessOptions(_ arguments: [String]) throws -> GuestHarnessOptio
       browseTimeoutSeconds = Int(seconds)
       index = arguments.index(index, offsetBy: guestOptionStride)
     default:
-      throw ToolError.usage("guest: unknown argument \(argument). \(guestCommandUsage)")
+      throw ToolError.usage("mac: unknown argument \(argument). \(guestCommandUsage)")
     }
   }
 
   return GuestHarnessOptions(
-    name: name,
+    host: host,
+    user: user,
     configuration: configuration,
-    baseImage: baseImage,
     pairTimeoutSeconds: pairTimeoutSeconds,
     browseTimeoutSeconds: browseTimeoutSeconds
   )
@@ -190,11 +199,18 @@ private func guestOptionValue(
 ) throws -> String {
   let valueIndex = arguments.index(after: index)
   guard valueIndex < arguments.endIndex else {
-    throw ToolError.usage("guest: missing value for \(optionName). \(guestCommandUsage)")
+    throw ToolError.usage("mac: missing value for \(optionName). \(guestCommandUsage)")
   }
   let value = arguments[valueIndex]
   guard !value.isEmpty else {
-    throw ToolError.usage("guest: \(optionName) must not be empty. \(guestCommandUsage)")
+    throw ToolError.usage("mac: \(optionName) must not be empty. \(guestCommandUsage)")
+  }
+  // An option name is never a value. Taking one would dial the machine as a user called
+  // `--pair-timeout` and report an ssh failure, which hides the argument that was left
+  // out behind a message about the machine.
+  guard !value.hasPrefix("-") else {
+    throw ToolError.usage(
+      "mac: \(optionName) needs a value, and \(value) is another option. \(guestCommandUsage)")
   }
   return value
 }
@@ -206,7 +222,7 @@ private func guestTimeoutValue(
 ) throws -> Double {
   let raw = try guestOptionValue(arguments, after: index, optionName: optionName)
   guard let seconds = Double(raw), seconds > 0 else {
-    throw ToolError.usage("guest: \(optionName) must be a positive number of seconds")
+    throw ToolError.usage("mac: \(optionName) must be a positive number of seconds")
   }
   return seconds
 }

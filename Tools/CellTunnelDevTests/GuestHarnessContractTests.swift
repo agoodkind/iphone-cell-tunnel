@@ -13,37 +13,44 @@ import Testing
 
 // MARK: - GuestHarnessContractTests
 
-/// The three decisions the guest harness makes before it touches a guest: how it reads
-/// its arguments, whether a build is signed well enough to run there, and what the
-/// launch agent it writes actually asks launchd to run.
+/// The decisions the harness makes before it touches the Mac it was pointed at: how it
+/// reads its arguments, and what the launch agent it writes actually asks launchd to run.
 struct GuestHarnessContractTests {
   // MARK: - Arguments
 
-  @Test func guestOptionsDefaultToADebugRunAgainstTheStandardBaseImage() throws {
-    let options = try parseGuestHarnessOptions(["ict-live-check"])
+  @Test func optionsDefaultToADebugRunAsTheStandardUser() throws {
+    let options = try parseGuestHarnessOptions(["192.168.64.2"])
 
-    #expect(options.name == "ict-live-check")
+    #expect(options.host == "192.168.64.2")
     #expect(options.configuration == "Debug")
-    #expect(options.baseImage == guestDefaultBaseImage)
+    #expect(options.user == guestDefaultUser)
     #expect(options.pairTimeoutSeconds > 0)
     #expect(options.browseTimeoutSeconds > 0)
   }
 
-  @Test func guestOptionsReadTheConfigurationImageAndTimeouts() throws {
+  @Test func optionsReadTheConfigurationUserAndTimeouts() throws {
     let options = try parseGuestHarnessOptions([
-      "ict-live-check", "Release", "--base-image", "other-image",
+      "mac-mini.local", "Release", "--user", "tester",
       "--pair-timeout", "45", "--browse-timeout", "9",
     ])
 
     #expect(options.configuration == "Release")
-    #expect(options.baseImage == "other-image")
+    #expect(options.user == "tester")
     #expect(options.pairTimeoutSeconds == 45)
     #expect(options.browseTimeoutSeconds == 9)
   }
 
-  @Test func guestOptionsRejectAMissingName() {
+  @Test func optionsRejectAMissingHost() {
     #expect(throws: ToolError.self) {
-      try parseGuestHarnessOptions(["--base-image", "other-image"])
+      try parseGuestHarnessOptions(["--user", "tester"])
+    }
+  }
+
+  /// An option name is never a value. Taking one would dial a machine as a user called
+  /// `--pair-timeout` and report an ssh failure, hiding the argument someone left out.
+  @Test func optionsRejectAnOptionNameWhereAValueBelongs() {
+    #expect(throws: ToolError.self) {
+      try parseGuestHarnessOptions(["192.168.64.2", "--user", "--pair-timeout", "45"])
     }
   }
 

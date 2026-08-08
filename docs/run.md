@@ -50,24 +50,21 @@ choose which one is active, and start or stop routing.
 Traffic needs a real iPhone running the app on the same local network, because the phone
 is what carries the cellular link.
 
-## Running in a disposable machine
+## Running against a second Mac
 
-One command builds every target signed, prepares a machine, installs the products, runs
-the agent, launches the phone app in a simulator, and waits for the two to pair:
+One command builds every target signed, installs the products on a second Mac, runs the
+agent there, launches the phone app in a simulator, and waits for the two to pair:
 
 ```sh
-swift Tools/cell-tunnel-dev.swift guest <machine-name> Debug
+swift Tools/cell-tunnel-dev.swift mac <host> Debug
 ```
 
-Running it again against the same machine reuses it rather than cloning another.
+It checks that Mac is ready before it builds anything, and names whatever is missing.
+Running it again against the same Mac replaces what it installed.
 
-The machine cannot build this project, so the command builds on the host and installs
-into the machine. `docs/machine.md` holds what the machine needs, what it copies in, and
-the approvals a tunnel cannot start without.
+Builds happen here, not there. What that Mac needs, what it receives, and the approvals a
+tunnel cannot start without are in [machine.md](machine.md).
 
 ## What still has no command
 
-Granting the three approvals a tunnel needs. Each is a system prompt a person answers,
-and `docs/machine.md` names them.
-
-Publishing a release. There is none, so every person who wants to run this builds it.
+Granting the three approvals a tunnel needs. Each is a system prompt a person answers.

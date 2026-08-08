@@ -44,20 +44,21 @@ Building from the shared folder fails earlier still, because the compiler cannot
 
 ## Prepare and run the machine
 
-One command does the whole sequence: it builds every target signed, verifies each
-signature, clones or reuses the named machine, transfers the products, runs the agent
-under launchd, launches the phone app in a simulator, and waits for the two to pair.
+One command does the whole sequence: it confirms the machine is ready, builds every
+target signed, verifies each signature, transfers the products, runs the agent under
+launchd, launches the phone app in a simulator, and waits for the two to pair.
 
 ```sh
-swift Tools/cell-tunnel-dev.swift guest <machine-name> Debug
+swift Tools/cell-tunnel-dev.swift mac <host> Debug
 ```
 
-Running it again against the same machine reuses it, so a rerun needs no cleanup first.
+Running it again against the same machine replaces what it installed, so a rerun needs no
+cleanup first.
 
-`docs/machine.md` holds what the machine needs and why: which image carries Xcode, how to
-fetch it quickly, which products are copied in and how to tell a stale one, the boot
-argument that lets a development-signed agent run, the approvals a tunnel cannot start
-without, and how to read logs there.
+What that machine needs and why is in [machine.md](machine.md): which image carries
+Xcode, how to fetch it quickly, which products are copied in and how to tell a stale one,
+the boot argument that lets a development-signed agent run, the approvals a tunnel cannot
+start without, and how to read logs there.
 
 ## Run the Catalyst app and the tests
 
