@@ -25,8 +25,10 @@ jobs:
       # publishes something a person can download, marked as not the recommended build,
       # and a run that proves itself is promoted to stable deliberately.
       release-on-merge: prerelease
-      signing-identity-name: "Developer ID Application: Alex Goodkind (H3BMXM4W7H)"
-      apple-team-id: H3BMXM4W7H
+      # Developer ID here, Apple Distribution in CI. Both come from repository
+      # variables, and each keeps its own so the two are never confused.
+      signing-identity-name: ${{ vars.APPLE_DEVELOPER_ID_IDENTITY }}
+      apple-team-id: ${{ vars.APPLE_TEAM_ID }}
       notarize-pattern: "*.zip"
       candidate-asset-pattern: "*.zip"
       sbom-subject-path: "Products/Release/CellTunnelAgent.app"
