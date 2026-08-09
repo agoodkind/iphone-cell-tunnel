@@ -4,7 +4,18 @@ on:
   push:
     branches:
       - main
+  # A pull request runs the whole signed pipeline and stops before publishing, so
+  # a change that breaks signing, notarization, or packaging fails here instead of
+  # on main. Without it the first thing to exercise the release path is the merge
+  # itself, and a broken release is discovered only once it cannot be undone.
+  pull_request:
   workflow_dispatch:
+
+# One group per ref. A new pull request push cancels its own superseded dry run,
+# while a push to main is a real release and never cancels an in-flight publish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # The caller must grant every permission the called workflow's jobs request.
 permissions:
@@ -15,8 +26,13 @@ permissions:
 
 jobs:
   release:
+    # A fork pull request cannot read this repository's signing secrets, so the
+    # signed run would fail for a reason the contributor cannot fix.
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     uses: agoodkind/swift-makefile/.github/workflows/_release.yml@main
     with:
+      ephemeral: ${{ github.event_name == 'pull_request' }}
+      release-track: ${{ github.event_name == 'pull_request' && 'prerelease' || '' }}
       # Without this the shared pipeline treats a merge as manual, resolves the release
       # as not enabled, and skips every job, which is why this repo has run the workflow
       # and published nothing.
@@ -25,9 +41,32 @@ jobs:
       # publishes something a person can download, marked as not the recommended build,
       # and a run that proves itself is promoted to stable deliberately.
       release-on-merge: prerelease
+      # A release signs with Developer ID, while CI signs with Apple Distribution,
+      # because an App Store certificate cannot sign an app someone downloads. Each
+      # certificate has its own secret; this name selects which one signs here.
       signing-identity-name: "Developer ID Application: Alex Goodkind (H3BMXM4W7H)"
       apple-team-id: H3BMXM4W7H
       notarize-pattern: "*.zip"
       candidate-asset-pattern: "*.zip"
       sbom-subject-path: "Products/Release/CellTunnelAgent.app"
     secrets: inherit
+
+  release-dry-run:
+    name: Release (dry run)
+    needs: release
+    if: ${{ always() && github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require signed release dry run success
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository && needs.release.result != 'success' }}
+        run: |
+          echo "Signed release dry run did not succeed (result: ${{ needs.release.result }})." >&2
+          exit 1
+      - name: Report signed release dry run
+        if: ${{ github.event.pull_request.head.repo.full_name == github.repository && needs.release.result == 'success' }}
+        run: echo "Signed release dry run completed without publishing." >> "${GITHUB_STEP_SUMMARY}"
+      - name: Report fork skip
+        if: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
+        run: echo "Signed release dry run skipped for a fork pull request." >> "${GITHUB_STEP_SUMMARY}"
