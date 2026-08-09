@@ -21,8 +21,13 @@ CELL_TUNNEL_DEV := swift Tools/cell-tunnel-dev.swift
 # Config.generated.swift, and the dev tool this command runs cannot compile without
 # it: the release build failed with `cannot find 'agentBinaryName' in scope` on a
 # fresh CI checkout, which is the bootstrap cycle described further down.
+# The gate-proof probe prints which authorization factors hold before the dev
+# tool decides its build path, so a release log shows why the tool took the
+# prologue or the decoupled gate. Literal engine path: this variable is assigned
+# with := before bootstrap.mk defines SWIFT_MK_BIN, which would expand empty.
 SWIFT_MK_RELEASE_BUILD_CMD := mkdir -p dist \
 	&& $(MAKE) generate \
+	&& .make/swift-mk gate-proof probe \
 	&& $(CELL_TUNNEL_DEV) build mac Release \
 	&& $(CELL_TUNNEL_DEV) build mac-catalyst Release \
 	&& ditto -c -k --keepParent Products/Release/CellTunnelAgent.app \
