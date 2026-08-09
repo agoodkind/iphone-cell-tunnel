@@ -41,6 +41,12 @@ jobs:
       # publishes something a person can download, marked as not the recommended build,
       # and a run that proves itself is promoted to stable deliberately.
       release-on-merge: prerelease
+      # The vendored WireGuardKitGo target builds a Go c-archive through its own
+      # Makefile, whose goroot prepare step fails unless `go env GOROOT` resolves,
+      # and the runner does not put Go on the build PATH. The CI workflow installs
+      # it for the same reason; the release build links the same target, so without
+      # this it fails at `wireguard-go-bridge/goroot/.prepared`.
+      brew-packages: go
       # A release signs with Developer ID, while CI signs with Apple Distribution,
       # because an App Store certificate cannot sign an app someone downloads. Each
       # certificate has its own secret; this name selects which one signs here.
