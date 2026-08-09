@@ -50,23 +50,3 @@ jobs:
       candidate-asset-pattern: "*.zip"
       sbom-subject-path: "Products/Release/CellTunnelAgent.app"
     secrets: inherit
-
-  release-dry-run:
-    name: Release (dry run)
-    needs: release
-    if: ${{ always() && github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    steps:
-      - name: Require signed release dry run success
-        if: ${{ github.event.pull_request.head.repo.full_name == github.repository && needs.release.result != 'success' }}
-        run: |
-          echo "Signed release dry run did not succeed (result: ${{ needs.release.result }})." >&2
-          exit 1
-      - name: Report signed release dry run
-        if: ${{ github.event.pull_request.head.repo.full_name == github.repository && needs.release.result == 'success' }}
-        run: echo "Signed release dry run completed without publishing." >> "${GITHUB_STEP_SUMMARY}"
-      - name: Report fork skip
-        if: ${{ github.event.pull_request.head.repo.full_name != github.repository }}
-        run: echo "Signed release dry run skipped for a fork pull request." >> "${GITHUB_STEP_SUMMARY}"

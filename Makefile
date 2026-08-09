@@ -15,7 +15,14 @@ CELL_TUNNEL_DEV := swift Tools/cell-tunnel-dev.swift
 # Catalyst app is what they open. Each travels as an archive because a signed bundle
 # copied as a directory tree arrives without its signature. RELEASE_TAG arrives from the
 # pipeline's release-meta step.
+#
+# Generate first, the way every named build target below does. The engine's
+# release-build target carries no prerequisites, so nothing else renders
+# Config.generated.swift, and the dev tool this command runs cannot compile without
+# it: the release build failed with `cannot find 'agentBinaryName' in scope` on a
+# fresh CI checkout, which is the bootstrap cycle described further down.
 SWIFT_MK_RELEASE_BUILD_CMD := mkdir -p dist \
+	&& $(MAKE) generate \
 	&& $(CELL_TUNNEL_DEV) build mac Release \
 	&& $(CELL_TUNNEL_DEV) build mac-catalyst Release \
 	&& ditto -c -k --keepParent Products/Release/CellTunnelAgent.app \
