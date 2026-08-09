@@ -40,8 +40,14 @@ jobs:
       # runner is not a registered device, so development provisioning cannot work;
       # only App Store distribution profiles, which carry no device list, sign there.
       #
-      # import-signing-cert imports the Apple Distribution certificate that manual
-      # signing uses. The ci-provision setup step runs fastlane before the build to
+      # import-signing-cert imports whichever certificates the secrets carry, and
+      # signing-identity-name below picks the one that signs. This repository holds
+      # two: APPLE_DISTRIBUTION_P12_* for CI, named here, and APPLE_DEVELOPER_ID_P12_*
+      # for the release, because an App Store certificate cannot sign an app someone
+      # downloads. Until both secrets existed, the Developer-ID-named one carried the
+      # distribution certificate and a release could not be signed at all.
+      #
+      # The ci-provision setup step runs fastlane before the build to
       # create or renew one App Store profile per target through the App Store Connect
       # API key (APPLE_NOTARY_*), so profiles never expire out from under CI;
       # Project.swift pins each profile by name. TUIST_DEVELOPER_ID_SIGNING selects the
