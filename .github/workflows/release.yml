@@ -29,6 +29,14 @@ jobs:
       # variables, and each keeps its own so the two are never confused.
       signing-identity-name: ${{ vars.APPLE_DEVELOPER_ID_IDENTITY }}
       apple-team-id: ${{ vars.APPLE_TEAM_ID }}
+      # The agent embeds a packet tunnel extension, so its targets carry App Groups
+      # and Network Extensions entitlements, and Xcode refuses to sign those without
+      # a provisioning profile that grants them. CI provisions its own App Store
+      # profiles through fastlane, but a Developer ID build cannot use those, so the
+      # release installs the stored Developer ID profile instead. Without this the
+      # build reaches signing and stops at "requires a provisioning profile with the
+      # App Groups and Network Extensions features".
+      install-provisioning-profile: true
       notarize-pattern: "*.zip"
       candidate-asset-pattern: "*.zip"
       sbom-subject-path: "Products/Release/CellTunnelAgent.app"
