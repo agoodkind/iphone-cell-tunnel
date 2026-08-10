@@ -37,6 +37,12 @@ jobs:
       && github.actor != 'dependabot[bot]') }}
     uses: agoodkind/swift-makefile/.github/workflows/_release.yml@main
     with:
+      # The release links WireGuardKitGo exactly as CI does, and that target builds
+      # a Go c-archive through its own Makefile whose goroot prepare step fails
+      # unless `go env GOROOT` resolves. The macos-26 runner does not put Go on the
+      # build PATH. ci.yml already installs it for the same reason; without the same
+      # line here the release build fails at `[ -n "" ]` in the bridge's prepare step.
+      brew-packages: go
       # A pull request signs, provisions, notarizes, and packages exactly as a
       # merge does, and only the publish and smoke steps are held back.
       ephemeral: ${{ github.event_name == 'pull_request' }}
