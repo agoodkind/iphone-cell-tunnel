@@ -46,8 +46,9 @@ jobs:
       # signing uses. The ci-provision setup step runs fastlane before the build to
       # create or renew one App Store profile per target through the App Store Connect
       # API key (APPLE_NOTARY_*), so profiles never expire out from under CI;
-      # Project.swift pins each profile by name. TUIST_DEVELOPER_ID_SIGNING selects the
-      # project's distribution signing mode. install-provisioning-profile is not set,
+      # Project.swift pins each profile by name. TUIST_DISTRIBUTION_SIGNING selects the
+      # project's Apple Distribution signing mode; the release path selects its
+      # separate Developer ID mode instead. install-provisioning-profile is not set,
       # because fastlane provisions instead. SWIFT_MK_VERIFY_SIGNING_ROOTS verifies each
       # runnable product is signed with the team and is not ad-hoc.
       import-signing-cert: true
@@ -59,5 +60,5 @@ jobs:
       signing-identity-name: ${{ vars.APPLE_DISTRIBUTION_IDENTITY }}
       apple-team-id: ${{ vars.APPLE_TEAM_ID }}
       setup-target: ci-provision
-      make-args: TUIST_DEVELOPER_ID_SIGNING=1
+      make-args: TUIST_DISTRIBUTION_SIGNING=1
     secrets: inherit

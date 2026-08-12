@@ -56,22 +56,30 @@ let macHardenedRuntimeSettings: SettingsDictionary = [
 
 // Tuist evaluates this manifest in a separate process and forwards only TUIST_*
 // variables to it, reachable through the Environment API; a raw host variable such
-// as PROVISIONING_PROFILE_SPECIFIER is never visible here. iphone's Makefile sets
-// TUIST_DEVELOPER_ID_SIGNING=1 for the signed CI build (where the engine installed
-// the provisioning profiles) and leaves it unset for the dead-code coverage build
-// and for local builds, so the per-target specifiers below apply only then.
-let isDeveloperIdProvisioning = Environment.developerIdSigning.getBoolean(default: false)
+// as PROVISIONING_PROFILE_SPECIFIER is never visible here. ci.yml sets
+// TUIST_DISTRIBUTION_SIGNING=1 for the signed CI build; iphone's Makefile sets
+// TUIST_DEVELOPER_ID_SIGNING=1 for the release build, where the engine installed
+// the Developer ID provisioning profiles. Both stay unset for the dead-code
+// coverage build and for local builds. Developer ID wins when both are set,
+// because only the release path installs the profiles that mode pins.
+let isDeveloperIdSigning = Environment.developerIdSigning.getBoolean(default: false)
+let isDistributionSigning =
+  !isDeveloperIdSigning && Environment.distributionSigning.getBoolean(default: false)
 
-// How each signable target signs, in two modes. The CI build (isDeveloperIdProvisioning,
+// How each signable target signs, in three modes. The CI build (isDistributionSigning,
 // set by ci.yml) signs manually with an Apple Distribution certificate and an App Store
 // provisioning profile pinned per target, because CI runs on machines that are not
 // registered devices and only App Store profiles, which carry no device list, work
 // there; fastlane creates and renews those profiles with the App Store Connect API key
-// (see fastlane/Fastfile). Local builds sign with an Apple Development certificate and
-// automatic provisioning against the developer's registered machine. The Catalyst slice
-// needs the macOS-SDK identity set explicitly, because Tuist injects
-// CODE_SIGN_IDENTITY[sdk=macosx*] = "-" for it, which is more specific than the generic
-// key and would otherwise sign it ad-hoc.
+// (see fastlane/Fastfile). The release build (isDeveloperIdSigning, set by the
+// Makefile when the engine has installed the Developer ID profiles) signs manually
+// with the Developer ID Application certificate and a Developer ID profile pinned per
+// macOS NetworkExtension target, because a notarized download must not carry App
+// Store provisioning. Local builds sign with an Apple Development certificate and
+// automatic provisioning against the developer's registered machine. The Catalyst
+// slice needs the macOS-SDK identity set explicitly, because Tuist injects
+// CODE_SIGN_IDENTITY[sdk=macosx*] = "-" for it, which is more specific than the
+// generic key and would otherwise sign it ad-hoc.
 let developmentSigning: SettingsDictionary = [
   "CODE_SIGN_IDENTITY": "Apple Development",
   "CODE_SIGN_IDENTITY[sdk=macosx*]": "Apple Development",
@@ -82,32 +90,45 @@ let distributionSigning: SettingsDictionary = [
   "CODE_SIGN_IDENTITY[sdk=macosx*]": "Apple Distribution",
   "CODE_SIGN_STYLE": "Manual",
 ]
+let developerIdSigning: SettingsDictionary = [
+  "CODE_SIGN_IDENTITY": "Developer ID Application",
+  "CODE_SIGN_IDENTITY[sdk=macosx*]": "Developer ID Application",
+  "CODE_SIGN_STYLE": "Manual",
+]
 let baseSigning: SettingsDictionary =
-  isDeveloperIdProvisioning ? distributionSigning : developmentSigning
+  isDeveloperIdSigning
+  ? developerIdSigning : isDistributionSigning ? distributionSigning : developmentSigning
 
 // The App Store profile names fastlane creates for the iPhone app and the Mac Catalyst
 // slice (which shares the iPhone bundle identifier), and for the iPhone tunnel. Applied
-// only in the CI distribution build; local builds provision automatically.
+// only in the CI distribution build; the release builds only the macOS targets, and
+// local builds provision automatically.
 let phoneProvisioning: SettingsDictionary =
-  isDeveloperIdProvisioning
+  isDistributionSigning
   ? [
     "PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]": "Managed AppStore CellTunnelPhone iOS",
     "PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]": "Managed AppStore CellTunnelPhone Catalyst",
   ]
   : [:]
 let phoneTunnelProvisioning: SettingsDictionary =
-  isDeveloperIdProvisioning
+  isDistributionSigning
   ? ["PROVISIONING_PROFILE_SPECIFIER": "Managed AppStore CellTunnelPhoneTunnel iOS"]
   : [:]
 
 // The two macOS NetworkExtension targets carry App Groups + Network Extensions
 // entitlements (the app-extension packet-tunnel-provider), so each needs its own
-// provisioning profile. In the CI build, pin each macOS-only target to its App Store
-// profile by name. Locally the target provisions automatically.
-func macNetworkExtensionSettings(profileName: String) -> SettingsDictionary {
+// provisioning profile. The CI build pins each macOS-only target to its App Store
+// profile by name; the release build pins its Developer ID profile, which carries the
+// same entitlements for the same bundle identifier. Locally the target provisions
+// automatically.
+func macNetworkExtensionSettings(
+  appStoreProfile: String, developerIdProfile: String
+) -> SettingsDictionary {
   var settings = macHardenedRuntimeSettings.merging(baseSigning) { _, new in new }
-  if isDeveloperIdProvisioning {
-    settings["PROVISIONING_PROFILE_SPECIFIER"] = SettingValue(stringLiteral: profileName)
+  if isDeveloperIdSigning {
+    settings["PROVISIONING_PROFILE_SPECIFIER"] = SettingValue(stringLiteral: developerIdProfile)
+  } else if isDistributionSigning {
+    settings["PROVISIONING_PROFILE_SPECIFIER"] = SettingValue(stringLiteral: appStoreProfile)
   }
   return settings
 }
@@ -242,7 +263,9 @@ let project = Project(
         .external(name: "WireGuardKit"),
       ],
       settings: .settings(
-        base: macNetworkExtensionSettings(profileName: "Managed AppStore CellTunnelAgent"))
+        base: macNetworkExtensionSettings(
+          appStoreProfile: "Managed AppStore CellTunnelAgent",
+          developerIdProfile: "Managed DeveloperID CellTunnelAgent"))
     ),
     .target(
       name: "CellTunnelTunnelProvider",
@@ -257,7 +280,9 @@ let project = Project(
       entitlements: .file(path: "Apps/macOS/Entitlements/TunnelProvider.entitlements"),
       dependencies: tunnelProviderDependencies,
       settings: .settings(
-        base: macNetworkExtensionSettings(profileName: "Managed AppStore CellTunnelTunnelProvider"))
+        base: macNetworkExtensionSettings(
+          appStoreProfile: "Managed AppStore CellTunnelTunnelProvider",
+          developerIdProfile: "Managed DeveloperID CellTunnelTunnelProvider"))
     ),
     .target(
       name: "CellTunnelPhoneTunnel",
