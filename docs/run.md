@@ -38,6 +38,20 @@ codesign -dv Products/Debug/CellTunnelAgent.app
 A team identifier means it is signed. `Signature=adhoc` with no team identifier means it
 is not.
 
+## Why there is no download
+
+A downloadable Mac app signs with a Developer ID certificate, and Apple's Developer ID
+provisioning carries the Network Extension entitlement only in its system-extension
+form. This app's tunnel runs as an app extension inside the agent, so the release
+build's entitlements request the app-extension form, and Developer ID signing fails
+with an entitlement mismatch; run 31650693297 on pull request 113 is the measured
+failure. Only App Store and development provisioning carry the app-extension form, and
+this app does not ship through the App Store.
+
+The app-extension form is also how the tunnel registers on an installed Mac, so
+switching the release build to the system-extension form is an architecture change,
+not a signing setting.
+
 ## Running on your own Mac
 
 `make install-mac` installs the Mac side and `make iphone-install` installs the iPhone
