@@ -38,19 +38,22 @@ codesign -dv Products/Debug/CellTunnelAgent.app
 A team identifier means it is signed. `Signature=adhoc` with no team identifier means it
 is not.
 
-## Why there is no download
+## Why the release cannot use the system-extension entitlement
 
-A downloadable Mac app signs with a Developer ID certificate, and Apple's Developer ID
-provisioning carries the Network Extension entitlement only in its system-extension
-form. This app's tunnel runs as an app extension inside the agent, so the release
-build's entitlements request the app-extension form, and Developer ID signing fails
-with an entitlement mismatch; run 31650693297 on pull request 113 is the measured
-failure. Only App Store and development provisioning carry the app-extension form, and
-this app does not ship through the App Store.
+Apple's Developer ID provisioning carries the Network Extension entitlement only in
+its system-extension form, and this app cannot adopt that form by changing the
+entitlement string. The system-extension form belongs to tunnels that ship as system
+extensions, which macOS activates only from an app a user launched out of
+`/Applications`. This product's tunnel is an app extension hosted inside the
+background agent, which nothing launches from `/Applications`; the second-Mac harness
+registers the extension directly for exactly that reason. A release build signed with
+the system-extension string would therefore carry a tunnel nothing in this product's
+install flow can activate.
 
-The app-extension form is also how the tunnel registers on an installed Mac, so
-switching the release build to the system-extension form is an architecture change,
-not a signing setting.
+The mismatch is measured: run 31650693297 on pull request 113 installs the Developer
+ID profiles, pins them, and fails because the app-extension entitlement the targets
+request does not appear in those profiles. Only App Store and development provisioning
+carry the app-extension form.
 
 ## Running on your own Mac
 
