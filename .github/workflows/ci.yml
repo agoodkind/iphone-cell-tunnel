@@ -19,6 +19,8 @@ concurrency:
 permissions:
   contents: read
   actions: read
+  # The engine's Verify job publishes one check run per stage.
+  checks: write
 
 jobs:
   swift:
