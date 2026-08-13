@@ -79,18 +79,17 @@ at a console-user listener on the agent's loopback relay port, so the relay dial
 survives the move to a root system service. The whole approval flow runs from
 the keyboard with no attached console.
 
-One premise was wrong, and it changes the work. The extension's app-group
-container resolves under `/var/root`, not the console user's home, so the agent
-and the provider stop sharing one app group, and `UserDefaults.standard` in the
-extension sees none of the values the agent stored. The Mac provider resolves
-its relay port from standard defaults today, so after the move it would silently
-use the default port and ignore a configured one. The port travels in the
-provider configuration alongside the WireGuard config instead.
-
-The keychain half of that premise was wrong in a harmless direction: the Mac
-provider reads neither the app group nor the keychain. Its config arrives in the
-provider configuration, and the only keychain reader is the agent, which stays a
-user-level app.
+The probe also measured what the root context isolates, and it costs this
+product nothing. The extension's app-group container resolves under `/var/root`
+rather than the console user's home, and its standard defaults hold none of the
+values a user-level process wrote. Neither matters here: the Mac provider opens
+no app-group container and reads no keychain, its config arrives in the provider
+configuration, and the relay port it resolves has no writer on macOS, so the
+agent and the provider both resolve the same default from empty defaults exactly
+as they do today. The isolation is a constraint to respect later, not a change
+to make now: a macOS value shared through defaults or the app group would break
+under it, which is a reason to keep passing provider inputs through the provider
+configuration.
 
 ## Delivery order
 
