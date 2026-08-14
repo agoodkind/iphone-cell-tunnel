@@ -27,6 +27,9 @@ let projectSettings = Settings.settings(
     "ENABLE_USER_SCRIPT_SANDBOXING": "NO",
     "IPHONEOS_DEPLOYMENT_TARGET": "26.0",
     "MACOSX_DEPLOYMENT_TARGET": "26.0",
+    // Apple silicon only. Apple has dropped Intel, and so has this product, so
+    // no target builds a slice whose vendored dependencies do not exist.
+    "ARCHS": "arm64",
     "SYMROOT": "$(SRCROOT)/Products",
     "OBJROOT": "$(SRCROOT)/build/Intermediates.noindex",
     "MARKETING_VERSION": "0.1.0",
@@ -151,6 +154,39 @@ let cellTunnelPhoneBaseSettings: SettingsDictionary = [
 ].merging(baseSigning) { _, new in new }
   .merging(phoneProvisioning) { _, new in new }
 
+// The downloadable build signs Developer ID, and Apple issues the plain
+// packet-tunnel-provider entitlement only for App Store distribution, so outside
+// the store the tunnel must ship as a system extension. Only the packaging
+// differs: the same provider sources compile into a system-extension product
+// with a release-only entry point, and every other build keeps the app
+// extension the harness and CI already exercise. The agent hosts it because a
+// system extension's identifier must be prefixed by its containing app's, and
+// the provider's is derived from the agent's.
+let tunnelProviderProduct: Product = isDeveloperIdSigning ? .systemExtension : .appExtension
+let tunnelProviderInfoPlist: Path =
+  isDeveloperIdSigning
+  ? "Apps/macOS/TunnelProvider/SystemExtension-Info.plist"
+  : "Apps/macOS/TunnelProvider/Info.plist"
+// An app extension is started through NSExtensionMain; a system extension
+// registers its provider from an entry point of its own, which compiles only in
+// the Developer ID build behind this condition. Both builds compile the same
+// file list, so every owned source keeps its dead-code coverage.
+let tunnelProviderCompilationConditions: SettingsDictionary =
+  isDeveloperIdSigning
+  ? ["SWIFT_ACTIVE_COMPILATION_CONDITIONS": "$(inherited) CELL_TUNNEL_SYSTEM_EXTENSION"]
+  : [:]
+let tunnelProviderEntitlements: Path =
+  isDeveloperIdSigning
+  ? "Apps/macOS/Entitlements/TunnelProvider.DeveloperID.entitlements"
+  : "Apps/macOS/Entitlements/TunnelProvider.entitlements"
+// The agent signs from the matching entitlements variant, which carries the
+// system-extension form of the tunnel entitlement and the install permission
+// its Developer ID profile grants.
+let agentEntitlements: Path =
+  isDeveloperIdSigning
+  ? "Apps/macOS/Entitlements/Agent.DeveloperID.entitlements"
+  : "Apps/macOS/Entitlements/Agent.entitlements"
+
 let appDependencies: [TargetDependency] = [
   .target(name: "CellTunnelCore"),
   .target(name: "CellTunnelLog"),
@@ -257,7 +293,7 @@ let project = Project(
           ]
         )
       ],
-      entitlements: .file(path: "Apps/macOS/Entitlements/Agent.entitlements"),
+      entitlements: .file(path: agentEntitlements),
       dependencies: appDependencies + [
         .target(name: "CellTunnelTunnelProvider"),
         .external(name: "WireGuardKit"),
@@ -270,19 +306,20 @@ let project = Project(
     .target(
       name: "CellTunnelTunnelProvider",
       destinations: [.mac],
-      product: .appExtension,
+      product: tunnelProviderProduct,
       bundleId: "$(PROVIDER_BUNDLE_ID)",
       deploymentTargets: macOSDeploymentTarget,
-      infoPlist: .file(path: "Apps/macOS/TunnelProvider/Info.plist"),
+      infoPlist: .file(path: tunnelProviderInfoPlist),
       sources: [
         "Apps/macOS/TunnelProvider/**"
       ],
-      entitlements: .file(path: "Apps/macOS/Entitlements/TunnelProvider.entitlements"),
+      entitlements: .file(path: tunnelProviderEntitlements),
       dependencies: tunnelProviderDependencies,
       settings: .settings(
         base: macNetworkExtensionSettings(
           appStoreProfile: "Managed AppStore CellTunnelTunnelProvider",
-          developerIdProfile: "Managed DeveloperID CellTunnelTunnelProvider"))
+          developerIdProfile: "Managed DeveloperID CellTunnelTunnelProvider"
+        ).merging(tunnelProviderCompilationConditions) { _, new in new })
     ),
     .target(
       name: "CellTunnelPhoneTunnel",

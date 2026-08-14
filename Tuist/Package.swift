@@ -24,10 +24,16 @@ import PackageDescription
     .appendingPathComponent("vendor", isDirectory: true)
     .path
 
+  // This product ships Apple silicon only, and the vendored WireGuard bridge is
+  // built for that architecture alone, so an Intel slice has nothing to link
+  // against and fails at the linker rather than at configuration time.
+  let appleSiliconOnly: SettingsDictionary = ["ARCHS": "arm64"]
+
   let packageSettings = PackageSettings(
     productTypes: [
       "WireGuardKit": .framework
     ],
+    baseSettings: .settings(base: appleSiliconOnly),
     targetSettings: [
       "WireGuardKit": [
         "LIBRARY_SEARCH_PATHS": [wireGuardVendorSearchPath],
