@@ -22,6 +22,12 @@ extension AgentTunnelController {
     if let manager = currentManager() {
       return manager
     }
+    // A profile cannot start against a provider macOS has not activated, so the
+    // downloadable build activates its system extension before resolving one. Every
+    // start path reaches this function, and activation is idempotent, so a build
+    // shipping the app extension does nothing here.
+    try await AgentSystemExtension.activateIfNeeded(
+      identifier: Self.providerBundleIdentifier)
     let managers = try await loadAllManagers()
     // Look again before deciding. Another caller can resolve or stage a profile while
     // this one is suspended in the load, and its own read happened before that, so

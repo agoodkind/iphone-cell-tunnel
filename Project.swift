@@ -178,9 +178,10 @@ let tunnelProviderInfoPlist: Path =
   ? "Apps/macOS/TunnelProvider/SystemExtension-Info.plist"
   : "Apps/macOS/TunnelProvider/Info.plist"
 // An app extension is started through NSExtensionMain; a system extension
-// registers its provider from an entry point of its own, which compiles only in
-// the Developer ID build behind this condition. Both builds compile the same
-// file list, so every owned source keeps its dead-code coverage.
+// registers its provider from an entry point of its own, and the agent activates
+// it before any profile can start. Both compile only in the Developer ID build,
+// behind this condition, and both builds compile the same file list so every
+// owned source keeps its dead-code coverage.
 let tunnelProviderCompilationConditions: SettingsDictionary =
   isDeveloperIdSigning
   ? ["SWIFT_ACTIVE_COMPILATION_CONDITIONS": "$(inherited) CELL_TUNNEL_SYSTEM_EXTENSION"]
@@ -311,7 +312,8 @@ let project = Project(
       settings: .settings(
         base: macNetworkExtensionSettings(
           appStoreProfile: "Managed AppStore CellTunnelAgent",
-          developerIdProfile: "Managed DeveloperID CellTunnelAgent"))
+          developerIdProfile: "Managed DeveloperID CellTunnelAgent"
+        ).merging(tunnelProviderCompilationConditions) { _, new in new })
     ),
     .target(
       name: "CellTunnelTunnelProvider",
