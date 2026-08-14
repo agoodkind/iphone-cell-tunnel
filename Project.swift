@@ -98,9 +98,15 @@ let developerIdSigning: SettingsDictionary = [
   "CODE_SIGN_IDENTITY[sdk=macosx*]": "Developer ID Application",
   "CODE_SIGN_STYLE": "Manual",
 ]
-let baseSigning: SettingsDictionary =
-  isDeveloperIdSigning
-  ? developerIdSigning : isDistributionSigning ? distributionSigning : developmentSigning
+let baseSigning: SettingsDictionary = {
+  if isDeveloperIdSigning {
+    return developerIdSigning
+  }
+  if isDistributionSigning {
+    return distributionSigning
+  }
+  return developmentSigning
+}()
 
 // The profile names fastlane creates for the iPhone app and the Mac Catalyst slice
 // (which shares the iPhone bundle identifier), and for the iPhone tunnel. The CI build

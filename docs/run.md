@@ -38,22 +38,24 @@ codesign -dv Products/Debug/CellTunnelAgent.app
 A team identifier means it is signed. `Signature=adhoc` with no team identifier means it
 is not.
 
-## Why the release cannot use the system-extension entitlement
+## Why the download ships the tunnel as a system extension
 
-Apple's Developer ID provisioning carries the Network Extension entitlement only in
-its system-extension form, and this app cannot adopt that form by changing the
-entitlement string. The system-extension form belongs to tunnels that ship as system
-extensions, which macOS activates only from an app a user launched out of
-`/Applications`. This product's tunnel is an app extension hosted inside the
-background agent, which nothing launches from `/Applications`; the second-Mac harness
-registers the extension directly for exactly that reason. A release build signed with
-the system-extension string would therefore carry a tunnel nothing in this product's
-install flow can activate.
+The downloadable build packages the tunnel as a system extension, while every other
+build keeps it as an app extension. Apple's Developer ID provisioning carries the
+Network Extension entitlement only in its system-extension form, so a notarized
+download has no other shape available. App Store and development provisioning carry
+the app-extension form, which is why development, CI, and the second-Mac harness are
+unchanged.
 
-The mismatch is measured: run 31650693297 on pull request 113 installs the Developer
-ID profiles, pins them, and fails because the app-extension entitlement the targets
-request does not appear in those profiles. Only App Store and development provisioning
-carry the app-extension form.
+The constraint is measured: run 31650693297 on pull request 113 installs the Developer
+ID profiles, pins them, and fails because the app-extension entitlement those targets
+requested does not appear in them.
+
+A system extension does not exist for NetworkExtension until macOS activates it, and
+only an app in `/Applications` may request that activation for an extension inside its
+own bundle. So the agent bundles the extension and submits the request before it
+resolves a tunnel profile, and macOS asks the person to allow it once. The provider
+code, the agent, the relay, and the loopback dial are the same in both packagings.
 
 ## Running on your own Mac
 
