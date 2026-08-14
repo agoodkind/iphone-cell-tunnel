@@ -69,4 +69,18 @@ jobs:
       notarize-pattern: "*.zip"
       candidate-asset-pattern: "*.zip"
       sbom-subject-path: "Products/Release/CellTunnelAgent.app"
-    secrets: inherit
+    # Named rather than inherited, because this app needs three provisioning
+    # profiles and a secret holds at most 48 KB, which two profiles nearly fill.
+    # The shared pipeline installs one profile per line of the value it is given,
+    # so the third travels in its own secret and is joined here. A caller chooses
+    # either `inherit` or a named map, so naming one secret means naming them all.
+    secrets:
+      APPLE_DEVELOPER_ID_PROFILE_BASE64: |
+        ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
+        ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_CATALYST_BASE64 }}
+      APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+      APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+      APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+      APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+      APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+      LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
