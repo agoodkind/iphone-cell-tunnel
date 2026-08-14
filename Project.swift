@@ -102,17 +102,27 @@ let baseSigning: SettingsDictionary =
   isDeveloperIdSigning
   ? developerIdSigning : isDistributionSigning ? distributionSigning : developmentSigning
 
-// The App Store profile names fastlane creates for the iPhone app and the Mac Catalyst
-// slice (which shares the iPhone bundle identifier), and for the iPhone tunnel. Applied
-// only in the CI distribution build; the release builds only the macOS targets, and
-// local builds provision automatically.
-let phoneProvisioning: SettingsDictionary =
-  isDistributionSigning
-  ? [
-    "PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]": "Managed AppStore CellTunnelPhone iOS",
-    "PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]": "Managed AppStore CellTunnelPhone Catalyst",
-  ]
-  : [:]
+// The profile names fastlane creates for the iPhone app and the Mac Catalyst slice
+// (which shares the iPhone bundle identifier), and for the iPhone tunnel. The CI build
+// signs all three against App Store profiles. The release builds the Catalyst slice and
+// ships it beside the agent, so it pins that slice's Developer ID profile. Local builds
+// provision automatically.
+let phoneProvisioning: SettingsDictionary = {
+  if isDeveloperIdSigning {
+    // The Catalyst slice carries App Groups, so manual signing needs its profile
+    // pinned by name the way the two macOS NetworkExtension targets are.
+    return [
+      "PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]": "CellTunnelPhone Tart Catalyst Direct"
+    ]
+  }
+  if isDistributionSigning {
+    return [
+      "PROVISIONING_PROFILE_SPECIFIER[sdk=iphoneos*]": "Managed AppStore CellTunnelPhone iOS",
+      "PROVISIONING_PROFILE_SPECIFIER[sdk=macosx*]": "Managed AppStore CellTunnelPhone Catalyst",
+    ]
+  }
+  return [:]
+}()
 let phoneTunnelProvisioning: SettingsDictionary =
   isDistributionSigning
   ? ["PROVISIONING_PROFILE_SPECIFIER": "Managed AppStore CellTunnelPhoneTunnel iOS"]

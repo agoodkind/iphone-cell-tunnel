@@ -26,7 +26,13 @@ which is exactly what this design changes for the release artifact only.
 
 ## Shape
 
-The Mac app (the existing Catalyst front-end) becomes the download artifact.
+The agent app carries and activates the extension, and it is the download
+artifact. macOS requires a system extension's identifier to be prefixed by its
+containing app's, and the tunnel provider's identifier is derived from the
+agent's, not the Catalyst front-end's. Apple issued the two Developer ID
+profiles for exactly that pairing, and the one granting
+`com.apple.developer.system-extension.install` is the agent's. The probe
+activated this pairing.
 
 - The release build packages the tunnel provider as a `.systemextension` inside
   the app bundle's `Contents/Library/SystemExtensions`, signed with the
