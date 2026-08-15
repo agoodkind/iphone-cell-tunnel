@@ -21,8 +21,38 @@ let macOSDeploymentTarget = DeploymentTargets.macOS("26.0")
 let debug = Configuration.debug(name: "Debug", xcconfig: "Config/debug.xcconfig")
 let release = Configuration.release(name: "Release", xcconfig: "Config/release.xcconfig")
 
+// Tuist evaluates this manifest in a separate process and forwards only TUIST_*
+// variables to it, reachable through the Environment API; a raw host variable such
+// as PROVISIONING_PROFILE_SPECIFIER is never visible here. ci.yml sets
+// TUIST_DISTRIBUTION_SIGNING=1 for the signed CI build; iphone's Makefile sets
+// TUIST_DEVELOPER_ID_SIGNING=1 for the release build, where the engine installed
+// the Developer ID provisioning profiles. Both stay unset for the dead-code
+// coverage build and for local builds. Developer ID wins when both are set,
+// because only the release path installs the profiles that mode pins.
+let isDeveloperIdSigning = Environment.developerIdSigning.getBoolean(default: false)
+let isDistributionSigning =
+  !isDeveloperIdSigning && Environment.distributionSigning.getBoolean(default: false)
+
+// Notarization rejects a build that Xcode signed the way it signs for running
+// locally, and every target in the app is affected, frameworks included. Two
+// settings make a plain build sign the way an export does. A secure timestamp is
+// required, and Xcode passes `--timestamp=none` unless these flags override it.
+// The debugging entitlement `get-task-allow` is also refused, and Xcode writes it
+// into the entitlements it generates unless the injection is turned off. Both stay
+// off outside the Developer ID build: a timestamp needs Apple's timestamp server
+// on every signing, and without the debugging entitlement no debugger can attach.
+let notarizableSigning: SettingsDictionary =
+  if isDeveloperIdSigning {
+    [
+      "OTHER_CODE_SIGN_FLAGS": "$(inherited) --timestamp",
+      "CODE_SIGN_INJECT_BASE_ENTITLEMENTS": "NO",
+    ]
+  } else {
+    [:]
+  }
+
 let projectSettings = Settings.settings(
-  base: [
+  base: notarizableSigning.merging([
     "SWIFT_VERSION": "6.0",
     "ENABLE_USER_SCRIPT_SANDBOXING": "NO",
     "IPHONEOS_DEPLOYMENT_TARGET": "26.0",
@@ -35,7 +65,7 @@ let projectSettings = Settings.settings(
     "MARKETING_VERSION": "0.0.0",
     "CURRENT_PROJECT_VERSION": "0",
     "STRING_CATALOG_GENERATE_SYMBOLS": "YES",
-  ],
+  ]) { _, new in new },
   configurations: [debug, release],
   defaultSettings: .recommended
 )
@@ -56,18 +86,6 @@ let macHardenedRuntimeSettings: SettingsDictionary = [
   "ENABLE_HARDENED_RUNTIME": "YES",
   "REGISTER_APP_GROUPS": "YES",
 ]
-
-// Tuist evaluates this manifest in a separate process and forwards only TUIST_*
-// variables to it, reachable through the Environment API; a raw host variable such
-// as PROVISIONING_PROFILE_SPECIFIER is never visible here. ci.yml sets
-// TUIST_DISTRIBUTION_SIGNING=1 for the signed CI build; iphone's Makefile sets
-// TUIST_DEVELOPER_ID_SIGNING=1 for the release build, where the engine installed
-// the Developer ID provisioning profiles. Both stay unset for the dead-code
-// coverage build and for local builds. Developer ID wins when both are set,
-// because only the release path installs the profiles that mode pins.
-let isDeveloperIdSigning = Environment.developerIdSigning.getBoolean(default: false)
-let isDistributionSigning =
-  !isDeveloperIdSigning && Environment.distributionSigning.getBoolean(default: false)
 
 // How each signable target signs, in three modes. The CI build (isDistributionSigning,
 // set by ci.yml) signs manually with an Apple Distribution certificate and an App Store

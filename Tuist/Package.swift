@@ -29,11 +29,25 @@ import PackageDescription
   // against and fails at the linker rather than at configuration time.
   let appleSiliconOnly: SettingsDictionary = ["ARCHS": "arm64"]
 
+  // These frameworks are embedded in the downloadable app, so notarization checks
+  // them too and refuses a signature with no secure timestamp. Xcode passes
+  // `--timestamp=none` during a plain build unless this overrides it. The setting
+  // stays off outside the Developer ID build, where a timestamp would mean
+  // contacting Apple's timestamp server on every local signing. The project
+  // manifest applies the same flag to the targets it owns.
+  let notarizableSigning: SettingsDictionary =
+    if Environment.developerIdSigning.getBoolean(default: false) {
+      ["OTHER_CODE_SIGN_FLAGS": "$(inherited) --timestamp"]
+    } else {
+      [:]
+    }
+
   let packageSettings = PackageSettings(
     productTypes: [
       "WireGuardKit": .framework
     ],
-    baseSettings: .settings(base: appleSiliconOnly),
+    baseSettings: .settings(
+      base: appleSiliconOnly.merging(notarizableSigning) { _, new in new }),
     targetSettings: [
       "WireGuardKit": [
         "LIBRARY_SEARCH_PATHS": [wireGuardVendorSearchPath],
