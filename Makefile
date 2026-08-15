@@ -13,15 +13,21 @@ CELL_TUNNEL_DEV := swift Tools/cell-tunnel-dev.swift
 # Release artifacts for the shared release pipeline. A person downloads these, so both
 # halves ship: the agent bundle carries the packet tunnel extension inside it, and the
 # Catalyst app is what they open. Each travels as an archive because a signed bundle
-# copied as a directory tree arrives without its signature. RELEASE_TAG arrives from the
-# pipeline's release-meta step.
+# copied as a directory tree arrives without its signature.
+#
+# The name carries ARTIFACT_VERSION, which a publishing run stamps from the release tag
+# and a pull request rehearsal sets to a placeholder. RELEASE_TAG is the fallback for a
+# caller that supplies only that. Reading RELEASE_TAG alone named the rehearsal's
+# archives `CellTunnelAgent-.zip`, because the rehearsal runs inside the verify job and
+# no stage there stamps a tag.
+SWIFT_MK_RELEASE_ARTIFACT_VERSION = $${ARTIFACT_VERSION:-$${RELEASE_TAG}}
 SWIFT_MK_RELEASE_BUILD_CMD := mkdir -p dist \
 	&& $(CELL_TUNNEL_DEV) build mac Release \
 	&& $(CELL_TUNNEL_DEV) build mac-catalyst Release \
 	&& ditto -c -k --keepParent Products/Release/CellTunnelAgent.app \
-		dist/CellTunnelAgent-$$RELEASE_TAG.zip \
+		dist/CellTunnelAgent-$(SWIFT_MK_RELEASE_ARTIFACT_VERSION).zip \
 	&& ditto -c -k --keepParent Products/Release-maccatalyst/CellTunnelPhone.app \
-		dist/CellTunnelPhone-$$RELEASE_TAG.zip
+		dist/CellTunnelPhone-$(SWIFT_MK_RELEASE_ARTIFACT_VERSION).zip
 
 SWIFT_MK_MODULES := swift-build.mk xcconfig.mk swift-release.mk
 
@@ -81,8 +87,14 @@ SWIFT_ANALYZE_CMD ?= $(CELL_TUNNEL_DEV) analyze
 # distribution build sets TUIST_DISTRIBUTION_SIGNING through ci.yml instead. The
 # dead-code coverage build and local builds leave PROVISIONING_PROFILE_SPECIFIER
 # empty, so this stays unset and their signing is unchanged.
+#
+# Scoped to release-build rather than exported globally, because one CI job now runs
+# the verify stages and the release stage in sequence and the shared gate exports
+# PROVISIONING_PROFILE_SPECIFIER into every stage. A global export put the verify
+# build in Developer ID mode while it signed Apple Distribution, and Xcode refused
+# with "provisioning profile does not include signing certificate".
 ifneq ($(strip $(PROVISIONING_PROFILE_SPECIFIER)),)
-export TUIST_DEVELOPER_ID_SIGNING := 1
+release-build: export TUIST_DEVELOPER_ID_SIGNING := 1
 endif
 
 # The Verify gate builds every platform through SWIFT_VERIFY_BUILD_CMD and verifies
