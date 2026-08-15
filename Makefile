@@ -81,8 +81,14 @@ SWIFT_ANALYZE_CMD ?= $(CELL_TUNNEL_DEV) analyze
 # distribution build sets TUIST_DISTRIBUTION_SIGNING through ci.yml instead. The
 # dead-code coverage build and local builds leave PROVISIONING_PROFILE_SPECIFIER
 # empty, so this stays unset and their signing is unchanged.
+#
+# Scoped to release-build rather than exported globally, because one CI job now runs
+# the verify stages and the release stage in sequence and the shared gate exports
+# PROVISIONING_PROFILE_SPECIFIER into every stage. A global export put the verify
+# build in Developer ID mode while it signed Apple Distribution, and Xcode refused
+# with "provisioning profile does not include signing certificate".
 ifneq ($(strip $(PROVISIONING_PROFILE_SPECIFIER)),)
-export TUIST_DEVELOPER_ID_SIGNING := 1
+release-build: export TUIST_DEVELOPER_ID_SIGNING := 1
 endif
 
 # The Verify gate builds every platform through SWIFT_VERIFY_BUILD_CMD and verifies

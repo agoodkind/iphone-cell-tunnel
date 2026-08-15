@@ -153,10 +153,27 @@ private func recordProjectGenerationFingerprint() throws {
     to: projectGenerationFingerprintURL, atomically: true, encoding: .utf8)
 }
 
+/// Manifest variables that change the generated project rather than the build.
+///
+/// Tuist forwards only `TUIST_*` variables into manifest evaluation, and these two
+/// select which profiles each target pins and whether the tunnel is an app extension
+/// or a system extension. One job runs both modes, so a fingerprint blind to them lets
+/// the release stage reuse the verify stage's project and sign a product against
+/// profiles that do not carry its certificate.
+private let projectGenerationSigningVariables = [
+  "TUIST_DEVELOPER_ID_SIGNING",
+  "TUIST_DISTRIBUTION_SIGNING",
+]
+
 private func projectGenerationSourceFingerprint() throws -> String {
   var parts: [String] = []
   let team = try developmentTeamFromEnvironment().trimmingCharacters(in: .whitespaces)
   parts.append("team:\(team)")
+  let environment = ProcessInfo.processInfo.environment
+  for variable in projectGenerationSigningVariables {
+    let value = environment[variable] ?? ""
+    parts.append("\(variable):\(value)")
+  }
   for source in projectGenerationSources {
     let attributes = try fileManager.attributesOfItem(atPath: source.path)
     let modificationDate = attributes[.modificationDate] as? Date ?? Date.distantPast
