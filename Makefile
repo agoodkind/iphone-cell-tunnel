@@ -31,6 +31,25 @@ SWIFT_MK_RELEASE_BUILD_CMD := mkdir -p dist \
 
 SWIFT_MK_MODULES := swift-build.mk xcconfig.mk swift-release.mk
 
+# Build identity rendered into the generated Swift, so a running binary and every log
+# line say which build they came from. A publishing run supplies MARKETING_VERSION,
+# CURRENT_PROJECT_VERSION, and RELEASE_TAG from the pipeline's release metadata; a
+# local build falls back to these values and to what git reports. The engine's
+# render-batch substitutes named variables only and never runs git itself, so the git
+# values are computed here.
+MARKETING_VERSION ?= 0.0.0
+CURRENT_PROJECT_VERSION ?= 0
+RELEASE_TAG ?=
+GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+GIT_VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+GIT_DIRTY := $(shell git diff --quiet 2>/dev/null && echo false || echo true)
+GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)
+
+# Tuist forwards only TUIST_* variables into manifest evaluation, so the manifest reads
+# the version through these rather than from the build settings directly.
+export TUIST_MARKETING_VERSION := $(MARKETING_VERSION)
+export TUIST_CURRENT_PROJECT_VERSION := $(CURRENT_PROJECT_VERSION)
+
 # xcconfig.mk consumes these. Each plan renders every *.template under the
 # named templates dir into the named output dir before tuist generate runs,
 # with the Make-visible xcconfig variables exported as [[KEY]] substitutions.
@@ -49,7 +68,14 @@ XCCONFIG_EXPORTED_VARS := \
 	AGENT_EXECUTABLE_NAME \
 	AGENT_APP_BUNDLE_NAME \
 	DEVELOPMENT_TEAM \
-	CODE_SIGN_IDENTITY
+	CODE_SIGN_IDENTITY \
+	MARKETING_VERSION \
+	CURRENT_PROJECT_VERSION \
+	RELEASE_TAG \
+	GIT_COMMIT \
+	GIT_VERSION \
+	GIT_DIRTY \
+	GIT_BRANCH
 
 # Named Make targets alias into CellTunnelDev. Engine `make build` compiles every
 # platform through CellTunnelDev `build all`. Prefer a named alias when you want

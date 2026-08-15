@@ -10,3 +10,14 @@ public let agentAppBundleName = "[[AGENT_APP_BUNDLE_NAME]]"
 public let agentBundleIdentifier = "[[AGENT_BUNDLE_ID]]"
 public let tunnelProviderBundleIdentifier = "[[PROVIDER_BUNDLE_ID]]"
 public let cellTunnelAppGroupIdentifier = "[[APP_GROUP_ID]]"
+
+// Which build this is. A publishing run stamps the release tag and the marketing and
+// build versions the pipeline computed. Every other build leaves the tag empty and
+// reports what git describes instead.
+public let generatedMarketingVersion = "[[MARKETING_VERSION]]"
+public let generatedBuildNumber = "[[CURRENT_PROJECT_VERSION]]"
+public let generatedReleaseTag = "[[RELEASE_TAG]]"
+public let generatedGitCommit = "[[GIT_COMMIT]]"
+public let generatedGitVersion = "[[GIT_VERSION]]"
+public let generatedGitDirty = "[[GIT_DIRTY]]"
+public let generatedGitBranch = "[[GIT_BRANCH]]"

@@ -166,6 +166,11 @@ extension AgentTunnelController {
     checks.append(
       TunnelEnvironmentCheckResult(
         name: "agent_executable_path", value: AgentBinaryIdentity.executablePath()))
+    // Which build is answering, beside the identity of the file that is answering, so
+    // one report names both the release a person is running and the exact binary.
+    checks.append(
+      TunnelEnvironmentCheckResult(
+        name: "agent_build_version", value: BuildIdentity.details))
     if let buildUUID = AgentBinaryIdentity.buildUUID() {
       checks.append(
         TunnelEnvironmentCheckResult(name: "agent_build_uuid", value: buildUUID))

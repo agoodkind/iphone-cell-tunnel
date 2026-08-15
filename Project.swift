@@ -33,6 +33,13 @@ let isDeveloperIdSigning = Environment.developerIdSigning.getBoolean(default: fa
 let isDistributionSigning =
   !isDeveloperIdSigning && Environment.distributionSigning.getBoolean(default: false)
 
+// The version every bundle carries. A publishing run passes the marketing and build
+// versions its release metadata computed, through the same TUIST_ forwarding; a local
+// build takes these placeholders. Apple accepts one to three period-separated integers
+// for a build number, so the placeholder is well formed rather than merely unset.
+let marketingVersion = Environment.marketingVersion.getString(default: "0.0.0")
+let currentProjectVersion = Environment.currentProjectVersion.getString(default: "0")
+
 // Notarization rejects a build that Xcode signed the way it signs for running
 // locally, and every target in the app is affected, frameworks included. Two
 // settings make a plain build sign the way an export does. A secure timestamp is
@@ -62,8 +69,8 @@ let projectSettings = Settings.settings(
     "ARCHS": "arm64",
     "SYMROOT": "$(SRCROOT)/Products",
     "OBJROOT": "$(SRCROOT)/build/Intermediates.noindex",
-    "MARKETING_VERSION": "0.0.0",
-    "CURRENT_PROJECT_VERSION": "0",
+    "MARKETING_VERSION": SettingValue(stringLiteral: marketingVersion),
+    "CURRENT_PROJECT_VERSION": SettingValue(stringLiteral: currentProjectVersion),
     "STRING_CATALOG_GENERATE_SYMBOLS": "YES",
   ]) { _, new in new },
   configurations: [debug, release],
