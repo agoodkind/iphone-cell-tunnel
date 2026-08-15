@@ -118,6 +118,40 @@ Confirm with `pluginkit -m -v -i <provider bundle id>`. Its output carries the b
 version, which also serves as the check that the loaded provider is the build under
 test.
 
+## Approving a system extension in the machine
+
+A system extension needs a user approval that no command grants, so the approval runs
+through the machine's own accessibility bridge over SSH. Turn on developer mode first, or
+an unnotarized build never reaches the prompt:
+
+```
+systemextensionsctl developer on
+```
+
+That command opens an authorization prompt of its own, so run it from a GUI session
+rather than a remote shell, which fails with `AuthorizationCreate failed`. Drive both
+prompts by running `osascript` inside the machine's logged-in session:
+
+```
+launchctl asuser <uid> sudo -u <user> osascript <script>
+```
+
+Four behaviors decide whether the flow works:
+
+- The blocked notice is the only reliable way in. Its **Open System Settings** button
+  deep-links to the Network Extensions sheet, while opening the pane by URL renders it
+  blank. Resubmitting the activation request posts a fresh notice.
+- The extension's toggle ignores an accessibility press and a synthetic click at its own
+  coordinates. Only keyboard focus moves it: press Tab until the focused element is a
+  checkbox, then Space.
+- The toggle raises a password prompt owned by `SecurityAgent`. Answer it in the same
+  script run, because its window goes stale between runs.
+- Enabling the extension and saving the VPN profile are separate consents. The second is
+  an **Allow** button on `UserNotificationCenter`.
+
+Confirm with `systemextensionsctl list`, which reads `[activated enabled]` once the
+approval lands, and `scutil --nc list` for the profile.
+
 ## Driving the machine's screen
 
 Use Facebook's idb rather than clicking the machine's window. The companion must run

@@ -74,12 +74,13 @@ SWIFT_DEPLOY_CMD ?= printf 'deploy: use make iphone-install|install-mac\n'; exit
 SWIFT_ANALYZE_CMD ?= $(CELL_TUNNEL_DEV) analyze
 
 # Tuist forwards only TUIST_* variables into manifest evaluation, so Project.swift
-# cannot read PROVISIONING_PROFILE_SPECIFIER directly. swift-mk's reusable CI sets
-# that variable in the signed build's environment once it installs the Developer ID
-# provisioning profiles, so mirror its presence into TUIST_DEVELOPER_ID_SIGNING; the
-# manifest then pins each macOS NetworkExtension target to its profile. The dead-code
-# coverage build and local builds leave PROVISIONING_PROFILE_SPECIFIER empty, so this
-# stays unset and their signing is unchanged.
+# cannot read PROVISIONING_PROFILE_SPECIFIER directly. The engine's release path sets
+# that variable once it installs the Developer ID provisioning profiles, so mirror its
+# presence into TUIST_DEVELOPER_ID_SIGNING; the manifest then signs Developer ID and
+# pins each macOS NetworkExtension target to its Managed DeveloperID profile. The CI
+# distribution build sets TUIST_DISTRIBUTION_SIGNING through ci.yml instead. The
+# dead-code coverage build and local builds leave PROVISIONING_PROFILE_SPECIFIER
+# empty, so this stays unset and their signing is unchanged.
 ifneq ($(strip $(PROVISIONING_PROFILE_SPECIFIER)),)
 export TUIST_DEVELOPER_ID_SIGNING := 1
 endif

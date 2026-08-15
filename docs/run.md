@@ -38,6 +38,25 @@ codesign -dv Products/Debug/CellTunnelAgent.app
 A team identifier means it is signed. `Signature=adhoc` with no team identifier means it
 is not.
 
+## Why the download ships the tunnel as a system extension
+
+The downloadable build packages the tunnel as a system extension, while every other
+build keeps it as an app extension. Apple's Developer ID provisioning carries the
+Network Extension entitlement only in its system-extension form, so a notarized
+download has no other shape available. App Store and development provisioning carry
+the app-extension form, which is why development, CI, and the second-Mac harness are
+unchanged.
+
+The constraint is measured: run 31650693297 on pull request 113 installs the Developer
+ID profiles, pins them, and fails because the app-extension entitlement those targets
+requested does not appear in them.
+
+A system extension does not exist for NetworkExtension until macOS activates it, and
+only an app in `/Applications` may request that activation for an extension inside its
+own bundle. So the agent bundles the extension and submits the request before it
+resolves a tunnel profile, and macOS asks the person to allow it once. The provider
+code, the agent, the relay, and the loopback dial are the same in both packagings.
+
 ## Running on your own Mac
 
 `make install-mac` installs the Mac side and `make iphone-install` installs the iPhone

@@ -4,7 +4,18 @@ on:
   push:
     branches:
       - main
+  # A pull request runs the whole signed pipeline and stops before publishing, so
+  # a change that breaks signing, provisioning, notarization, or packaging fails
+  # here instead of on main. Without it the first thing to exercise the release
+  # path is the merge itself, and this repository publishes on every merge.
+  pull_request:
   workflow_dispatch:
+
+# One group per ref. A new pull request push cancels its own superseded dry run,
+# while a push to main is a real release and never cancels an in-flight publish.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # The caller must grant every permission the called workflow's jobs request.
 permissions:
@@ -15,8 +26,26 @@ permissions:
 
 jobs:
   release:
+    # A fork pull request cannot read this repository's signing secrets, so the
+    # signed run would fail for a reason the contributor cannot fix. Dependabot
+    # branches live in this repository and pass that check, but a Dependabot pull
+    # request reads its own secret store rather than the Actions one, so the shared
+    # workflow's signed dry run would exit on missing credentials every time.
+    if: >-
+      ${{ github.event_name != 'pull_request'
+      || (github.event.pull_request.head.repo.full_name == github.repository
+      && github.actor != 'dependabot[bot]') }}
     uses: agoodkind/swift-makefile/.github/workflows/_release.yml@main
     with:
+      # The release links WireGuardKitGo exactly as CI does, and that target builds
+      # a Go c-archive through its own Makefile whose goroot prepare step fails
+      # unless `go env GOROOT` resolves. The macos-26 runner does not put Go on the
+      # build PATH. ci.yml already installs it for the same reason; without the same
+      # line here the release build fails at `[ -n "" ]` in the bridge's prepare step.
+      brew-packages: go
+      # A pull request signs, provisions, notarizes, and packages exactly as a
+      # merge does, and only the publish and smoke steps are held back.
+      ephemeral: ${{ github.event_name == 'pull_request' }}
       # Without this the shared pipeline treats a merge as manual, resolves the release
       # as not enabled, and skips every job, which is why this repo has run the workflow
       # and published nothing.
@@ -29,7 +58,29 @@ jobs:
       # variables, and each keeps its own so the two are never confused.
       signing-identity-name: ${{ vars.APPLE_DEVELOPER_ID_IDENTITY }}
       apple-team-id: ${{ vars.APPLE_TEAM_ID }}
+      # The agent embeds a packet tunnel extension, so its targets carry App Groups
+      # and Network Extensions entitlements, and Xcode refuses to sign those without
+      # a provisioning profile that grants them. CI provisions its own App Store
+      # profiles through fastlane, but a Developer ID build cannot use those, so the
+      # release installs the stored Developer ID profile instead. Without this the
+      # build reaches signing and stops at "requires a provisioning profile with the
+      # App Groups and Network Extensions features".
+      install-provisioning-profile: true
       notarize-pattern: "*.zip"
       candidate-asset-pattern: "*.zip"
       sbom-subject-path: "Products/Release/CellTunnelAgent.app"
-    secrets: inherit
+    # Named rather than inherited, because this app needs three provisioning
+    # profiles and a secret holds at most 48 KB, which two profiles nearly fill.
+    # The shared pipeline installs one profile per line of the value it is given,
+    # so the third travels in its own secret and is joined here. A caller chooses
+    # either `inherit` or a named map, so naming one secret means naming them all.
+    secrets:
+      APPLE_DEVELOPER_ID_PROFILE_BASE64: |
+        ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
+        ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_CATALYST_BASE64 }}
+      APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+      APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+      APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+      APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+      APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+      LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}
