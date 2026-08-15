@@ -65,6 +65,7 @@ public let tunnelControlUsageText = """
     configs import <path>        Import and mark a config active; does not start the tunnel.
                                  Optional: --no-activate to add it without
                                  changing which config is in force.
+    version                      Print which build this is.
     help, --help, -h             Print this help text.
   """
 
@@ -81,6 +82,7 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
   case status
   case stop
   case stopDiscovery
+  case version
 
   public static func parse(arguments: [String]) throws -> Self {
     logger.notice(
@@ -101,6 +103,9 @@ public enum TunnelControlCLIAction: Equatable, Sendable {
     case "check":
       try rejectExtraArguments(extraArguments, command: command)
       return .check
+    case "version":
+      try rejectExtraArguments(extraArguments, command: command)
+      return .version
     case "peers":
       try rejectExtraArguments(extraArguments, command: command)
       return .peers
@@ -318,6 +323,10 @@ public struct TunnelControlCLIExecutor: Sendable {
       return report.renderedOutput
     case .help:
       return tunnelControlUsageText
+    case .version:
+      // Answered from the binary itself rather than from the agent, so the version of
+      // a freshly downloaded copy can be read before anything is installed or running.
+      return BuildIdentity.summary
     case .peers:
       return try await listPeers()
     case .configs(let command):

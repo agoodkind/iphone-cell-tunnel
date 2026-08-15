@@ -14,6 +14,11 @@ import SwiftMkCore
 private let logger = CellTunnelLog.logger(category: .build)
 
 func generateProject() throws {
+  // Render before the fingerprint check. The generated config carries the build
+  // identity, which changes with the commit and with the release tag rather than with
+  // any project input, so a project that needs no regeneration still needs a current
+  // config. The renderer writes only on change, so an unchanged identity costs nothing.
+  try renderGeneratedFiles()
   if try projectGenerationIsCurrent() {
     return
   }
@@ -40,10 +45,13 @@ func generateProject() throws {
 /// templates directory renders, with its `[[KEY]]` tokens substituted, to the
 /// same-named file minus `.template` under the output directory.
 private func renderGeneratedFiles() throws {
-  let values = XcconfigValues.read(paths: [
+  var values = XcconfigValues.read(paths: [
     repoRoot.appendingPathComponent("Config/Constants.xcconfig").path,
     repoRoot.appendingPathComponent("Config/local.xcconfig").path,
   ])
+  for (key, value) in buildIdentityValues() {
+    values[key] = value
+  }
   let renderPlans = [
     ("Templates/Swift", "Sources/CellTunnelCore/Generated"),
     ("Templates/Plists", "Generated/CellTunnelAgent"),
@@ -155,14 +163,18 @@ private func recordProjectGenerationFingerprint() throws {
 
 /// Manifest variables that change the generated project rather than the build.
 ///
-/// Tuist forwards only `TUIST_*` variables into manifest evaluation, and these two
-/// select which profiles each target pins and whether the tunnel is an app extension
-/// or a system extension. One job runs both modes, so a fingerprint blind to them lets
+/// Tuist forwards only `TUIST_*` variables into manifest evaluation. The signing pair
+/// selects which profiles each target pins and whether the tunnel is an app extension
+/// or a system extension; one job runs both modes, so a fingerprint blind to them lets
 /// the release stage reuse the verify stage's project and sign a product against
-/// profiles that do not carry its certificate.
-private let projectGenerationSigningVariables = [
+/// profiles that do not carry its certificate. The version pair lands in every bundle's
+/// Info.plist, so a project generated before the release metadata arrived carries the
+/// placeholder version instead of the one being published.
+private let projectGenerationManifestVariables = [
   "TUIST_DEVELOPER_ID_SIGNING",
   "TUIST_DISTRIBUTION_SIGNING",
+  "TUIST_MARKETING_VERSION",
+  "TUIST_CURRENT_PROJECT_VERSION",
 ]
 
 private func projectGenerationSourceFingerprint() throws -> String {
@@ -170,7 +182,7 @@ private func projectGenerationSourceFingerprint() throws -> String {
   let team = try developmentTeamFromEnvironment().trimmingCharacters(in: .whitespaces)
   parts.append("team:\(team)")
   let environment = ProcessInfo.processInfo.environment
-  for variable in projectGenerationSigningVariables {
+  for variable in projectGenerationManifestVariables {
     let value = environment[variable] ?? ""
     parts.append("\(variable):\(value)")
   }
