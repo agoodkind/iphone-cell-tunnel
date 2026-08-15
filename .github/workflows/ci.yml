@@ -22,6 +22,9 @@ permissions:
   actions: read
   # The engine's Verify job publishes one check run per stage.
   checks: write
+  # The release stage attests and notarizes the artifacts it builds.
+  id-token: write
+  attestations: write
 
 jobs:
   swift:
@@ -36,6 +39,14 @@ jobs:
       # adds /opt/homebrew/bin to PATH, which is where brew installs go. The shared
       # required jobs and the signed macOS build all link WireGuardKitGo.
       brew-packages: go
+      # Run the signed release stages inside Verify, on the machine whose
+      # compilation cache the verify build just filled, so a pull request takes one
+      # macOS slot instead of racing a second workflow for another. release.yml
+      # keeps only its merge trigger.
+      release-dry-run: true
+      # Both halves of the download are notarized: the agent bundle carries the
+      # tunnel, and the Catalyst app is what a person opens.
+      notarize-pattern: "*.zip"
       # Sign every product in one Verify job. SWIFT_VERIFY_BUILD_CMD (`build all`)
       # builds the Mac agent and tunnel, the Catalyst app, the iPhone simulator app,
       # the iPhone device app, and the daemon. These targets carry App Groups and
@@ -43,23 +54,41 @@ jobs:
       # runner is not a registered device, so development provisioning cannot work;
       # only App Store distribution profiles, which carry no device list, sign there.
       #
-      # import-signing-cert imports the Apple Distribution certificate that manual
-      # signing uses. The ci-provision setup step runs fastlane before the build to
-      # create or renew one App Store profile per target through the App Store Connect
-      # API key (APPLE_NOTARY_*), so profiles never expire out from under CI;
-      # Project.swift pins each profile by name. TUIST_DISTRIBUTION_SIGNING selects the
-      # project's Apple Distribution signing mode; the release path selects its
-      # separate Developer ID mode instead. install-provisioning-profile is not set,
-      # because fastlane provisions instead. SWIFT_MK_VERIFY_SIGNING_ROOTS verifies each
+      # import-signing-cert imports both certificates into one keychain. The
+      # ci-provision setup step runs fastlane before the build to create or renew one
+      # App Store profile per target through the App Store Connect API key
+      # (APPLE_NOTARY_*), so profiles never expire out from under CI; Project.swift
+      # pins each profile by name. SWIFT_MK_VERIFY_SIGNING_ROOTS verifies each
       # runnable product is signed with the team and is not ad-hoc.
       import-signing-cert: true
+      # The release stage signs Developer ID from the pinned profiles this installs,
+      # while the verify stages above sign Apple Distribution from fastlane's. A
+      # notarized download must not carry App Store provisioning.
+      install-provisioning-profile: true
       # The identity and team come from repository variables, so rotating a
       # certificate or moving teams is one settings edit rather than a commit in
-      # every repository. The two certificates keep separate variables: this job
-      # signs Apple Distribution, the release signs Developer ID, and one shared
-      # slot for both was a defect once already.
+      # every repository. The two certificates keep separate variables: the verify
+      # stages sign Apple Distribution, the release stage signs Developer ID, and one
+      # shared slot for both was a defect once already.
       signing-identity-name: ${{ vars.APPLE_DISTRIBUTION_IDENTITY }}
+      release-signing-identity-name: ${{ vars.APPLE_DEVELOPER_ID_IDENTITY }}
       apple-team-id: ${{ vars.APPLE_TEAM_ID }}
       setup-target: ci-provision
       make-args: TUIST_DISTRIBUTION_SIGNING=1
-    secrets: inherit
+    # Named rather than inherited, because this app needs three provisioning
+    # profiles and a secret holds at most 48 KB, which two profiles nearly fill.
+    # The shared pipeline installs one profile per line of the value it is given,
+    # so the third travels in its own secret and is joined here. A caller chooses
+    # either `inherit` or a named map, so naming one secret means naming them all.
+    secrets:
+      APPLE_DEVELOPER_ID_PROFILE_BASE64: |
+        ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_BASE64 }}
+        ${{ secrets.APPLE_DEVELOPER_ID_PROFILE_CATALYST_BASE64 }}
+      APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+      APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+      APPLE_DISTRIBUTION_P12_BASE64: ${{ secrets.APPLE_DISTRIBUTION_P12_BASE64 }}
+      APPLE_DISTRIBUTION_P12_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_P12_PASSWORD }}
+      APPLE_NOTARY_KEY_BASE64: ${{ secrets.APPLE_NOTARY_KEY_BASE64 }}
+      APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+      APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+      LOCAL_POOL_CAPACITY_TOKEN: ${{ secrets.LOCAL_POOL_CAPACITY_TOKEN }}

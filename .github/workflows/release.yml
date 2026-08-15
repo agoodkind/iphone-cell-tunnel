@@ -1,21 +1,19 @@
 name: Release
 
+# A merge publishes. The pull request rehearsal of this same pipeline runs inside
+# the CI workflow's single macOS job, on the machine whose compilation cache the
+# verify build just filled, so a pull request occupies one runner slot rather than
+# two.
 on:
   push:
     branches:
       - main
-  # A pull request runs the whole signed pipeline and stops before publishing, so
-  # a change that breaks signing, provisioning, notarization, or packaging fails
-  # here instead of on main. Without it the first thing to exercise the release
-  # path is the merge itself, and this repository publishes on every merge.
-  pull_request:
   workflow_dispatch:
 
-# One group per ref. A new pull request push cancels its own superseded dry run,
-# while a push to main is a real release and never cancels an in-flight publish.
+# One group per ref, and a real release is never cancelled by a newer one.
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: false
 
 # The caller must grant every permission the called workflow's jobs request.
 permissions:
@@ -26,15 +24,6 @@ permissions:
 
 jobs:
   release:
-    # A fork pull request cannot read this repository's signing secrets, so the
-    # signed run would fail for a reason the contributor cannot fix. Dependabot
-    # branches live in this repository and pass that check, but a Dependabot pull
-    # request reads its own secret store rather than the Actions one, so the shared
-    # workflow's signed dry run would exit on missing credentials every time.
-    if: >-
-      ${{ github.event_name != 'pull_request'
-      || (github.event.pull_request.head.repo.full_name == github.repository
-      && github.actor != 'dependabot[bot]') }}
     uses: agoodkind/swift-makefile/.github/workflows/_release.yml@main
     with:
       # The release links WireGuardKitGo exactly as CI does, and that target builds
@@ -43,9 +32,6 @@ jobs:
       # build PATH. ci.yml already installs it for the same reason; without the same
       # line here the release build fails at `[ -n "" ]` in the bridge's prepare step.
       brew-packages: go
-      # A pull request signs, provisions, notarizes, and packages exactly as a
-      # merge does, and only the publish and smoke steps are held back.
-      ephemeral: ${{ github.event_name == 'pull_request' }}
       # Without this the shared pipeline treats a merge as manual, resolves the release
       # as not enabled, and skips every job, which is why this repo has run the workflow
       # and published nothing.
