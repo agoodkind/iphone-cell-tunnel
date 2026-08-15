@@ -4,9 +4,10 @@ on:
   pull_request:
     branches:
       - main
-  # Build on merges to main so the branch-scoped compile cache is populated on the
-  # default branch. A pull request reads only its own branch's cache and main's, so
-  # without a main build every pull request starts from a cold cache.
+  # A merge to main still triggers this workflow so the required checks report on
+  # the default branch, and the shared workflow skips every compiling job there.
+  # The release build owns the only compile on main and writes the compile cache
+  # that later pull requests restore.
   push:
     branches:
       - main
