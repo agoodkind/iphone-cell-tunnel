@@ -33,6 +33,9 @@ private let helpText = """
                 Copy the built products into a running tart machine
                 so its first run registers the LaunchAgent.
                 Options: --config Debug|Release, --app <path>, --destination <dir>.
+    package     Build the release disk image carrying the Mac agent, the Catalyst
+                app, and the command-line tool, from products already built.
+                Optional positional configuration: [Debug|Release] (default Debug).
     test        Run SwiftPM tests.
     lint        Run Swift lint gates.
     format      Format Swift sources.
@@ -230,6 +233,10 @@ func runCoreCommand(_ command: String) throws -> Bool {
   case "install-mac":
     let options = try parseInstallMacOptions()
     try runInstallMac(options: options)
+    return true
+  case "package":
+    let configuration = try parseConfiguration(command: command)
+    try packageRelease(configuration: configuration)
     return true
   case "test":
     try testProject()
