@@ -52,8 +52,14 @@ jobs:
       # build reaches signing and stops at "requires a provisioning profile with the
       # App Groups and Network Extensions features".
       install-provisioning-profile: true
-      notarize-pattern: "*.zip"
-      candidate-asset-pattern: "*.zip"
+      notarize-pattern: "*.dmg"
+      candidate-asset-pattern: "*.dmg"
+      # After publishing, download the image, check its staple and Developer ID
+      # signature, then run the command-line tool inside it and require the output to
+      # name this release. That is the only step that proves the published artifact
+      # runs, rather than only that it built.
+      smoke-asset: "CellTunnel.dmg"
+      smoke-binary: "celltunnelctl"
       sbom-subject-path: "Products/Release/CellTunnelAgent.app"
     # Named rather than inherited, because this app needs three provisioning
     # profiles and a secret holds at most 48 KB, which two profiles nearly fill.

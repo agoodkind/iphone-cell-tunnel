@@ -10,24 +10,14 @@
 CONFIG ?= Debug
 CELL_TUNNEL_DEV := swift Tools/cell-tunnel-dev.swift
 
-# Release artifacts for the shared release pipeline. A person downloads these, so both
-# halves ship: the agent bundle carries the packet tunnel extension inside it, and the
-# Catalyst app is what they open. Each travels as an archive because a signed bundle
-# copied as a directory tree arrives without its signature.
-#
-# The name carries ARTIFACT_VERSION, which a publishing run stamps from the release tag
-# and a pull request rehearsal sets to a placeholder. RELEASE_TAG is the fallback for a
-# caller that supplies only that. Reading RELEASE_TAG alone named the rehearsal's
-# archives `CellTunnelAgent-.zip`, because the rehearsal runs inside the verify job and
-# no stage there stamps a tag.
-SWIFT_MK_RELEASE_ARTIFACT_VERSION = $${ARTIFACT_VERSION:-$${RELEASE_TAG}}
-SWIFT_MK_RELEASE_BUILD_CMD := mkdir -p dist \
-	&& $(CELL_TUNNEL_DEV) build mac Release \
+# The release artifact for the shared release pipeline: one disk image a person mounts,
+# carrying the Mac agent that hosts the tunnel, the Catalyst app they open, and the
+# command-line tool they inspect a running relay with. One image rather than three
+# archives means one download installs a working set, and it gives the post-publish
+# smoke a single asset to fetch and run.
+SWIFT_MK_RELEASE_BUILD_CMD := $(CELL_TUNNEL_DEV) build mac Release \
 	&& $(CELL_TUNNEL_DEV) build mac-catalyst Release \
-	&& ditto -c -k --keepParent Products/Release/CellTunnelAgent.app \
-		dist/CellTunnelAgent-$(SWIFT_MK_RELEASE_ARTIFACT_VERSION).zip \
-	&& ditto -c -k --keepParent Products/Release-maccatalyst/CellTunnelPhone.app \
-		dist/CellTunnelPhone-$(SWIFT_MK_RELEASE_ARTIFACT_VERSION).zip
+	&& $(CELL_TUNNEL_DEV) package Release
 
 SWIFT_MK_MODULES := swift-build.mk xcconfig.mk swift-release.mk
 

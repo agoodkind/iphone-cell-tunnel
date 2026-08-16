@@ -44,9 +44,10 @@ jobs:
       # macOS slot instead of racing a second workflow for another. release.yml
       # keeps only its merge trigger.
       release-dry-run: true
-      # Both halves of the download are notarized: the agent bundle carries the
-      # tunnel, and the Catalyst app is what a person opens.
-      notarize-pattern: "*.zip"
+      # The rehearsal notarizes the same disk image a merge publishes, so a pattern
+      # that no longer matches what the build writes fails here rather than after a
+      # release is already public.
+      notarize-pattern: "*.dmg"
       # Sign every product in one Verify job. SWIFT_VERIFY_BUILD_CMD (`build all`)
       # builds the Mac agent and tunnel, the Catalyst app, the iPhone simulator app,
       # the iPhone device app, and the daemon. These targets carry App Groups and
