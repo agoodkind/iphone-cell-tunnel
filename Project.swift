@@ -221,6 +221,17 @@ let tunnelProviderEntitlements: Path =
   isDeveloperIdSigning
   ? "Apps/macOS/Entitlements/TunnelProvider.DeveloperID.entitlements"
   : "Apps/macOS/Entitlements/TunnelProvider.entitlements"
+
+// macOS finds a system extension by the bundle's file name, not by reading the
+// identifier out of its Info.plist, so a bundle named after the target is invisible to
+// it and every activation fails with "unable to find any matched extension with
+// identifier". Only the wrapper name changes here; the product and executable names
+// stay as they are. An app extension is found through the app's PlugIns directory
+// instead, so this applies to the Developer ID build alone.
+let tunnelProviderProductNaming: SettingsDictionary =
+  isDeveloperIdSigning
+  ? ["FULL_PRODUCT_NAME": "$(PROVIDER_BUNDLE_ID).systemextension"]
+  : [:]
 // The agent signs from the matching entitlements variant, which carries the
 // system-extension form of the tunnel entitlement and the install permission
 // its Developer ID profile grants.
@@ -362,7 +373,9 @@ let project = Project(
         base: macNetworkExtensionSettings(
           appStoreProfile: "Managed AppStore CellTunnelTunnelProvider",
           developerIdProfile: "Managed DeveloperID CellTunnelTunnelProvider"
-        ).merging(tunnelProviderCompilationConditions) { _, new in new })
+        )
+        .merging(tunnelProviderCompilationConditions) { _, new in new }
+        .merging(tunnelProviderProductNaming) { _, new in new })
     ),
     .target(
       name: "CellTunnelPhoneTunnel",
