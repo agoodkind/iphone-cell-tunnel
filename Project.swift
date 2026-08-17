@@ -221,6 +221,23 @@ let tunnelProviderEntitlements: Path =
   isDeveloperIdSigning
   ? "Apps/macOS/Entitlements/TunnelProvider.DeveloperID.entitlements"
   : "Apps/macOS/Entitlements/TunnelProvider.entitlements"
+
+// macOS finds a system extension by the bundle's file name, not by reading the
+// identifier out of its Info.plist, so a bundle named after the target is invisible to
+// it and every activation fails with "unable to find any matched extension with
+// identifier". An app extension is found through the app's PlugIns directory instead,
+// so this applies to the Developer ID build alone.
+//
+// WRAPPER_NAME is the setting to move, because every path inside the bundle derives
+// from it. Setting FULL_PRODUCT_NAME alone renames the finished product while the
+// contents are still built under the old name, and the signer then rejects the empty
+// wrapper with "bundle format unrecognized, invalid, or unsuitable". PRODUCT_NAME is
+// left alone because the Swift module name follows it, and the release Info.plist
+// names the provider class as CellTunnelTunnelProvider.PacketTunnelProvider.
+let tunnelProviderProductNaming: SettingsDictionary =
+  isDeveloperIdSigning
+  ? ["WRAPPER_NAME": "$(PROVIDER_BUNDLE_ID).systemextension"]
+  : [:]
 // The agent signs from the matching entitlements variant, which carries the
 // system-extension form of the tunnel entitlement and the install permission
 // its Developer ID profile grants.
@@ -362,7 +379,9 @@ let project = Project(
         base: macNetworkExtensionSettings(
           appStoreProfile: "Managed AppStore CellTunnelTunnelProvider",
           developerIdProfile: "Managed DeveloperID CellTunnelTunnelProvider"
-        ).merging(tunnelProviderCompilationConditions) { _, new in new })
+        )
+        .merging(tunnelProviderCompilationConditions) { _, new in new }
+        .merging(tunnelProviderProductNaming) { _, new in new })
     ),
     .target(
       name: "CellTunnelPhoneTunnel",
