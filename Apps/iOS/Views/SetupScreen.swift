@@ -2,7 +2,7 @@
 //  SetupScreen.swift
 //  CellTunnelPhone
 //
-//  Created by Alex Goodkind <alex@goodkind.io> on 2026-06-05.
+//  Created by Alexander Goodkind <alex@goodkind.io> on 2026-06-05.
 //  Copyright © 2026, all rights reserved.
 //
 
