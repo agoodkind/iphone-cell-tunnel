@@ -11,14 +11,17 @@ import Testing
 
 // MARK: - ScratchDefaultsSweepTests
 
-/// ScratchDefaultsSweepTests checks stale folder cleanup during creation.
-/// The test starts /usr/bin/true, waits for it to exit, and plants a folder
-/// containing defaults.plist under root using that process ID.
-/// After creating a ScratchDefaults instance, the test checks that the stale
-/// folder no longer exists and the new scratch folder exists until cleanup.
+/// ScratchDefaultsSweepTests checks stale folder removal and the lifetime
+/// of the test's own scratch folder through `ScratchDefaults.run`.
+///
+/// The test waits for a child process to exit before creating a folder for
+/// that process ID. Inside the body, it checks that the stale folder does
+/// not exist and its own folder exists. After `run` returns, it checks that
+/// its own folder does not exist.
 struct ScratchDefaultsSweepTests {
   private static let trueExecutablePath = "/usr/bin/true"
   private static let sweepLabel = "sweep"
+  private static let plantedKey = "test-key"
 
   @Test func creationDeletesFolderOfExitedProcess() throws {
     let process = Process()
@@ -37,7 +40,7 @@ struct ScratchDefaultsSweepTests {
       isDirectory: true
     )
     try fileManager.createDirectory(at: staleScratchFolder, withIntermediateDirectories: true)
-    let plistContent: [String: String] = ["io.goodkind.celltunnel.relay.deviceID": "stale"]
+    let plistContent: [String: String] = [Self.plantedKey: "stale"]
     let plistData = try PropertyListSerialization.data(
       fromPropertyList: plistContent,
       format: .binary,
@@ -47,7 +50,6 @@ struct ScratchDefaultsSweepTests {
     try plistData.write(to: stalePlist)
     #expect(fileManager.fileExists(atPath: stalePlist.path))
 
-    ScratchDefaults.resetSweepForTesting()
     let currentProcessFolder = ScratchDefaults.rootDirectory.appendingPathComponent(
       String(ProcessInfo.processInfo.processIdentifier),
       isDirectory: true

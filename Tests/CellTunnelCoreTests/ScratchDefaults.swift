@@ -8,24 +8,20 @@
 
 import CellTunnelLog
 import Foundation
-import Synchronization
 import struct OSLog.Logger
 
 // MARK: - ScratchDefaults
 
-/// ScratchDefaults creates a UserDefaults suite in a temporary folder.
-/// An absolute suite name makes cfprefsd store the plist at <path>.plist,
-/// outside ~/Library/Preferences.
+/// ScratchDefaults provides a UserDefaults suite in a temporary folder.
+/// The suite name uses an absolute path. cfprefsd stores the plist at
+/// `<path>.plist`, outside `~/Library/Preferences`.
 ///
-/// run(label:body:) passes the suite to the body and keeps the ScratchDefaults
-/// instance alive until the body returns. deinit removes the persistent domain,
-/// deletes the scratch folder, and deletes the process folder when it is empty.
+/// Each scratch folder uses the layout `<root>/<pid>/<label>-<UUID>/`.
+/// The root is `celltunnel-scratch-defaults` in the temporary directory,
+/// and `pid` is the current process ID.
 final class ScratchDefaults {
   // MARK: - Properties
 
-  /// rootDirectory identifies celltunnel-scratch-defaults in the temporary directory.
-  /// Each scratch folder uses <root>/<pid>/<label>-<UUID>/, where pid identifies
-  /// the current process.
   static let rootDirectory = FileManager.default.temporaryDirectory
     .appendingPathComponent("celltunnel-scratch-defaults", isDirectory: true)
 
@@ -39,16 +35,15 @@ final class ScratchDefaults {
   /// creates a scratch folder inside it.
   private static let folderLock = NSLock()
 
-  private static let sweepDone = Mutex(false)
-
   let suiteName: String
   let defaults: UserDefaults
   private let directory: URL
+  private var isRemoved = false
 
   // MARK: - Lifecycle
 
   private init(label: String) throws {
-    try Self.sweepStaleFoldersOnce()
+    try Self.sweepStaleFolders()
     let folderName = "\(label)-\(UUID().uuidString)"
     let folder = Self.processDirectory.appendingPathComponent(folderName, isDirectory: true)
     try Self.folderLock.withLock {
@@ -65,64 +60,62 @@ final class ScratchDefaults {
   }
 
   deinit {
-    defaults.removePersistentDomain(forName: suiteName)
-    Self.folderLock.withLock {
-      removeOwnFolder()
-      removeProcessFolderWhenEmpty()
-    }
-  }
-
-  // MARK: - Cleanup
-
-  private func removeOwnFolder() {
     do {
-      try FileManager.default.removeItem(at: directory)
+      try remove()
     } catch {
       let logger = CellTunnelLog.logger(category: .store)
       let folderPath = directory.path
       let reason = error.localizedDescription
       logger.error(
         """
-        ScratchDefaults could not delete temporary folder \(folderPath, privacy: .public): \
-        \(reason, privacy: .public)
+        ScratchDefaults could not remove scratch defaults folder \
+        \(folderPath, privacy: .public) during deinit: \(reason, privacy: .public).
         """
       )
     }
   }
 
-  private func removeProcessFolderWhenEmpty() {
-    let processFolder = Self.processDirectory
-    do {
-      let remaining = try FileManager.default.contentsOfDirectory(atPath: processFolder.path)
-      if remaining.isEmpty {
-        try FileManager.default.removeItem(at: processFolder)
+  // MARK: - Cleanup
+
+  /// `remove()` removes the persistent domain and deletes the scratch folder
+  /// under the process-wide folder lock. It also deletes the process folder
+  /// when that folder is empty.
+  ///
+  /// A flag makes a second call return early.
+  /// The method throws if deletion fails.
+  func remove() throws {
+    try Self.folderLock.withLock {
+      if isRemoved {
+        return
       }
-    } catch {
-      let logger = CellTunnelLog.logger(category: .store)
-      let folderPath = processFolder.path
-      let reason = error.localizedDescription
-      logger.error(
-        """
-        ScratchDefaults could not delete process folder \(folderPath, privacy: .public): \
-        \(reason, privacy: .public)
-        """
-      )
+      isRemoved = true
+      defaults.removePersistentDomain(forName: suiteName)
+      try FileManager.default.removeItem(at: directory)
+      try Self.removeProcessFolderWhenEmpty()
+    }
+  }
+
+  private static func removeProcessFolderWhenEmpty() throws {
+    let remaining = try FileManager.default.contentsOfDirectory(atPath: processDirectory.path)
+    if remaining.isEmpty {
+      try FileManager.default.removeItem(at: processDirectory)
     }
   }
 
   // MARK: - Stale folder sweep
 
-  /// sweepStaleFolders() deletes process folders left after a process exits
-  /// without cleanup. SIGKILL, an abort, or an Objective-C exception can prevent
-  /// that cleanup.
+  /// `sweepStaleFolders()` deletes folders for processes that no longer run.
+  /// Each ScratchDefaults creation runs the sweep. The sweep deletes a process
+  /// folder only when `kill(pid, 0)` fails with `ESRCH`. It preserves folders
+  /// for running processes, including the current process.
   ///
-  /// The first ScratchDefaults creation in a process triggers the sweep.
-  /// The sweep preserves folders for running processes, including the current
-  /// process, and logs each deletion with its path through CellTunnelLog.
-  ///
-  /// If a deletion fails, the sweep throws an error with the path and failure
-  /// reason. Later ScratchDefaults creations retry the sweep.
-  static func sweepStaleFolders() throws {
+  /// Concurrent test processes can attempt to delete the same stale folder.
+  /// If deletion reports `CocoaError.fileNoSuchFile` or `fileReadNoSuchFile`,
+  /// another process already swept the folder. The sweep logs a notice and
+  /// continues. Any other deletion failure throws an error with the path and
+  /// reason. Each successful deletion logs one line with the path.
+  /// The sweep uses CellTunnelLog for these messages.
+  private static func sweepStaleFolders() throws {
     let fileManager = FileManager.default
     guard fileManager.fileExists(atPath: rootDirectory.path) else {
       return
@@ -143,6 +136,11 @@ final class ScratchDefaults {
       let folderPath = entry.path
       do {
         try fileManager.removeItem(at: entry)
+      } catch let error as CocoaError where isAlreadyDeleted(error) {
+        logger.notice(
+          "Another process already swept scratch defaults folder \(folderPath, privacy: .public)."
+        )
+        continue
       } catch {
         throw ScratchDefaultsError.sweepFailed(
           path: folderPath,
@@ -155,6 +153,10 @@ final class ScratchDefaults {
     }
   }
 
+  private static func isAlreadyDeleted(_ error: CocoaError) -> Bool {
+    error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile
+  }
+
   /// isStale(processID:) reports that a process ID does not identify a running
   /// process only when kill(processID, 0) fails with ESRCH.
   private static func isStale(processID: Int32) -> Bool {
@@ -164,38 +166,26 @@ final class ScratchDefaults {
     return errno == ESRCH
   }
 
-  private static func sweepStaleFoldersOnce() throws {
-    try sweepDone.withLock { done in
-      if done {
-        return
-      }
-      try sweepStaleFolders()
-      done = true
-    }
-  }
-
-  /// resetSweepForTesting() resets the once-per-process sweep flag.
-  /// A regression test can then plant a stale folder and trigger another sweep.
-  static func resetSweepForTesting() {
-    sweepDone.withLock { done in
-      done = false
-    }
-  }
-
   // MARK: - Scoped use
 
-  /// `run(label:body:)` creates a `ScratchDefaults`, passes its `UserDefaults` to
-  /// `body`, and returns the result. `withExtendedLifetime` keeps the instance
-  /// alive until `body` returns. `deinit` then removes the suite's persistent
-  /// domain and deletes the temporary folder.
+  /// `run(label:body:)` creates a ScratchDefaults instance and passes its
+  /// UserDefaults to the body closure. It keeps the instance alive until the
+  /// body returns, then calls `remove()` with `try`. A deletion failure throws
+  /// out of `run`.
+  ///
+  /// If the body throws, `run` skips that call and deinit attempts removal
+  /// as the fallback. deinit cannot throw and logs removal errors through
+  /// CellTunnelLog.
   static func run<Output>(
     label: String,
     body: (UserDefaults) throws -> Output
   ) throws -> Output {
     let scratch = try ScratchDefaults(label: label)
-    return try withExtendedLifetime(scratch) {
+    let result = try withExtendedLifetime(scratch) {
       try body(scratch.defaults)
     }
+    try scratch.remove()
+    return result
   }
 }
 
