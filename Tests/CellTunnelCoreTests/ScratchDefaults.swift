@@ -168,30 +168,43 @@ final class ScratchDefaults {
 
   // MARK: - Scoped use
 
-  /// `run(label:body:)` creates a ScratchDefaults instance and passes its
-  /// UserDefaults to the body closure. It keeps the instance alive until the
-  /// body returns, then calls `remove()` with `try`. A deletion failure throws
-  /// out of `run`.
+  /// `run(label:body:)` creates a `ScratchDefaults` instance and passes its
+  /// `UserDefaults` to `body`. It keeps the instance alive until `body` finishes.
+  /// It captures the body result or error, then calls `remove()` with `try`.
   ///
-  /// If the body throws, `run` skips that call and deinit attempts removal
-  /// as the fallback. deinit cannot throw and logs removal errors through
-  /// CellTunnelLog.
+  /// If `remove()` succeeds, `run` returns the body result or rethrows the body error.
+  /// If `remove()` throws after `body` succeeds, `run` throws the removal error.
+  /// If both throw, `run` throws `ScratchDefaultsError.cleanupFailedAfterBodyError`.
   static func run<Output>(
     label: String,
     body: (UserDefaults) throws -> Output
   ) throws -> Output {
     let scratch = try ScratchDefaults(label: label)
-    let result = try withExtendedLifetime(scratch) {
-      try body(scratch.defaults)
+    let result = withExtendedLifetime(scratch) {
+      Result { try body(scratch.defaults) }
     }
-    try scratch.remove()
-    return result
+    do {
+      try scratch.remove()
+    } catch {
+      guard case .failure(let bodyError) = result else {
+        throw error
+      }
+      throw ScratchDefaultsError.cleanupFailedAfterBodyError(
+        bodyError: bodyError,
+        path: scratch.directory.path,
+        reason: error.localizedDescription
+      )
+    }
+    return try result.get()
   }
 }
 
 // MARK: - ScratchDefaultsError
 
 enum ScratchDefaultsError: Error {
+  /// This error includes the body error, the scratch folder path, and the reason
+  /// `remove()` failed.
+  case cleanupFailedAfterBodyError(bodyError: any Error, path: String, reason: String)
   case suiteUnavailable(String)
   case sweepFailed(path: String, reason: String)
 }
