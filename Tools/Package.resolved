@@ -1,5 +1,5 @@
 {
-  "originHash" : "82c23f68d5464f5a5678fa2b815ba69976d4d99a4d9281ab3ab149a3f69aba32",
+  "originHash" : "657a364b34db26710779cae3d28e62bc3b31f31b49a6cc4752c9f669309453ae",
   "pins" : [
     {
       "identity" : "aexml",
@@ -231,7 +231,7 @@
       "location" : "https://github.com/agoodkind/swift-makefile.git",
       "state" : {
         "branch" : "main",
-        "revision" : "5236b5a892b5e5c87193a87c4b24a0c3e0acd438"
+        "revision" : "e82437512226127f721e4846b354399e60b599cf"
       }
     },
     {
